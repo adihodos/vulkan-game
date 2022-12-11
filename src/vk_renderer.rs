@@ -83,18 +83,19 @@ pub struct UniqueImage {
 
 impl UniqueImage {
     pub fn new(
-        graphics_device: &Device,
-        cmd_buf: CommandBuffer,
-        memory_props: &PhysicalDeviceMemoryProperties,
+        renderer: &VulkanRenderer,
         image_info: ImageCreateInfo,
         data: &[ImageCopySource],
-    ) -> Option<(UniqueImage, UniqueBuffer)> {
+    ) -> Option<UniqueImage> {
+        let graphics_device = renderer.graphics_device();
+
         let image = unsafe { graphics_device.create_image(&image_info, None) }
             .map_err(|e| error!("Failed to create image: {}", e))
             .ok()?;
 
         let image_memory_req = unsafe { graphics_device.get_image_memory_requirements(image) };
 
+        let memory_props = renderer.device_memory();
         let memory = unsafe {
             graphics_device.allocate_memory(
                 &MemoryAllocateInfo::builder()
@@ -116,15 +117,14 @@ impl UniqueImage {
         }
 
         let staging_buffer = UniqueBuffer::new(
-            graphics_device,
-            memory_props,
+            renderer,
             BufferUsageFlags::TRANSFER_SRC,
             MemoryPropertyFlags::HOST_VISIBLE,
             image_memory_req.size,
         )?;
 
-        ScopedBufferMapping::create(graphics_device, &staging_buffer, image_memory_req.size, 0)
-            .map(|mapping| {
+        ScopedBufferMapping::create(renderer, &staging_buffer, image_memory_req.size, 0).map(
+            |mapping| {
                 data.iter().fold(0isize, |dst_offset, copy_src| {
                     unsafe {
                         copy_nonoverlapping(
@@ -135,7 +135,8 @@ impl UniqueImage {
                     }
                     dst_offset + copy_src.bytes as isize
                 });
-            })?;
+            },
+        )?;
 
         //
         // transition image UNDEFINED -> TRANSFER_DST
@@ -165,6 +166,8 @@ impl UniqueImage {
                 .subresource_range(subresource_range)
                 .build(),
         ];
+
+        let cmd_buf = renderer.res_loader().cmd_buf;
 
         unsafe {
             graphics_device.cmd_pipeline_barrier(
@@ -203,7 +206,7 @@ impl UniqueImage {
         }
 
         //
-        // undefined 2 shader-readonly optimal
+        // Transition image TRANSFER_DST -> shader-readonly optimal
         unsafe {
             graphics_device.cmd_pipeline_barrier(
                 cmd_buf,
@@ -216,14 +219,13 @@ impl UniqueImage {
             );
         }
 
-        Some((
-            UniqueImage {
-                image,
-                memory,
-                device: graphics_device as *const _,
-            },
-            staging_buffer,
-        ))
+        renderer.push_staging_buffer(staging_buffer);
+
+        Some(UniqueImage {
+            image,
+            memory,
+            device: graphics_device as *const _,
+        })
     }
 }
 
@@ -243,9 +245,11 @@ pub struct UniqueImageView {
 
 impl UniqueImageView {
     pub fn new(
-        graphics_device: &Device,
+        renderer: &VulkanRenderer,
         view_create_info: &ImageViewCreateInfo,
     ) -> Option<UniqueImageView> {
+        let graphics_device = renderer.graphics_device();
+
         let view = unsafe { graphics_device.create_image_view(view_create_info, None) }
             .map_err(|e| error!("Failed to create image view: {}", e))
             .ok()?;
@@ -268,6 +272,21 @@ pub struct UniqueCommandPool {
     device: *const Device,
 }
 
+impl UniqueCommandPool {
+    pub fn new(
+        graphics_device: &Device,
+        cmd_pool_create_info: &CommandPoolCreateInfo,
+    ) -> Option<UniqueCommandPool> {
+        unsafe { graphics_device.create_command_pool(cmd_pool_create_info, None) }
+            .map_err(|e| error!("Failed to create command pool: {}", e))
+            .map(|cmd_pool| UniqueCommandPool {
+                cmd_pool,
+                device: &*graphics_device as *const _,
+            })
+            .ok()
+    }
+}
+
 impl std::ops::Drop for UniqueCommandPool {
     fn drop(&mut self) {
         unsafe {
@@ -279,6 +298,21 @@ impl std::ops::Drop for UniqueCommandPool {
 pub struct UniqueFramebuffer {
     pub framebuffer: Framebuffer,
     device: *const Device,
+}
+
+impl UniqueFramebuffer {
+    pub fn new(
+        graphics_device: &Device,
+        framebuffer_create_info: &FramebufferCreateInfo,
+    ) -> Option<UniqueFramebuffer> {
+        unsafe { graphics_device.create_framebuffer(framebuffer_create_info, None) }
+            .map_err(|e| error!("Failed to create framebuffer {}", e))
+            .map(|fb| UniqueFramebuffer {
+                framebuffer: fb,
+                device: graphics_device as *const _,
+            })
+            .ok()
+    }
 }
 
 impl std::ops::Drop for UniqueFramebuffer {
@@ -295,17 +329,18 @@ pub struct UniqueFence {
 }
 
 impl UniqueFence {
-    pub fn new(graphics_device: &Device) -> Option<UniqueFence> {
-        let fence = unsafe {
-            graphics_device.create_fence(
-                &FenceCreateInfo::builder()
-                    .flags(FenceCreateFlags::SIGNALED)
-                    .build(),
-                None,
-            )
-        }
-        .map_err(|e| error!("Failed to create fence {}", e))
-        .ok()?;
+    pub fn new(graphics_device: &Device, signaled: bool) -> Option<UniqueFence> {
+        let fence_create_info = if signaled {
+            FenceCreateInfo::builder()
+                .flags(FenceCreateFlags::SIGNALED)
+                .build()
+        } else {
+            FenceCreateInfo::builder().build()
+        };
+
+        let fence = unsafe { graphics_device.create_fence(&fence_create_info, None) }
+            .map_err(|e| error!("Failed to create fence {}", e))
+            .ok()?;
 
         Some(UniqueFence {
             fence,
@@ -484,12 +519,14 @@ impl std::ops::Drop for UniqueBuffer {
 
 impl UniqueBuffer {
     pub fn new(
-        graphics_device: &Device,
-        memory_props: &PhysicalDeviceMemoryProperties,
+        renderer: &VulkanRenderer,
         usage: BufferUsageFlags,
         memory_type: MemoryPropertyFlags,
         bytes: DeviceSize,
     ) -> Option<UniqueBuffer> {
+        let graphics_device = renderer.graphics_device();
+        let memory_props = renderer.device_memory();
+
         let buffer = unsafe {
             graphics_device.create_buffer(
                 &BufferCreateInfo::builder()
@@ -504,6 +541,7 @@ impl UniqueBuffer {
         .ok()?;
 
         let memory_requirements = unsafe { graphics_device.get_buffer_memory_requirements(buffer) };
+
         let memory = unsafe {
             graphics_device.allocate_memory(
                 &MemoryAllocateInfo::builder()
@@ -541,11 +579,12 @@ pub struct ScopedBufferMapping<'a> {
 
 impl<'a> ScopedBufferMapping<'a> {
     pub fn create(
-        graphics_device: &Device,
+        renderer: &VulkanRenderer,
         buffer: &'a UniqueBuffer,
         map_size: DeviceSize,
         map_offset: DeviceSize,
     ) -> Option<ScopedBufferMapping<'a>> {
+        let graphics_device = renderer.graphics_device();
         let mapped_memory = unsafe {
             graphics_device.map_memory(buffer.memory, map_offset, map_size, MemoryMapFlags::empty())
         }
@@ -1236,39 +1275,18 @@ impl FrameRenderData {
 
         let fb_attachments = [swapchain_imageview.view, ds_image_view.view];
 
-        let framebuffer = unsafe {
-            graphics_device.create_framebuffer(
-                &FramebufferCreateInfo::builder()
-                    .attachments(&fb_attachments)
-                    .render_pass(renderpass)
-                    .width(width)
-                    .height(height)
-                    .layers(1)
-                    .build(),
-                None,
-            )
-        }
-        .map_err(|e| error!("Failed to create framebuffer {}", e))
-        .map(|fb| UniqueFramebuffer {
-            framebuffer: fb,
-            device: graphics_device as *const _,
-        })
-        .ok()?;
+        let framebuffer = UniqueFramebuffer::new(
+            &graphics_device,
+            &FramebufferCreateInfo::builder()
+                .attachments(&fb_attachments)
+                .render_pass(renderpass)
+                .width(width)
+                .height(height)
+                .layers(1)
+                .build(),
+        )?;
 
-        let fence = unsafe {
-            graphics_device.create_fence(
-                &FenceCreateInfo::builder()
-                    .flags(FenceCreateFlags::SIGNALED)
-                    .build(),
-                None,
-            )
-        }
-        .map_err(|e| error!("Failed to create fence: {}", e))
-        .map(|fence| UniqueFence {
-            fence,
-            device: graphics_device as *const _,
-        })
-        .ok()?;
+        let fence = UniqueFence::new(&graphics_device, true)?;
 
         let sem_img_avail = UniqueSemaphore::new(graphics_device)?;
         let sem_rendering_done = UniqueSemaphore::new(graphics_device)?;
@@ -1406,7 +1424,7 @@ impl ResourceLoader {
 
         Some(ResourceLoader {
             cmd_buf: cmd_buffers[0],
-            fence: UniqueFence::new(graphics_device)?,
+            fence: UniqueFence::new(graphics_device, false)?,
             staging_buffers: RefCell::new(Vec::new()),
         })
     }
@@ -1417,6 +1435,7 @@ impl ResourceLoader {
 }
 
 pub struct DrawContext<'a> {
+    pub renderer: &'a VulkanRenderer,
     pub graphics_device: &'a Device,
     pub cmd_buff: CommandBuffer,
     pub frame_id: u32,
@@ -1503,6 +1522,10 @@ impl VulkanRenderer {
                 None,
             )
         }
+    }
+
+    pub fn push_staging_buffer(&self, staging_buffer: UniqueBuffer) {
+        self.res_loader.add_staging_buffer(staging_buffer);
     }
 
     pub fn create(glfw: &mut glfw::Window) -> Option<VulkanRenderer> {
@@ -1677,24 +1700,15 @@ impl VulkanRenderer {
 
         info!("Swapchain created, image count {}", max_inflight_frames);
 
-        let cmd_pool = unsafe {
-            graphics_device.create_command_pool(
-                &CommandPoolCreateInfo::builder()
-                    .queue_family_index(queue_idx)
-                    .flags(
-                        CommandPoolCreateFlags::TRANSIENT
-                            | CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
-                    )
-                    .build(),
-                None,
-            )
-        }
-        .map_err(|e| error!("Failed to create command pool: {}", e))
-        .map(|cmd_pool| UniqueCommandPool {
-            cmd_pool,
-            device: &*graphics_device as *const _,
-        })
-        .ok()?;
+        let cmd_pool = UniqueCommandPool::new(
+            &graphics_device,
+            &CommandPoolCreateInfo::builder()
+                .queue_family_index(queue_idx)
+                .flags(
+                    CommandPoolCreateFlags::TRANSIENT
+                        | CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+                ),
+        )?;
 
         info!("Command pool created.");
 
@@ -1853,7 +1867,6 @@ impl VulkanRenderer {
                 .build()];
 
             let fences = [self.res_loader.fence.fence];
-            let _ = self.graphics_device.reset_fences(&fences);
 
             let _ = self.graphics_device.queue_submit(
                 self.queue,
@@ -1884,6 +1897,7 @@ impl VulkanRenderer {
         };
 
         DrawContext {
+            renderer: self,
             graphics_device: self.graphics_device(),
             cmd_buff: self.frame_render_data[self.current_frame_id() as usize].command_buffer,
             frame_id: self.current_frame_id(),

@@ -136,8 +136,7 @@ impl UiBackend {
 
         let vertex_buffer_size = vertex_bytes_one_frame * renderer.max_inflight_frames();
         let vertex_buffer = UniqueBuffer::new(
-            renderer.graphics_device(),
-            renderer.device_memory(),
+            renderer,
             BufferUsageFlags::VERTEX_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE,
             vertex_buffer_size as DeviceSize,
@@ -149,8 +148,7 @@ impl UiBackend {
             ) as u32;
         let index_buffer_size = index_bytes_one_frame * renderer.max_inflight_frames();
         let index_buffer = UniqueBuffer::new(
-            renderer.graphics_device(),
-            renderer.device_memory(),
+            renderer,
             BufferUsageFlags::INDEX_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE,
             index_buffer_size as DeviceSize,
@@ -164,8 +162,7 @@ impl UiBackend {
         );
 
         let uniform_buffer = UniqueBuffer::new(
-            renderer.graphics_device(),
-            renderer.device_memory(),
+            renderer,
             BufferUsageFlags::UNIFORM_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE,
             ubo_bytes_one_frame * renderer.max_inflight_frames() as DeviceSize,
@@ -179,10 +176,8 @@ impl UiBackend {
             bytes: (font_atlas_image.width * font_atlas_image.height) as DeviceSize,
         }];
 
-        let (font_atlas_image, font_atlas_staging_buffer) = UniqueImage::new(
-            renderer.graphics_device(),
-            renderer.res_loader().cmd_buf,
-            renderer.device_memory(),
+        let font_atlas_image = UniqueImage::new(
+            renderer,
             ImageCreateInfo::builder()
                 .usage(ImageUsageFlags::SAMPLED | ImageUsageFlags::TRANSFER_DST)
                 .format(Format::R8_UNORM)
@@ -202,12 +197,8 @@ impl UiBackend {
             &img_pixels,
         )?;
 
-        renderer
-            .res_loader()
-            .add_staging_buffer(font_atlas_staging_buffer);
-
         let font_atlas_imageview = UniqueImageView::new(
-            renderer.graphics_device(),
+            renderer,
             &ImageViewCreateInfo::builder()
                 .format(Format::R8_UNORM)
                 .image(font_atlas_image.image)
@@ -423,7 +414,7 @@ impl UiBackend {
         // Push vertices + indices 2 GPU
         {
             let vertex_buffer_mapping = ScopedBufferMapping::create(
-                draw_context.graphics_device,
+                draw_context.renderer,
                 &self.vertex_buffer,
                 self.vertex_bytes_one_frame,
                 self.vertex_bytes_one_frame * draw_context.frame_id as u64,
@@ -431,7 +422,7 @@ impl UiBackend {
             .expect("Failed to map UI vertex buffer");
 
             let index_buffer_mapping = ScopedBufferMapping::create(
-                draw_context.graphics_device,
+                draw_context.renderer,
                 &self.index_buffer,
                 self.index_bytes_one_frame,
                 self.index_bytes_one_frame * draw_context.frame_id as u64,
@@ -534,7 +525,7 @@ impl UiBackend {
             // push transform
             {
                 ScopedBufferMapping::create(
-                    draw_context.graphics_device,
+                    draw_context.renderer,
                     &self.uniform_buffer,
                     size_of::<Uniform>() as DeviceSize,
                     self.ubo_bytes_one_frame * draw_context.frame_id as DeviceSize,
