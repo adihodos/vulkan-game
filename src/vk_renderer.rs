@@ -83,19 +83,16 @@ pub struct UniqueImage {
 
 impl UniqueImage {
     pub fn new(
-        renderer: &VulkanRenderer,
-        image_info: ImageCreateInfo,
-        data: &[ImageCopySource],
+        graphics_device: &Device,
+        memory_props: &PhysicalDeviceMemoryProperties,
+        image_info: &ImageCreateInfo,
     ) -> Option<UniqueImage> {
-        let graphics_device = renderer.graphics_device();
-
-        let image = unsafe { graphics_device.create_image(&image_info, None) }
+        let image = unsafe { graphics_device.create_image(image_info, None) }
             .map_err(|e| error!("Failed to create image: {}", e))
             .ok()?;
 
         let image_memory_req = unsafe { graphics_device.get_image_memory_requirements(image) };
 
-        let memory_props = renderer.device_memory();
         let memory = unsafe {
             graphics_device.allocate_memory(
                 &MemoryAllocateInfo::builder()
@@ -113,8 +110,34 @@ impl UniqueImage {
         .ok()?;
 
         unsafe {
-            let _ = graphics_device.bind_image_memory(image, memory, 0);
+            let _ = graphics_device
+                .bind_image_memory(image, memory, 0)
+                .map_err(|e| error!("Failed to bind device memory for image, error {}", e))
+                .ok()?;
         }
+
+        Some(UniqueImage {
+            image,
+            memory,
+            device: graphics_device as *const _,
+        })
+    }
+
+    pub fn with_data(
+        renderer: &VulkanRenderer,
+        image_info: &ImageCreateInfo,
+        data: &[ImageCopySource],
+    ) -> Option<UniqueImage> {
+        let graphics_device = renderer.graphics_device();
+
+        let image = Self::new(
+            renderer.graphics_device(),
+            renderer.device_memory(),
+            &image_info,
+        )?;
+
+        let image_memory_req =
+            unsafe { graphics_device.get_image_memory_requirements(image.image) };
 
         let staging_buffer = UniqueBuffer::new(
             renderer,
@@ -154,7 +177,7 @@ impl UniqueImage {
                 .new_layout(ImageLayout::TRANSFER_DST_OPTIMAL)
                 .src_access_mask(AccessFlags::NONE)
                 .dst_access_mask(AccessFlags::MEMORY_WRITE)
-                .image(image)
+                .image(image.image)
                 .subresource_range(subresource_range)
                 .build(),
             ImageMemoryBarrier::builder()
@@ -162,7 +185,7 @@ impl UniqueImage {
                 .new_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .src_access_mask(AccessFlags::MEMORY_READ)
                 .dst_access_mask(AccessFlags::MEMORY_WRITE)
-                .image(image)
+                .image(image.image)
                 .subresource_range(subresource_range)
                 .build(),
         ];
@@ -199,7 +222,7 @@ impl UniqueImage {
             graphics_device.cmd_copy_buffer_to_image(
                 cmd_buf,
                 staging_buffer.buffer,
-                image,
+                image.image,
                 ImageLayout::TRANSFER_DST_OPTIMAL,
                 &buffer_copy_regions,
             );
@@ -221,11 +244,7 @@ impl UniqueImage {
 
         renderer.push_staging_buffer(staging_buffer);
 
-        Some(UniqueImage {
-            image,
-            memory,
-            device: graphics_device as *const _,
-        })
+        Some(image)
     }
 }
 
@@ -245,11 +264,9 @@ pub struct UniqueImageView {
 
 impl UniqueImageView {
     pub fn new(
-        renderer: &VulkanRenderer,
+        graphics_device: &Device,
         view_create_info: &ImageViewCreateInfo,
     ) -> Option<UniqueImageView> {
-        let graphics_device = renderer.graphics_device();
-
         let view = unsafe { graphics_device.create_image_view(view_create_info, None) }
             .map_err(|e| error!("Failed to create image view: {}", e))
             .ok()?;
@@ -387,43 +404,33 @@ pub struct UniqueDescriptorPool {
     device: *const Device,
 }
 
-impl UniqueDescriptorPool {
-    pub fn new(graphics_device: &Device) -> Option<UniqueDescriptorPool> {
-        let descriptor_pool_sizes = [
+pub struct DescriptorPoolBuilder {
+    pools: Vec<DescriptorPoolSize>,
+}
+
+impl DescriptorPoolBuilder {
+    pub fn new() -> Self {
+        Self {
+            pools: Vec::with_capacity(8),
+        }
+    }
+
+    pub fn add_pool(mut self, pool_type: DescriptorType, count: u32) -> Self {
+        self.pools.push(
             DescriptorPoolSize::builder()
-                .descriptor_count(64)
-                .ty(DescriptorType::SAMPLED_IMAGE)
+                .ty(pool_type)
+                .descriptor_count(count)
                 .build(),
-            DescriptorPoolSize::builder()
-                .descriptor_count(64)
-                .ty(DescriptorType::UNIFORM_BUFFER)
-                .build(),
-            DescriptorPoolSize::builder()
-                .descriptor_count(64)
-                .ty(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                .build(),
-            DescriptorPoolSize::builder()
-                .descriptor_count(64)
-                .ty(DescriptorType::STORAGE_BUFFER)
-                .build(),
-            DescriptorPoolSize::builder()
-                .descriptor_count(64)
-                .ty(DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                .build(),
-            DescriptorPoolSize::builder()
-                .descriptor_count(64)
-                .ty(DescriptorType::SAMPLER)
-                .build(),
-            DescriptorPoolSize::builder()
-                .descriptor_count(64)
-                .ty(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .build(),
-        ];
+        );
+        self
+    }
+
+    pub fn build(self, graphics_device: &Device, max_sets: u32) -> Option<UniqueDescriptorPool> {
         unsafe {
             graphics_device.create_descriptor_pool(
                 &DescriptorPoolCreateInfo::builder()
-                    .max_sets(64)
-                    .pool_sizes(&descriptor_pool_sizes)
+                    .max_sets(max_sets)
+                    .pool_sizes(&self.pools)
                     .build(),
                 None,
             )
@@ -1231,39 +1238,32 @@ impl FrameRenderData {
         .map_err(|e| error!("Failed to create command buffer {}", e))
         .ok()?;
 
-        let swapchain_imageview = unsafe {
-            graphics_device.create_image_view(
-                &ImageViewCreateInfo::builder()
-                    .format(swapchain_fmt)
-                    .image(swapchain_image)
-                    .view_type(ImageViewType::TYPE_2D)
-                    .format(swapchain_fmt)
-                    .components(
-                        ComponentMapping::builder()
-                            .r(ComponentSwizzle::R)
-                            .g(ComponentSwizzle::G)
-                            .b(ComponentSwizzle::B)
-                            .a(ComponentSwizzle::A)
-                            .build(),
-                    )
-                    .subresource_range(
-                        ImageSubresourceRange::builder()
-                            .level_count(1)
-                            .layer_count(1)
-                            .base_array_layer(0)
-                            .base_mip_level(0)
-                            .aspect_mask(ImageAspectFlags::COLOR)
-                            .build(),
-                    ),
-                None,
-            )
-        }
-        .map_err(|e| error!("Failed to create swapchain image view: {}", e))
-        .map(|view| UniqueImageView {
-            view,
-            device: graphics_device as *const _,
-        })
-        .ok()?;
+        let swapchain_imageview = UniqueImageView::new(
+            graphics_device,
+            &ImageViewCreateInfo::builder()
+                .format(swapchain_fmt)
+                .image(swapchain_image)
+                .view_type(ImageViewType::TYPE_2D)
+                .format(swapchain_fmt)
+                .components(
+                    ComponentMapping::builder()
+                        .r(ComponentSwizzle::R)
+                        .g(ComponentSwizzle::G)
+                        .b(ComponentSwizzle::B)
+                        .a(ComponentSwizzle::A)
+                        .build(),
+                )
+                .subresource_range(
+                    ImageSubresourceRange::builder()
+                        .level_count(1)
+                        .layer_count(1)
+                        .base_array_layer(0)
+                        .base_mip_level(0)
+                        .aspect_mask(ImageAspectFlags::COLOR)
+                        .build(),
+                )
+                .build(),
+        )?;
 
         let (ds_image, ds_image_view) = FrameRenderData::create_depth_stencil_buffer(
             graphics_device,
@@ -1357,39 +1357,31 @@ impl FrameRenderData {
             .map_err(|e| error!("Failed to bind memory for image: {}", e))
             .ok()?;
 
-        let image_view = unsafe {
-            graphics_device.create_image_view(
-                &ImageViewCreateInfo::builder()
-                    .image(image)
-                    .view_type(ImageViewType::TYPE_2D)
-                    .format(format)
-                    .components(
-                        ComponentMapping::builder()
-                            .r(ComponentSwizzle::R)
-                            .g(ComponentSwizzle::G)
-                            .b(ComponentSwizzle::B)
-                            .a(ComponentSwizzle::A)
-                            .build(),
-                    )
-                    .subresource_range(
-                        ImageSubresourceRange::builder()
-                            .aspect_mask(ImageAspectFlags::DEPTH | ImageAspectFlags::STENCIL)
-                            .base_mip_level(0)
-                            .base_array_layer(0)
-                            .layer_count(1)
-                            .level_count(1)
-                            .build(),
-                    )
-                    .build(),
-                None,
-            )
-        }
-        .map_err(|e| error!("Failed to create image view: {}", e))
-        .map(|img_view| UniqueImageView {
-            view: img_view,
-            device: graphics_device as *const _,
-        })
-        .ok()?;
+        let image_view = UniqueImageView::new(
+            graphics_device,
+            &ImageViewCreateInfo::builder()
+                .image(image)
+                .view_type(ImageViewType::TYPE_2D)
+                .format(format)
+                .components(
+                    ComponentMapping::builder()
+                        .r(ComponentSwizzle::R)
+                        .g(ComponentSwizzle::G)
+                        .b(ComponentSwizzle::B)
+                        .a(ComponentSwizzle::A)
+                        .build(),
+                )
+                .subresource_range(
+                    ImageSubresourceRange::builder()
+                        .aspect_mask(ImageAspectFlags::DEPTH | ImageAspectFlags::STENCIL)
+                        .base_mip_level(0)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .level_count(1)
+                        .build(),
+                )
+                .build(),
+        )?;
 
         Some((
             UniqueImage {
@@ -1743,7 +1735,15 @@ impl VulkanRenderer {
 
         info!("Frame render data created");
 
-        let dpool = UniqueDescriptorPool::new(&graphics_device)?;
+        let dpool = DescriptorPoolBuilder::new()
+            .add_pool(DescriptorType::SAMPLED_IMAGE, 64)
+            .add_pool(DescriptorType::UNIFORM_BUFFER, 64)
+            .add_pool(DescriptorType::UNIFORM_BUFFER_DYNAMIC, 64)
+            .add_pool(DescriptorType::STORAGE_BUFFER, 64)
+            .add_pool(DescriptorType::STORAGE_BUFFER_DYNAMIC, 64)
+            .add_pool(DescriptorType::SAMPLER, 64)
+            .add_pool(DescriptorType::COMBINED_IMAGE_SAMPLER, 64)
+            .build(&graphics_device, 64)?;
 
         info!("Descriptor pool created");
 

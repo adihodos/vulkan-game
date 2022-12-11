@@ -176,9 +176,9 @@ impl UiBackend {
             bytes: (font_atlas_image.width * font_atlas_image.height) as DeviceSize,
         }];
 
-        let font_atlas_image = UniqueImage::new(
+        let font_atlas_image = UniqueImage::with_data(
             renderer,
-            ImageCreateInfo::builder()
+            &ImageCreateInfo::builder()
                 .usage(ImageUsageFlags::SAMPLED | ImageUsageFlags::TRANSFER_DST)
                 .format(Format::R8_UNORM)
                 .initial_layout(ImageLayout::UNDEFINED)
@@ -198,7 +198,7 @@ impl UiBackend {
         )?;
 
         let font_atlas_imageview = UniqueImageView::new(
-            renderer,
+            renderer.graphics_device(),
             &ImageViewCreateInfo::builder()
                 .format(Format::R8_UNORM)
                 .image(font_atlas_image.image)

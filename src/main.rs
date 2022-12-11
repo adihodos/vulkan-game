@@ -1,6 +1,6 @@
 use glfw::{Action, Context, Key};
 use imgui::Condition;
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use std::{
     cell::{Cell, RefCell},
     sync::mpsc::Receiver,
@@ -58,7 +58,6 @@ impl BasicWindow {
         window: glfw::Window,
         renderer: VulkanRenderer,
     ) -> Option<BasicWindow> {
-        info!("O kurwa!");
         renderer.begin_resource_loading();
         let ui = ui_backend::UiBackend::new(&renderer, &window)?;
         renderer.wait_resources_loaded();
@@ -124,6 +123,7 @@ fn main() {
 
     info!("uraaa this be info!");
     warn!("urraa! this be warn cyka!");
+    error!("urrra! this be error pierdole!");
     trace!("urrraa ! this be trace blyat!");
     debug!("urraa! this be debug, kurwa jebane !");
 
