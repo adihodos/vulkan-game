@@ -1,0 +1,31 @@
+[package]
+name = "vulkan-experiments"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ash = { version = "*", features = ["linked"] }
+log = { version = "*"}
+flexi_logger = { version = "*"}
+imgui = "*"
+mmap-rs = "*"
+nalgebra-glm = "*"
+memoffset = "*"
+strum = "*"
+strum_macros = "*"
+
+[dependencies.glfw]
+	version = "*"
+	default-features = false
+	features = ["vulkan"]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+	windows-sys = { version = "*", features = ["Win32_Foundation", "Win32_System_LibraryLoader"]}
+
+[target.'cfg(target_os = "unix")'.dependencies]
+	x11 = "*"
+
+[build-dependencies]
+	shaderc = "*"
