@@ -27,12 +27,12 @@ use ash::{
         DebugUtilsMessengerCreateFlagsEXT, DebugUtilsMessengerCreateInfoEXT,
         DebugUtilsMessengerEXT, DependencyFlags, DescriptorBufferInfo, DescriptorImageInfo,
         DescriptorPool, DescriptorPoolCreateInfo, DescriptorPoolSize, DescriptorSet,
-        DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateFlags,
-        DescriptorSetLayoutCreateInfo, DescriptorType, DeviceCreateInfo, DeviceMemory,
-        DeviceQueueCreateInfo, DeviceSize, DynamicState, Extent2D, Extent3D, Fence,
-        FenceCreateFlags, FenceCreateInfo, Format, FormatFeatureFlags, Framebuffer,
-        FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image, ImageAspectFlags,
-        ImageCreateInfo, ImageLayout, ImageMemoryBarrier, ImageSubresourceLayers,
+        DescriptorSetAllocateInfo, DescriptorSetLayout, DescriptorSetLayoutBinding,
+        DescriptorSetLayoutCreateFlags, DescriptorSetLayoutCreateInfo, DescriptorType,
+        DeviceCreateInfo, DeviceMemory, DeviceQueueCreateInfo, DeviceSize, DynamicState, Extent2D,
+        Extent3D, Fence, FenceCreateFlags, FenceCreateInfo, Format, FormatFeatureFlags,
+        Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image,
+        ImageAspectFlags, ImageCreateInfo, ImageLayout, ImageMemoryBarrier, ImageSubresourceLayers,
         ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags, ImageView,
         ImageViewCreateInfo, ImageViewType, MappedMemoryRange, MemoryAllocateInfo, MemoryMapFlags,
         MemoryPropertyFlags, MemoryRequirements, Offset2D, PFN_vkCreateFence, PhysicalDevice,
@@ -906,11 +906,12 @@ impl<'a> GraphicsPipelineBuilder<'a> {
         self,
         graphics_device: &Device,
         pipeline_cache: PipelineCache,
-        pipeline_layout: PipelineLayout,
-        descriptor_set_layouts: Vec<DescriptorSetLayout>,
+        pipeline_layout_with_descriptor_layouts: (PipelineLayout, Vec<DescriptorSetLayout>),
         renderpass: RenderPass,
         subpass: u32,
     ) -> Option<UniqueGraphicsPipeline> {
+        let (pipeline_layout, descriptor_set_layouts) = pipeline_layout_with_descriptor_layouts;
+
         let built_shader_modules = self
             .shader_stages
             .iter()
@@ -1064,7 +1065,11 @@ pub struct UniqueGraphicsPipeline {
     device: *const Device,
 }
 
-impl UniqueGraphicsPipeline {}
+impl UniqueGraphicsPipeline {
+    pub fn descriptor_layouts(&self) -> &[DescriptorSetLayout] {
+        &self.descriptor_layouts
+    }
+}
 
 impl std::ops::Drop for UniqueGraphicsPipeline {
     fn drop(&mut self) {
@@ -1424,15 +1429,6 @@ impl ResourceLoader {
     pub fn add_staging_buffer(&self, staging_buf: UniqueBuffer) {
         self.staging_buffers.borrow_mut().push(staging_buf);
     }
-}
-
-pub struct DrawContext<'a> {
-    pub renderer: &'a VulkanRenderer,
-    pub graphics_device: &'a Device,
-    pub cmd_buff: CommandBuffer,
-    pub frame_id: u32,
-    pub viewport: Viewport,
-    pub scissor: Rect2D,
 }
 
 pub struct VulkanRenderer {
@@ -1878,33 +1874,33 @@ impl VulkanRenderer {
         }
     }
 
-    pub fn draw_context(&self) -> DrawContext {
-        let viewport = Viewport {
-            x: 0f32,
-            y: 0f32,
-            width: self.framebuffer_extents.width as f32,
-            height: self.framebuffer_extents.height as f32,
-            min_depth: 1f32,
-            max_depth: 0f32,
-        };
-
-        let scissor = Rect2D {
-            offset: Offset2D { x: 0, y: 0 },
-            extent: Extent2D {
-                width: self.framebuffer_extents.width,
-                height: self.framebuffer_extents.height,
-            },
-        };
-
-        DrawContext {
-            renderer: self,
-            graphics_device: self.graphics_device(),
-            cmd_buff: self.frame_render_data[self.current_frame_id() as usize].command_buffer,
-            frame_id: self.current_frame_id(),
-            viewport,
-            scissor,
-        }
-    }
+    // pub fn draw_context(&self) -> DrawContext {
+    //     let viewport = Viewport {
+    //         x: 0f32,
+    //         y: 0f32,
+    //         width: self.framebuffer_extents.width as f32,
+    //         height: self.framebuffer_extents.height as f32,
+    //         min_depth: 1f32,
+    //         max_depth: 0f32,
+    //     };
+    //
+    //     let scissor = Rect2D {
+    //         offset: Offset2D { x: 0, y: 0 },
+    //         extent: Extent2D {
+    //             width: self.framebuffer_extents.width,
+    //             height: self.framebuffer_extents.height,
+    //         },
+    //     };
+    //
+    //     DrawContext {
+    //         renderer: self,
+    //         graphics_device: self.graphics_device(),
+    //         cmd_buff: self.frame_render_data[self.current_frame_id() as usize].command_buffer,
+    //         frame_id: self.current_frame_id(),
+    //         viewport,
+    //         scissor,
+    //     }
+    // }
 
     fn current_frame_data(&self) -> &FrameRenderData {
         &self.frame_render_data[self.current_frame_id() as usize]
@@ -2046,6 +2042,26 @@ impl VulkanRenderer {
         unsafe {
             let _ = self.graphics_device.device_wait_idle();
         }
+    }
+
+    pub fn allocate_descriptor_sets(
+        &self,
+        pipeline: &UniqueGraphicsPipeline,
+    ) -> Option<Vec<DescriptorSet>> {
+        unsafe {
+            self.graphics_device().allocate_descriptor_sets(
+                &DescriptorSetAllocateInfo::builder()
+                    .set_layouts(pipeline.descriptor_layouts())
+                    .descriptor_pool(self.descriptor_pool.dpool)
+                    .build(),
+            )
+        }
+        .map_err(|e| error!("Failed to allocate descriptor sets : {}", e))
+        .ok()
+    }
+
+    pub fn current_command_buffer(&self) -> CommandBuffer {
+        self.current_frame_data().command_buffer
     }
 }
 

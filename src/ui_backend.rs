@@ -17,11 +17,14 @@ use log::{error, info};
 use memoffset::offset_of;
 use nalgebra_glm::{I32Vec2, Vec2};
 
-use crate::vk_renderer::{
-    self, DrawContext, FrameRenderData, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
-    ImageCopySource, ScopedBufferMapping, ShaderModuleDescription, ShaderModuleSource,
-    UniqueBuffer, UniqueGraphicsPipeline, UniqueImage, UniqueImageView, UniqueSampler,
-    VulkanRenderer,
+use crate::{
+    draw_context::DrawContext,
+    vk_renderer::{
+        self, FrameRenderData, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
+        ImageCopySource, ScopedBufferMapping, ShaderModuleDescription, ShaderModuleSource,
+        UniqueBuffer, UniqueGraphicsPipeline, UniqueImage, UniqueImageView, UniqueSampler,
+        VulkanRenderer,
+    },
 };
 
 use std::{
@@ -227,71 +230,24 @@ impl UiBackend {
                 .build(),
         )?;
 
-        let (pipeline_layout, descriptor_set_layouts) = GraphicsPipelineLayoutBuilder::new()
-            .add_binding(
-                DescriptorSetLayoutBinding::builder()
-                    .binding(0)
-                    .stage_flags(ShaderStageFlags::VERTEX)
-                    .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                    .descriptor_count(1)
-                    .build(),
-            )
-            .add_binding(
-                DescriptorSetLayoutBinding::builder()
-                    .binding(1)
-                    .stage_flags(ShaderStageFlags::FRAGMENT)
-                    .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .descriptor_count(1)
-                    .build(),
-            )
-            .build(renderer.graphics_device())?;
-
-        let descriptor_sets = unsafe {
-            renderer.graphics_device().allocate_descriptor_sets(
-                &DescriptorSetAllocateInfo::builder()
-                    .descriptor_pool(renderer.descriptor_pool())
-                    .set_layouts(&descriptor_set_layouts)
-                    .build(),
-            )
-        }
-        .map_err(|e| error!("Failed to allocate descriptor sets: {}", e))
-        .ok()?;
-
-        assert!(descriptor_sets.len() == 1);
-        imgui.fonts().tex_id = TextureId::new(descriptor_sets[0].as_raw() as usize);
-
-        let ds_buffer_info = [DescriptorBufferInfo::builder()
-            .range(size_of::<Uniform>() as DeviceSize)
-            .offset(0)
-            .buffer(uniform_buffer.buffer)
-            .build()];
-
-        let ds_image_info = [DescriptorImageInfo::builder()
-            .sampler(sampler.sampler)
-            .image_view(font_atlas_imageview.view)
-            .image_layout(ImageLayout::READ_ONLY_OPTIMAL)
-            .build()];
-
-        let wds = [
-            WriteDescriptorSet::builder()
-                .dst_binding(0)
-                .dst_set(descriptor_sets[0])
-                .dst_array_element(0)
-                .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                .buffer_info(&ds_buffer_info)
-                .build(),
-            WriteDescriptorSet::builder()
-                .dst_binding(1)
-                .dst_array_element(0)
-                .image_info(&ds_image_info)
-                .dst_set(descriptor_sets[0])
-                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .build(),
-        ];
-
-        unsafe {
-            renderer.graphics_device().update_descriptor_sets(&wds, &[]);
-        }
+        // let (pipeline_layout, descriptor_set_layouts) = GraphicsPipelineLayoutBuilder::new()
+        //     .add_binding(
+        //         DescriptorSetLayoutBinding::builder()
+        //             .binding(0)
+        //             .stage_flags(ShaderStageFlags::VERTEX)
+        //             .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+        //             .descriptor_count(1)
+        //             .build(),
+        //     )
+        //     .add_binding(
+        //         DescriptorSetLayoutBinding::builder()
+        //             .binding(1)
+        //             .stage_flags(ShaderStageFlags::FRAGMENT)
+        //             .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+        //             .descriptor_count(1)
+        //             .build(),
+        //     )
+        //     .build(renderer.graphics_device())?;
 
         info!("Creating ui graphics pipeline");
 
@@ -365,11 +321,74 @@ impl UiBackend {
             .build(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
-                pipeline_layout,
-                descriptor_set_layouts,
+                GraphicsPipelineLayoutBuilder::new()
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .stage_flags(ShaderStageFlags::VERTEX)
+                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .descriptor_count(1)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .build(),
+                    )
+                    .build(renderer.graphics_device())?,
                 renderer.renderpass(),
                 0,
             )?;
+
+        let descriptor_sets = unsafe {
+            renderer.graphics_device().allocate_descriptor_sets(
+                &DescriptorSetAllocateInfo::builder()
+                    .descriptor_pool(renderer.descriptor_pool())
+                    .set_layouts(pipeline.descriptor_layouts())
+                    .build(),
+            )
+        }
+        .map_err(|e| error!("Failed to allocate descriptor sets: {}", e))
+        .ok()?;
+
+        assert!(descriptor_sets.len() == 1);
+        imgui.fonts().tex_id = TextureId::new(descriptor_sets[0].as_raw() as usize);
+
+        let ds_buffer_info = [DescriptorBufferInfo::builder()
+            .range(size_of::<Uniform>() as DeviceSize)
+            .offset(0)
+            .buffer(uniform_buffer.buffer)
+            .build()];
+
+        let ds_image_info = [DescriptorImageInfo::builder()
+            .sampler(sampler.sampler)
+            .image_view(font_atlas_imageview.view)
+            .image_layout(ImageLayout::READ_ONLY_OPTIMAL)
+            .build()];
+
+        let wds = [
+            WriteDescriptorSet::builder()
+                .dst_binding(0)
+                .dst_set(descriptor_sets[0])
+                .dst_array_element(0)
+                .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                .buffer_info(&ds_buffer_info)
+                .build(),
+            WriteDescriptorSet::builder()
+                .dst_binding(1)
+                .dst_array_element(0)
+                .image_info(&ds_image_info)
+                .dst_set(descriptor_sets[0])
+                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .build(),
+        ];
+
+        unsafe {
+            renderer.graphics_device().update_descriptor_sets(&wds, &[]);
+        }
 
         info!("UI backend created ...");
         let win_size = window.get_size();
@@ -393,7 +412,7 @@ impl UiBackend {
         })
     }
 
-    pub fn draw_frame(&self, draw_context: DrawContext) {
+    pub fn draw_frame(&self, draw_context: &DrawContext) {
         let mut ui_context = self.imgui.borrow_mut();
 
         let draw_data = ui_context.render();
@@ -454,8 +473,10 @@ impl UiBackend {
             );
         }
 
+        let graphics_device = draw_context.renderer.graphics_device();
+
         unsafe {
-            draw_context.graphics_device.cmd_bind_pipeline(
+            graphics_device.cmd_bind_pipeline(
                 draw_context.cmd_buff,
                 PipelineBindPoint::GRAPHICS,
                 self.pipeline.pipeline,
@@ -465,14 +486,14 @@ impl UiBackend {
             let vertex_buffer_offsets =
                 [(self.vertex_bytes_one_frame * draw_context.frame_id as u64) as DeviceSize];
 
-            draw_context.graphics_device.cmd_bind_vertex_buffers(
+            graphics_device.cmd_bind_vertex_buffers(
                 draw_context.cmd_buff,
                 0,
                 &vertex_buffers,
                 &vertex_buffer_offsets,
             );
 
-            draw_context.graphics_device.cmd_bind_index_buffer(
+            graphics_device.cmd_bind_index_buffer(
                 draw_context.cmd_buff,
                 self.index_buffer.buffer,
                 (self.index_bytes_one_frame * draw_context.frame_id as u64) as DeviceSize,
@@ -481,9 +502,7 @@ impl UiBackend {
 
             let viewports = [draw_context.viewport];
 
-            draw_context
-                .graphics_device
-                .cmd_set_viewport(draw_context.cmd_buff, 0, &viewports);
+            graphics_device.cmd_set_viewport(draw_context.cmd_buff, 0, &viewports);
 
             let scissors = [draw_context.scissor];
 
@@ -542,7 +561,7 @@ impl UiBackend {
             let descriptor_sets = [self.descriptor_set];
             let dynamic_offsets = [self.ubo_bytes_one_frame as u32 * draw_context.frame_id];
 
-            draw_context.graphics_device.cmd_bind_descriptor_sets(
+            graphics_device.cmd_bind_descriptor_sets(
                 draw_context.cmd_buff,
                 PipelineBindPoint::GRAPHICS,
                 self.pipeline.layout,
@@ -603,12 +622,8 @@ impl UiBackend {
                                     },
                                 }];
 
-                                draw_context.graphics_device.cmd_set_scissor(
-                                    draw_context.cmd_buff,
-                                    0,
-                                    &scissor,
-                                );
-                                draw_context.graphics_device.cmd_draw_indexed(
+                                graphics_device.cmd_set_scissor(draw_context.cmd_buff, 0, &scissor);
+                                graphics_device.cmd_draw_indexed(
                                     draw_context.cmd_buff,
                                     count as u32,
                                     1,
