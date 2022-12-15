@@ -179,6 +179,8 @@ impl UiBackend {
             bytes: (font_atlas_image.width * font_atlas_image.height) as DeviceSize,
         }];
 
+        let copy_tex_work_pkg = renderer.create_work_package()?;
+
         let font_atlas_image = UniqueImage::with_data(
             renderer,
             &ImageCreateInfo::builder()
@@ -198,7 +200,10 @@ impl UiBackend {
                 .samples(SampleCountFlags::TYPE_1)
                 .build(),
             &img_pixels,
+            &copy_tex_work_pkg,
         )?;
+
+        renderer.push_work_package(copy_tex_work_pkg);
 
         let font_atlas_imageview = UniqueImageView::new(
             renderer.graphics_device(),

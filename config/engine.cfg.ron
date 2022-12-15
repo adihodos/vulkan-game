@@ -1,0 +1,6 @@
+(
+    root_path: "data",
+    textures: "data/textures",
+    models: "data/models",
+    shaders: "data/shaders",
+)

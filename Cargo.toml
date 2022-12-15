@@ -19,6 +19,12 @@ strum_macros = "*"
 gltf = { version = "*", features = ["names"] }
 slice-of-array = "*"
 chrono = "*"
+smallvec = "*"
+image = "*"
+rayon = "*"
+libktx-rs = "*"
+serde = "*"
+ron = "*"
 
 [dependencies.glfw]
 	version = "*"

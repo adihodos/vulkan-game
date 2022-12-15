@@ -1,0 +1,8 @@
+(
+    skyboxes: [
+        (
+            tag: "starfield1",
+            path: "skybox-ibl",
+        ),
+    ],
+)

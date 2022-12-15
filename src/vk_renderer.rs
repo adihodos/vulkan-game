@@ -1,3 +1,4 @@
+use libktx_rs::TextureCreateFlags;
 use log::{error, info, warn};
 use std::{
     cell::RefCell,
@@ -6,6 +7,7 @@ use std::{
     mem::size_of,
     path::PathBuf,
     ptr::copy_nonoverlapping,
+    sync::{Arc, Mutex},
 };
 
 use ash::{
@@ -32,27 +34,28 @@ use ash::{
         DeviceCreateInfo, DeviceMemory, DeviceQueueCreateInfo, DeviceSize, DynamicState, Extent2D,
         Extent3D, Fence, FenceCreateFlags, FenceCreateInfo, Format, FormatFeatureFlags,
         Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image,
-        ImageAspectFlags, ImageCreateInfo, ImageLayout, ImageMemoryBarrier, ImageSubresourceLayers,
-        ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags, ImageView,
-        ImageViewCreateInfo, ImageViewType, MappedMemoryRange, MemoryAllocateInfo, MemoryMapFlags,
-        MemoryPropertyFlags, MemoryRequirements, Offset2D, PFN_vkCreateFence, PhysicalDevice,
-        PhysicalDeviceFeatures, PhysicalDeviceFeatures2, PhysicalDeviceMemoryProperties,
-        PhysicalDeviceProperties, PhysicalDeviceType, PhysicalDeviceVulkan11Features, Pipeline,
-        PipelineBindPoint, PipelineCache, PipelineCacheCreateInfo,
-        PipelineColorBlendAttachmentState, PipelineColorBlendAttachmentStateBuilder,
-        PipelineColorBlendStateCreateInfo, PipelineDepthStencilStateCreateInfo,
-        PipelineDynamicStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
-        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
-        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo, PipelineStageFlags,
-        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
-        PresentInfoKHR, PresentModeKHR, PrimitiveTopology, PushConstantRange, Queue, QueueFlags,
-        Rect2D, RenderPass, RenderPassBeginInfo, RenderPassCreateInfo, RenderingInfo,
-        SampleCountFlags, SampleMask, SamplerCreateInfo, Semaphore, SemaphoreCreateInfo,
-        ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, SubmitInfo,
-        SubpassContents, SubpassDependency, SubpassDescription, SubpassDescriptionFlags,
-        SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
-        VertexInputAttributeDescription, VertexInputBindingDescription, Viewport,
-        WriteDescriptorSet, HINSTANCE, SUBPASS_EXTERNAL,
+        ImageAspectFlags, ImageCreateFlags, ImageCreateInfo, ImageLayout, ImageMemoryBarrier,
+        ImageSubresourceLayers, ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags,
+        ImageView, ImageViewCreateInfo, ImageViewType, MappedMemoryRange, MemoryAllocateInfo,
+        MemoryMapFlags, MemoryPropertyFlags, MemoryRequirements, Offset2D, Offset3D,
+        PFN_vkCreateFence, PhysicalDevice, PhysicalDeviceFeatures, PhysicalDeviceFeatures2,
+        PhysicalDeviceMemoryProperties, PhysicalDeviceProperties, PhysicalDeviceType,
+        PhysicalDeviceVulkan11Features, Pipeline, PipelineBindPoint, PipelineCache,
+        PipelineCacheCreateInfo, PipelineColorBlendAttachmentState,
+        PipelineColorBlendAttachmentStateBuilder, PipelineColorBlendStateCreateInfo,
+        PipelineDepthStencilStateCreateInfo, PipelineDynamicStateCreateInfo,
+        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
+        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
+        PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
+        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PresentModeKHR,
+        PrimitiveTopology, PushConstantRange, Queue, QueueFlags, Rect2D, RenderPass,
+        RenderPassBeginInfo, RenderPassCreateInfo, RenderingInfo, SampleCountFlags, SampleMask,
+        SamplerCreateInfo, Semaphore, SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo,
+        ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents, SubpassDependency,
+        SubpassDescription, SubpassDescriptionFlags, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
+        SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, VertexInputAttributeDescription,
+        VertexInputBindingDescription, Viewport, WriteDescriptorSet, HINSTANCE,
+        QUEUE_FAMILY_IGNORED, SUBPASS_EXTERNAL, WHOLE_SIZE,
     },
     Device, Entry, Instance,
 };
@@ -61,6 +64,55 @@ use ash::{
 pub struct UniqueDeviceMemory {
     pub memory: DeviceMemory,
     device: *const Device,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct ImageInfo {
+    pub is_array: bool,
+    pub is_cubemap: bool,
+    pub num_faces: u32,
+    pub num_layers: u32,
+    pub num_levels: u32,
+    pub num_dimensions: u32,
+    pub width: u32,
+    pub height: u32,
+    pub depth: u32,
+    pub format: Format,
+    pub image_type: ImageType,
+    pub view_type: ImageViewType,
+}
+
+impl std::convert::From<ImageCreateInfo> for ImageInfo {
+    fn from(img_create_info: ImageCreateInfo) -> Self {
+        let is_cubemap = img_create_info
+            .flags
+            .contains(ImageCreateFlags::CUBE_COMPATIBLE);
+
+        let is_array = if is_cubemap {
+            (img_create_info.array_layers / 6) > 1
+        } else {
+            img_create_info.array_layers > 1
+        };
+
+        let num_dimensions = UniqueImage::get_dimensions_from_type(img_create_info.image_type);
+        let (_, view_type) =
+            UniqueImage::get_image_and_view_type(num_dimensions, is_array, is_cubemap);
+
+        ImageInfo {
+            is_array,
+            is_cubemap,
+            num_faces: if is_cubemap { 6 } else { 1 },
+            num_layers: img_create_info.array_layers,
+            num_levels: img_create_info.mip_levels,
+            num_dimensions,
+            width: img_create_info.extent.width,
+            height: img_create_info.extent.height,
+            depth: img_create_info.extent.depth,
+            format: img_create_info.format,
+            image_type: img_create_info.image_type,
+            view_type,
+        }
+    }
 }
 
 impl std::ops::Drop for UniqueDeviceMemory {
@@ -78,6 +130,7 @@ pub struct ImageCopySource {
 pub struct UniqueImage {
     pub image: Image,
     pub memory: DeviceMemory,
+    pub info: ImageInfo,
     device: *const Device,
 }
 
@@ -120,13 +173,156 @@ impl UniqueImage {
             image,
             memory,
             device: graphics_device as *const _,
+            info: (*image_info).into(),
         })
+    }
+
+    fn set_image_layout(
+        graphics_device: &Device,
+        cmd_buffer: CommandBuffer,
+        image: Image,
+        old_layout: ImageLayout,
+        new_layout: ImageLayout,
+        subresource_range: ImageSubresourceRange,
+    ) {
+        // Source layouts (old)
+        // The source access mask controls actions to be finished on the old
+        // layout before it will be transitioned to the new layout.
+        let src_access_mask = match old_layout {
+            ImageLayout::UNDEFINED =>
+            // Image layout is undefined (or does not matter).
+            // Only valid as initial layout. No flags required.
+            {
+                AccessFlags::empty()
+            }
+
+            ImageLayout::PREINITIALIZED =>
+            // Image is preinitialized.
+            // Only valid as initial layout for linear images; preserves memory
+            // contents. Make sure host writes have finished.
+            {
+                AccessFlags::HOST_WRITE
+            }
+
+            ImageLayout::COLOR_ATTACHMENT_OPTIMAL =>
+            // Image is a color attachment.
+            // Make sure writes to the color buffer have finished
+            {
+                AccessFlags::COLOR_ATTACHMENT_WRITE
+            }
+
+            ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL =>
+            // Image is a depth/stencil attachment.
+            // Make sure any writes to the depth/stencil buffer have finished.
+            {
+                AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
+            }
+
+            ImageLayout::TRANSFER_SRC_OPTIMAL =>
+            // Image is a transfer source.
+            // Make sure any reads from the image have finished
+            {
+                AccessFlags::TRANSFER_READ
+            }
+
+            ImageLayout::TRANSFER_DST_OPTIMAL =>
+            // Image is a transfer destination.
+            // Make sure any writes to the image have finished.
+            {
+                AccessFlags::TRANSFER_WRITE
+            }
+
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL =>
+            // Image is read by a shader.
+            // Make sure any shader reads from the image have finished
+            {
+                AccessFlags::SHADER_READ
+            }
+
+            _ => panic!("Unsupported layout {:?}", old_layout), /* Value not used by callers, so not supported. */
+        };
+
+        // Target layouts (new)
+        // The destination access mask controls the dependency for the new image
+        // layout.
+        let (src_access_mask, dst_access_mask) = match new_layout {
+            ImageLayout::TRANSFER_DST_OPTIMAL =>
+            // Image will be used as a transfer destination.
+            // Make sure any writes to the image have finished.
+            {
+                (src_access_mask, AccessFlags::TRANSFER_WRITE)
+            }
+
+            ImageLayout::TRANSFER_SRC_OPTIMAL =>
+            // Image will be used as a transfer source.
+            // Make sure any reads from and writes to the image have finished.
+            {
+                (
+                    src_access_mask | AccessFlags::TRANSFER_READ,
+                    AccessFlags::TRANSFER_READ,
+                )
+            }
+
+            ImageLayout::COLOR_ATTACHMENT_OPTIMAL =>
+            // Image will be used as a color attachment.
+            // Make sure any writes to the color buffer have finished.
+            {
+                (
+                    AccessFlags::TRANSFER_READ,
+                    AccessFlags::COLOR_ATTACHMENT_WRITE,
+                )
+            }
+
+            ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL =>
+            // Image layout will be used as a depth/stencil attachment.
+            // Make sure any writes to depth/stencil buffer have finished.
+            {
+                (src_access_mask, AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+            }
+
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL => {
+                // Image will be read in a shader (sampler, input attachment).
+                // Make sure any writes to the image have finished.
+                let src_acc_msk = if src_access_mask.is_empty() {
+                    AccessFlags::HOST_WRITE | AccessFlags::TRANSFER_WRITE
+                } else {
+                    src_access_mask
+                };
+
+                (src_acc_msk, AccessFlags::SHADER_READ)
+            }
+
+            _ => panic!("Unsupported layout {:?}", new_layout),
+        };
+        let image_memory_barrier = [ImageMemoryBarrier::builder()
+            .src_queue_family_index(QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(QUEUE_FAMILY_IGNORED)
+            .old_layout(old_layout)
+            .new_layout(new_layout)
+            .image(image)
+            .subresource_range(subresource_range)
+            .src_access_mask(src_access_mask)
+            .dst_access_mask(dst_access_mask)
+            .build()];
+
+        unsafe {
+            graphics_device.cmd_pipeline_barrier(
+                cmd_buffer,
+                PipelineStageFlags::ALL_COMMANDS,
+                PipelineStageFlags::ALL_COMMANDS,
+                DependencyFlags::empty(),
+                &[],
+                &[],
+                &image_memory_barrier,
+            );
+        }
     }
 
     pub fn with_data(
         renderer: &VulkanRenderer,
         image_info: &ImageCreateInfo,
         data: &[ImageCopySource],
+        work_package: &RendererWorkPackage,
     ) -> Option<UniqueImage> {
         let graphics_device = renderer.graphics_device();
 
@@ -190,7 +386,8 @@ impl UniqueImage {
                 .build(),
         ];
 
-        let cmd_buf = renderer.res_loader().cmd_buf;
+        let cmd_buf = work_package.cmd_buf;
+        //renderer.res_loader().cmd_buf;
 
         unsafe {
             graphics_device.cmd_pipeline_barrier(
@@ -243,6 +440,322 @@ impl UniqueImage {
         }
 
         renderer.push_staging_buffer(staging_buffer);
+
+        Some(image)
+    }
+
+    fn get_dimensions_from_type(image_type: ImageType) -> u32 {
+        match image_type {
+            ImageType::TYPE_1D => 1,
+            ImageType::TYPE_2D => 2,
+            ImageType::TYPE_3D => 3,
+            _ => panic!("Unsupported image type {:?}", image_type),
+        }
+    }
+
+    fn get_image_and_view_type(
+        num_dimensions: u32,
+        is_array: bool,
+        is_cubemap: bool,
+    ) -> (ImageType, ImageViewType) {
+        match num_dimensions {
+            1 => {
+                let image_type = ImageType::TYPE_1D;
+                let view_type = if is_array {
+                    ImageViewType::TYPE_1D_ARRAY
+                } else {
+                    ImageViewType::TYPE_1D
+                };
+
+                (image_type, view_type)
+            }
+
+            2 => {
+                let image_type = ImageType::TYPE_2D;
+                let view_type = if is_cubemap {
+                    if is_array {
+                        ImageViewType::CUBE_ARRAY
+                    } else {
+                        ImageViewType::CUBE
+                    }
+                } else {
+                    if is_array {
+                        ImageViewType::TYPE_2D_ARRAY
+                    } else {
+                        ImageViewType::TYPE_2D
+                    }
+                };
+
+                (image_type, view_type)
+            }
+
+            3 => {
+                if is_array {
+                    panic!("3D array textures are not supported in Vulkan!");
+                }
+
+                (ImageType::TYPE_3D, ImageViewType::TYPE_3D)
+            }
+
+            _ => panic!(
+                "Invalid dimensions specified in KTX2 texture {}",
+                num_dimensions
+            ),
+        }
+    }
+
+    pub fn from_ktx<P: AsRef<std::path::Path>>(
+        renderer: &VulkanRenderer,
+        tiling: ImageTiling,
+        usage_flags: ImageUsageFlags,
+        final_layout: ImageLayout,
+        work_package: &RendererWorkPackage,
+        path: P,
+    ) -> Option<UniqueImage> {
+        use libktx_rs::{sources, stream, texture};
+
+        let ktx_stream = stream::RustKtxStream::new(Box::new(std::fs::File::open(path).ok()?))
+            .map_err(|e| error!("Failed to load KTX texure, error: {}", e))
+            .ok()?;
+
+        let mut ktx_texture = texture::Texture::new(sources::StreamSource::new(
+            Arc::new(Mutex::new(ktx_stream)),
+            TextureCreateFlags::LOAD_IMAGE_DATA,
+        ))
+        .map_err(|e| error!("Failed to create KTX texture, error: {}", e))
+        .ok()?;
+
+        let ktx2 = ktx_texture
+            .ktx2()
+            .expect("Textures must be in KTX2 format!");
+
+        let (num_components, component_size) = ktx2.component_info();
+        info!(
+            "texture has {} components, component size {}, format is {:?}",
+            num_components,
+            component_size,
+            Format::from_raw(ktx2.vk_format() as i32)
+        );
+
+        let ptr = ktx2.handle();
+        let format = Format::from_raw(ktx2.vk_format() as i32);
+        if format == Format::UNDEFINED {
+            error!("Texture format is invalid!");
+            return None;
+        }
+
+        let (image_info, copy_regions_layer_count) = unsafe {
+            let num_layers = if (*ptr).isCubemap {
+                (*ptr).numLayers * 6
+            } else {
+                (*ptr).numLayers
+            };
+
+            let (image_type, view_type) = Self::get_image_and_view_type(
+                (*ptr).numDimensions,
+                (*ptr).isArray,
+                (*ptr).isCubemap,
+            );
+
+            (
+                ImageInfo {
+                    is_array: (*ptr).isArray,
+                    is_cubemap: (*ptr).isCubemap,
+                    num_faces: (*ptr).numFaces,
+                    num_layers,
+                    num_levels: (*ptr).numLevels,
+                    num_dimensions: (*ptr).numDimensions,
+                    width: (*ptr).baseWidth,
+                    height: (*ptr).baseHeight,
+                    depth: (*ptr).baseDepth,
+                    format,
+                    image_type,
+                    view_type,
+                },
+                (*ptr).numLayers * (*ptr).numFaces,
+            )
+        };
+
+        info!("Image info {:?}", image_info);
+
+        let mut image_create_flags = if image_info.is_cubemap {
+            ImageCreateFlags::CUBE_COMPATIBLE
+        } else {
+            ImageCreateFlags::empty()
+        };
+
+        let usage_flags = if tiling == ImageTiling::OPTIMAL {
+            usage_flags | ImageUsageFlags::TRANSFER_DST
+        } else {
+            usage_flags
+        };
+
+        unsafe {
+            if (*ptr).generateMipmaps {
+                unimplemented!("Generating mipmaps is not supported yet ...");
+            }
+        }
+
+        let image_fmt_properties = unsafe {
+            renderer
+                .instance()
+                .get_physical_device_image_format_properties(
+                    renderer.phys_device,
+                    image_info.format,
+                    image_info.image_type,
+                    tiling,
+                    usage_flags,
+                    image_create_flags,
+                )
+        }
+        .expect("Failed to query image format properties");
+
+        if image_fmt_properties.max_array_layers < image_info.num_layers {
+            error!(
+                "Texture needs  {} layers but the device only supports {})",
+                image_info.num_layers, image_fmt_properties.max_array_layers
+            );
+            return None;
+        }
+
+        if image_info.num_levels > image_fmt_properties.max_mip_levels {
+            error!("Texture specifies {} mip levels, but the device supports only {} mip levels for this format",
+                  image_info.num_levels, image_fmt_properties.max_mip_levels );
+            return None;
+        }
+
+        let texture_size = ktx_texture
+            .get_data_size_uncompressed()
+            .expect("Failed to get uncompressed texture data size");
+
+        let staging_buffer = UniqueBuffer::new(
+            renderer,
+            BufferUsageFlags::TRANSFER_SRC,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            texture_size as DeviceSize,
+        )?;
+
+        ScopedBufferMapping::create(renderer, &staging_buffer, WHOLE_SIZE, 0)
+            .map(|staging_buffer_mapping| unsafe {
+                copy_nonoverlapping(
+                    ktx_texture.data().as_ptr(),
+                    staging_buffer_mapping.memptr() as *mut u8,
+                    ktx_texture.data().len(),
+                );
+            })
+            .expect("Failed to map staging buffer into host memory");
+
+        let mut copy_regions = smallvec::SmallVec::<[BufferImageCopy; 16]>::new();
+        let mut buffer_offset = 0u32;
+
+        ktx_texture.iterate_levels(
+            |miplevel: i32, face: i32, width: i32, height: i32, depth: i32, pixels: &[u8]| {
+                info!("Mip level {}, face {}", miplevel, face);
+                if face == 0 {
+                    copy_regions.push(
+                        BufferImageCopy::builder()
+                            .buffer_offset(buffer_offset as DeviceSize)
+                            .buffer_row_length(0)
+                            .buffer_image_height(0)
+                            .image_subresource(
+                                ImageSubresourceLayers::builder()
+                                    .aspect_mask(ImageAspectFlags::COLOR)
+                                    .layer_count(copy_regions_layer_count)
+                                    .mip_level(miplevel as u32)
+                                    .base_array_layer(face as u32)
+                                    .build(),
+                            )
+                            .image_offset(Offset3D { x: 0, y: 0, z: 0 })
+                            .image_extent(Extent3D {
+                                width: width as u32,
+                                height: height as u32,
+                                depth: depth as u32,
+                            })
+                            .build(),
+                    );
+
+                    buffer_offset += (ktx_texture
+                        .get_image_size(miplevel as u32)
+                        .expect("Failed to get size for miplevel"))
+                        as u32;
+                }
+
+                Ok(())
+            },
+        );
+
+        info!("Copy region count {}", copy_regions.len());
+        info!("Copy regions {:?}", copy_regions);
+
+        let image_create_info = ImageCreateInfo::builder()
+            .flags(image_create_flags)
+            .format(image_info.format)
+            .initial_layout(ImageLayout::UNDEFINED)
+            .tiling(ImageTiling::OPTIMAL)
+            .usage(usage_flags)
+            .samples(SampleCountFlags::TYPE_1)
+            .image_type(image_info.image_type)
+            .sharing_mode(SharingMode::EXCLUSIVE)
+            .array_layers(image_info.num_layers)
+            .mip_levels(image_info.num_levels)
+            .extent(Extent3D {
+                width: image_info.width,
+                height: image_info.height,
+                depth: image_info.depth,
+            })
+            .build();
+
+        assert!(image_info == ImageInfo::from(image_create_info));
+
+        let image = UniqueImage::new(
+            renderer.graphics_device(),
+            renderer.device_memory(),
+            &image_create_info,
+        )?;
+
+        let subresource_range = ImageSubresourceRange::builder()
+            .aspect_mask(ImageAspectFlags::COLOR)
+            .base_mip_level(0)
+            .level_count(image_info.num_levels)
+            .base_array_layer(0)
+            .layer_count(image_info.num_layers)
+            .build();
+
+        //
+        // transition undefined -> transfer dst
+        Self::set_image_layout(
+            renderer.graphics_device(),
+            work_package.cmd_buf,
+            image.image,
+            ImageLayout::UNDEFINED,
+            ImageLayout::TRANSFER_DST_OPTIMAL,
+            subresource_range,
+        );
+
+        //
+        // copy from staging buffer to image
+        unsafe {
+            renderer.graphics_device().cmd_copy_buffer_to_image(
+                work_package.cmd_buf,
+                staging_buffer.buffer,
+                image.image,
+                ImageLayout::TRANSFER_DST_OPTIMAL,
+                &copy_regions,
+            );
+        }
+
+        renderer.push_staging_buffer(staging_buffer);
+
+        //
+        // transition transfer dst -> shader readonly
+        Self::set_image_layout(
+            renderer.graphics_device(),
+            work_package.cmd_buf,
+            image.image,
+            ImageLayout::TRANSFER_DST_OPTIMAL,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            subresource_range,
+        );
 
         Some(image)
     }
@@ -574,6 +1087,64 @@ impl UniqueBuffer {
             memory,
             device: graphics_device as *const _,
         })
+    }
+
+    pub fn gpu_only_buffer<T: Sized>(
+        renderer: &VulkanRenderer,
+        usage: BufferUsageFlags,
+        memory_type: MemoryPropertyFlags,
+        data: &[&[T]],
+    ) -> Option<UniqueBuffer> {
+        let bytes_size = (data
+            .iter()
+            .fold(0, |size, data_chunk| size + data_chunk.len())
+            * size_of::<T>()) as DeviceSize;
+
+        let gpu_buffer = Self::new(
+            renderer,
+            usage | BufferUsageFlags::TRANSFER_DST,
+            memory_type,
+            bytes_size,
+        )?;
+        let staging_buffer = Self::new(
+            renderer,
+            usage | BufferUsageFlags::TRANSFER_SRC,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            bytes_size,
+        )?;
+
+        //
+        // CPU -> GPU staging buffer
+        ScopedBufferMapping::create(renderer, &staging_buffer, WHOLE_SIZE, 0).map(|mapping| {
+            let _ = data.iter().fold(0, |items, src_buf| {
+                unsafe {
+                    copy_nonoverlapping(
+                        src_buf.as_ptr(),
+                        (mapping.memptr() as *mut T).offset(items as isize),
+                        src_buf.len(),
+                    );
+                }
+                items + src_buf.len()
+            });
+        })?;
+
+        //
+        // GPU staging -> GPU only
+        unsafe {
+            renderer.graphics_device().cmd_copy_buffer(
+                renderer.res_loader().cmd_buf,
+                staging_buffer.buffer,
+                gpu_buffer.buffer,
+                &[BufferCopy::builder()
+                    .src_offset(0)
+                    .dst_offset(0)
+                    .size(bytes_size)
+                    .build()],
+            );
+        }
+
+        renderer.res_loader.add_staging_buffer(staging_buffer);
+        Some(gpu_buffer)
     }
 }
 
@@ -1316,29 +1887,26 @@ impl FrameRenderData {
         width: u32,
         height: u32,
     ) -> Option<(UniqueImage, UniqueImageView)> {
-        let image = unsafe {
-            graphics_device.create_image(
-                &ImageCreateInfo::builder()
-                    .initial_layout(ImageLayout::UNDEFINED)
-                    .samples(SampleCountFlags::TYPE_1)
-                    .format(format)
-                    .usage(ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
-                    .tiling(ImageTiling::OPTIMAL)
-                    .image_type(ImageType::TYPE_2D)
-                    .extent(Extent3D {
-                        width,
-                        height,
-                        depth: 1,
-                    })
-                    .mip_levels(1)
-                    .array_layers(1)
-                    .sharing_mode(SharingMode::EXCLUSIVE)
-                    .build(),
-                None,
-            )
-        }
-        .map_err(|e| error!("Can't create depth stencil image: {}", e))
-        .ok()?;
+        let image_create_info = ImageCreateInfo::builder()
+            .initial_layout(ImageLayout::UNDEFINED)
+            .samples(SampleCountFlags::TYPE_1)
+            .format(format)
+            .usage(ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+            .tiling(ImageTiling::OPTIMAL)
+            .image_type(ImageType::TYPE_2D)
+            .extent(Extent3D {
+                width,
+                height,
+                depth: 1,
+            })
+            .mip_levels(1)
+            .array_layers(1)
+            .sharing_mode(SharingMode::EXCLUSIVE)
+            .build();
+
+        let image = unsafe { graphics_device.create_image(&image_create_info, None) }
+            .map_err(|e| error!("Can't create depth stencil image: {}", e))
+            .ok()?;
 
         let memory_requirements = unsafe { graphics_device.get_image_memory_requirements(image) };
 
@@ -1393,6 +1961,7 @@ impl FrameRenderData {
                 image,
                 memory: image_memory,
                 device: graphics_device as *const _,
+                info: image_create_info.into(),
             },
             image_view,
         ))
@@ -1431,7 +2000,28 @@ impl ResourceLoader {
     }
 }
 
+pub struct RendererWorkPackage {
+    pub cmd_buf: CommandBuffer,
+    pub wait_fence: UniqueFence,
+}
+
+impl RendererWorkPackage {
+    pub fn wait_for_completion(&self, renderer: &VulkanRenderer) {
+        unsafe {
+            let fences = [self.wait_fence.fence];
+            let _ = renderer
+                .graphics_device()
+                .wait_for_fences(&fences, true, !0u64);
+        }
+    }
+
+    pub fn submit(self, renderer: &VulkanRenderer) {
+        renderer.push_work_package(self);
+    }
+}
+
 pub struct VulkanRenderer {
+    work_packages: RefCell<Vec<RendererWorkPackage>>,
     pipeline_cache: UniquePipelineCache,
     res_loader: ResourceLoader,
     renderpass: UniqueRenderpass,
@@ -1514,6 +2104,90 @@ impl VulkanRenderer {
 
     pub fn push_staging_buffer(&self, staging_buffer: UniqueBuffer) {
         self.res_loader.add_staging_buffer(staging_buffer);
+    }
+
+    pub fn create_work_package(&self) -> Option<RendererWorkPackage> {
+        let allocated_cmd_buffers = unsafe {
+            self.graphics_device.allocate_command_buffers(
+                &CommandBufferAllocateInfo::builder()
+                    .level(CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(1)
+                    .command_pool(self.cmd_pool.cmd_pool)
+                    .build(),
+            )
+        }
+        .map_err(|e| {
+            error!(
+                "Failed to allocate command buffer for work package, error: {}",
+                e
+            )
+        })
+        .ok()?;
+
+        let cmd_buff = allocated_cmd_buffers[0];
+
+        unsafe {
+            self.graphics_device
+                .begin_command_buffer(
+                    cmd_buff,
+                    &CommandBufferBeginInfo::builder()
+                        .flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+                        .build(),
+                )
+                .expect("Failed to begin command buffer");
+        }
+
+        let wait_fence = UniqueFence::new(&self.graphics_device, false)?;
+
+        Some(RendererWorkPackage {
+            cmd_buf: allocated_cmd_buffers[0],
+            wait_fence,
+        })
+    }
+
+    pub fn push_work_package(&self, work_package: RendererWorkPackage) {
+        unsafe {
+            self.graphics_device
+                .end_command_buffer(work_package.cmd_buf)
+        }
+        .expect("Failed to end command buffer");
+
+        let command_buffers = [work_package.cmd_buf];
+        let this_submit = [SubmitInfo::builder()
+            .command_buffers(&command_buffers)
+            .build()];
+        unsafe {
+            self.graphics_device.queue_submit(
+                self.queue,
+                &this_submit,
+                work_package.wait_fence.fence,
+            )
+        }
+        .expect("Failed to submit work package");
+
+        self.work_packages.borrow_mut().push(work_package);
+    }
+
+    pub fn wait_all_work_packages(&self) {
+        info!(
+            "Waiting for {} GPU work packages",
+            self.work_packages.borrow().len()
+        );
+
+        let wait_fences = self
+            .work_packages
+            .borrow()
+            .iter()
+            .map(|work_pkg| work_pkg.wait_fence.fence)
+            .collect::<smallvec::SmallVec<[Fence; 16]>>();
+
+        unsafe {
+            self.graphics_device
+                .wait_for_fences(&wait_fences, true, !0u64)
+                .expect("Failed to wait for fences...");
+        }
+
+        self.work_packages.borrow_mut().clear();
     }
 
     pub fn create(glfw: &mut glfw::Window) -> Option<VulkanRenderer> {
@@ -1751,7 +2425,24 @@ impl VulkanRenderer {
 
         info!("Pipeline cache created");
 
+        let img_fmt_props = unsafe {
+            vk_instance.get_physical_device_image_format_properties(
+                phys_device,
+                Format::R8G8B8A8_UNORM,
+                ImageType::TYPE_2D,
+                ImageTiling::OPTIMAL,
+                ImageUsageFlags::SAMPLED | ImageUsageFlags::SAMPLED,
+                ImageCreateFlags::empty(),
+            )
+        }
+        .expect("Failed to query image format properties ...");
+
+        info!("R8G8B8A8 fmt {:?}", img_fmt_props);
+
+        // img_fmt_props.
+
         Some(VulkanRenderer {
+            work_packages: RefCell::new(Vec::new()),
             pipeline_cache,
             res_loader,
             renderpass,
@@ -2062,6 +2753,10 @@ impl VulkanRenderer {
 
     pub fn current_command_buffer(&self) -> CommandBuffer {
         self.current_frame_data().command_buffer
+    }
+
+    pub fn instance(&self) -> &Instance {
+        &self.vk_instance
     }
 }
 

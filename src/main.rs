@@ -1,10 +1,12 @@
 use ash::vk::{
-    BufferUsageFlags, CommandBuffer, CullModeFlags, DescriptorBufferInfo, DescriptorSet,
-    DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType, DeviceSize,
-    DynamicState, Extent2D, Format, FrontFace, IndexType, MemoryPropertyFlags, MemoryType,
-    Offset2D, PipelineBindPoint, PipelineRasterizationStateCreateInfo, PolygonMode, Rect2D,
-    ShaderStageFlags, VertexInputAttributeDescription, VertexInputBindingDescription,
-    VertexInputRate, Viewport, WriteDescriptorSet,
+    BufferUsageFlags, CommandBuffer, ComponentMapping, CullModeFlags, DescriptorBufferInfo,
+    DescriptorSet, DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType,
+    DeviceSize, DynamicState, Extent2D, Extent3D, Format, FrontFace, ImageAspectFlags,
+    ImageCreateInfo, ImageLayout, ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags,
+    ImageViewCreateFlags, ImageViewCreateInfo, ImageViewType, IndexType, MemoryPropertyFlags,
+    MemoryType, Offset2D, PipelineBindPoint, PipelineRasterizationStateCreateInfo, PolygonMode,
+    Rect2D, SampleCountFlags, ShaderStageFlags, SharingMode, VertexInputAttributeDescription,
+    VertexInputBindingDescription, VertexInputRate, Viewport, WriteDescriptorSet,
 };
 use chrono::Duration;
 use glfw::{Action, Context, Key};
@@ -14,8 +16,10 @@ use log::{debug, error, info, trace, warn};
 use nalgebra_glm::{Mat4, Vec4};
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
+    fs::File,
+    io::Write,
     mem::size_of,
-    path::Path,
+    path::{Path, PathBuf},
     ptr::copy_nonoverlapping,
     sync::mpsc::Receiver,
     time::Instant,
@@ -25,6 +29,7 @@ mod arcball_camera;
 mod camera;
 mod draw_context;
 mod imported_geometry;
+mod pbr;
 mod ui_backend;
 mod vk_renderer;
 
@@ -35,12 +40,15 @@ use crate::{
     camera::Camera,
     draw_context::DrawContext,
     imported_geometry::{GeometryVertex, ImportedGeometry},
+    pbr::{PbrMaterial, PbrMaterialTextureCollection},
     vk_renderer::{
         GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
         ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline,
-        VulkanRenderer,
+        UniqueImage, UniqueImageView, UniqueSampler, VulkanRenderer,
     },
 };
+
+use serde::{Deserialize, Serialize};
 
 #[repr(C)]
 struct WireframeShaderUBO {
@@ -58,10 +66,128 @@ struct OKurwaJebaneObject {
     indices: UniqueBuffer,
     pipeline: UniqueGraphicsPipeline,
     descriptor_sets: Vec<DescriptorSet>,
+    pbr_tex: PbrMaterialTextureCollection,
+    ktx: UniqueImage,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct RenderableGeometry {
+    vertex_offset: u32,
+    index_offset: u32,
+    index_count: u32,
+    pbr_data_offset: u32,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
+struct RenderableGeometryHandle(u32);
+
+struct ResourceHolder {
+    vertex_buffer: UniqueBuffer,
+    index_buffer: UniqueBuffer,
+    pbr_data_buffer: UniqueBuffer,
+    pbr_materials: Vec<PbrMaterialTextureCollection>,
+    skybox_materials: Vec<(UniqueImage, UniqueImageView)>,
+}
+
+type UniqueImageWithView = (UniqueImage, UniqueImageView);
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SkyboxDescription {
+    tag: String,
+    path: std::path::PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SceneDescription {
+    skyboxes: Vec<SkyboxDescription>,
+}
+
+struct Skybox {
+    colormap: Vec<UniqueImageWithView>,
+    irradiance: Vec<UniqueImageWithView>,
+    specular: Vec<UniqueImageWithView>,
+    brdf_lut: Vec<UniqueImageWithView>,
+    index_buffer: UniqueBuffer,
+    pipeline: UniqueGraphicsPipeline,
+    sampler: UniqueSampler,
+    descriptor_set: Vec<DescriptorSet>,
+    active_skybox: u32,
+}
+
+impl Skybox {
+    pub fn create<P: AsRef<Path>>(paths: &[P]) -> Option<Skybox> {
+        None
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EngineConfig {
+    pub root_path: PathBuf,
+    pub textures: PathBuf,
+    pub models: PathBuf,
+    pub shaders: PathBuf,
+}
+
+fn write_config() {
+    use ron::ser::{to_writer_pretty, PrettyConfig};
+
+    let engine_cfg = EngineConfig {
+        root_path: "data".into(),
+        textures: "data/textures".into(),
+        models: "data/models".into(),
+        shaders: "data/shaders".into(),
+    };
+
+    let cfg_opts = PrettyConfig::new()
+        .depth_limit(8)
+        .separate_tuple_members(true);
+
+    to_writer_pretty(
+        File::create("config/engine.cfg.ron").expect("cykaaaaa"),
+        &engine_cfg,
+        cfg_opts.clone(),
+    )
+    .expect("oh noes ...");
+
+    let my_scene = SceneDescription {
+        skyboxes: vec![SkyboxDescription {
+            tag: "starfield1".into(),
+            path: "skybox-ibl".into(),
+        }],
+    };
+
+    to_writer_pretty(
+        File::create("config/scene.cfg.ron").expect("kurwa jebane!"),
+        &my_scene,
+        cfg_opts,
+    )
+    .expect("Dublu plm ,,,");
 }
 
 impl OKurwaJebaneObject {
     pub fn new(renderer: &VulkanRenderer) -> Option<OKurwaJebaneObject> {
+        let ktx = {
+            let work_pkg = renderer.create_work_package()?;
+            let ts = Instant::now();
+            let ktx = UniqueImage::from_ktx(
+                renderer,
+                ImageTiling::OPTIMAL,
+                ImageUsageFlags::SAMPLED,
+                ImageLayout::READ_ONLY_OPTIMAL,
+                &work_pkg,
+                "data/textures/skybox/skybox-ibl/skybox.cubemap.ktx2",
+            )?;
+            let elapsed = Duration::from_std(ts.elapsed()).expect("Timer error");
+            renderer.push_work_package(work_pkg);
+            info!(
+                "KTX texture loaded in {}m {}s {}ms",
+                elapsed.num_minutes(),
+                elapsed.num_seconds(),
+                elapsed.num_milliseconds()
+            );
+            ktx
+        };
+
         let start_time = Instant::now();
         let imported_geometry =
             ImportedGeometry::import_from_file(&"data/models/sa23/ivanova_fury.glb")
@@ -77,42 +203,31 @@ impl OKurwaJebaneObject {
             imported_geometry.index_count()
         );
 
+        let texture_copy_work_package = renderer.create_work_package()?;
+        let pbr_mtl_tex = PbrMaterialTextureCollection::create(
+            renderer,
+            imported_geometry.pbr_base_color_images(),
+            imported_geometry.pbr_metallic_roughness_images(),
+            imported_geometry.pbr_normal_images(),
+            &texture_copy_work_package,
+        )?;
+
         imported_geometry.nodes().iter().for_each(|node| {
             info!("Node {}, transform {}", node.name, node.transform);
         });
 
-        let vertices = UniqueBuffer::new(
+        let vertices = UniqueBuffer::gpu_only_buffer(
             renderer,
             BufferUsageFlags::VERTEX_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE,
-            imported_geometry.vertex_bytes() as DeviceSize,
+            MemoryPropertyFlags::DEVICE_LOCAL,
+            &[imported_geometry.vertices()],
         )?;
 
-        ScopedBufferMapping::create(renderer, &vertices, ash::vk::WHOLE_SIZE, 0).map(
-            |mapping| unsafe {
-                copy_nonoverlapping(
-                    imported_geometry.vertices().as_ptr(),
-                    mapping.memptr() as *mut GeometryVertex,
-                    imported_geometry.vertex_count() as usize,
-                );
-            },
-        )?;
-
-        let indices = UniqueBuffer::new(
+        let indices = UniqueBuffer::gpu_only_buffer(
             renderer,
             BufferUsageFlags::INDEX_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE,
-            imported_geometry.index_bytes() as DeviceSize,
-        )?;
-
-        ScopedBufferMapping::create(renderer, &indices, ash::vk::WHOLE_SIZE, 0).map(
-            |mapping| unsafe {
-                copy_nonoverlapping(
-                    imported_geometry.indices().as_ptr(),
-                    mapping.memptr() as *mut u32,
-                    imported_geometry.index_count() as usize,
-                );
-            },
+            MemoryPropertyFlags::DEVICE_LOCAL,
+            &[imported_geometry.indices()],
         )?;
 
         let pipeline = GraphicsPipelineBuilder::new()
@@ -210,6 +325,8 @@ impl OKurwaJebaneObject {
             indices,
             pipeline,
             descriptor_sets,
+            pbr_tex: pbr_mtl_tex,
+            ktx,
         })
     }
 
@@ -218,11 +335,6 @@ impl OKurwaJebaneObject {
 
         let viewports = [draw_context.viewport];
         let scisssors = [draw_context.scissor];
-
-        // let eye_pos = Vec3::new(0f32, 10f32, -10f32);
-        // let target = Vec3::new(0f32, 0f32, 0f32);
-        // let up = Vec3::new(0f32, 1f32, 0f32);
-        // let view_matrix = glm::look_at(&eye_pos, &target, &up);
 
         let view_matrix = draw_context.camera.view_transform();
 
@@ -300,8 +412,30 @@ impl OKurwaJebaneObject {
                 ui.separator();
                 let mouse_pos = ui.io().mouse_pos;
                 ui.text(format!(
-                    "Mouse Position: ({:.1},{:.1})",
+                    "Kurwa mouse position @ ({:.1},{:.1})",
                     mouse_pos[0], mouse_pos[1]
+                ));
+                ui.text(format!(
+                    r#"
+Lip, co ty kurwa robisz?
+Lip, what the fuck you doing?
+Ed, co ty kurwa robisz?
+Ed, what the fuck you doing?
+(Joł Skam, co ty kurwa robisz?) [Refren]
+(Yo Skam what the fuck you doin?) [Hook]
+Vito, co ty kurwa robisz?
+vito, what the fuck you doing?
+Co ty kurwa robisz w mojej knajpie?
+What the fuck you doing in my boozer?
+Estelle, co ty kurwa robisz?
+Estelle, what the fuck are you doing?
+Hicks, co ty kurwa robisz?
+Hicks, what the fuck are you doing, man?
+Tolliver, co ty kurwa robisz?
+Tolliver, what the fuck are you doing?
+Randy, co ty kurwa robisz?
+Randy, what the hell are you doing? 
+"#
                 ));
             });
     }
@@ -324,7 +458,11 @@ impl BasicWindow {
         renderer: VulkanRenderer,
     ) -> Option<BasicWindow> {
         renderer.begin_resource_loading();
+
+        let kurwa = OKurwaJebaneObject::new(&renderer)?;
         let ui = ui_backend::UiBackend::new(&renderer, &window)?;
+
+        renderer.wait_all_work_packages();
         renderer.wait_resources_loaded();
         info!("Resource loaded ...");
 
@@ -334,7 +472,7 @@ impl BasicWindow {
         Some(BasicWindow {
             glfw,
             window,
-            kurwa: OKurwaJebaneObject::new(&renderer)?,
+            kurwa,
             ui,
             renderer: RefCell::new(renderer),
             camera: ArcballCamera::new(Vec3::new(0f32, 0f32, 0f32), 0.1f32, fb_size),

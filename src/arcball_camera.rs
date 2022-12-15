@@ -1,8 +1,9 @@
+use crate::camera::Camera;
 use glfw::{Action, MouseButton, WindowEvent};
 use glm::{clamp, cross, dot, inverse, length, normalize, Mat3, Quat, Vec4};
+use log::info;
 use nalgebra::{DualQuaternion, Isometry, UnitQuaternion};
 use nalgebra_glm::{IVec2, Mat4, Vec2, Vec3};
-use crate::camera::Camera;
 
 use nalgebra_glm as glm;
 
@@ -18,11 +19,12 @@ pub struct ArcballCamera {
     prev_mouse: Vec2,
     is_rotating: bool,
     is_first_rotation: bool,
+    is_panning: bool,
+    is_first_panning: bool,
     // fov: f32,
 }
 
-
-
+/// Adapted from this: https://github.com/Twinklebear/arcball/blob/master/src/lib.rs
 impl ArcballCamera {
     pub const INITIAL_FOV: f32 = 30f32;
     pub const TRANSLATION_FACTOR: f32 = 1f32;
@@ -39,6 +41,8 @@ impl ArcballCamera {
             prev_mouse: Vec2::zeros(),
             is_rotating: false,
             is_first_rotation: true,
+            is_panning: false,
+            is_first_panning: true,
         };
 
         arcball_cam.update_camera();
@@ -81,7 +85,8 @@ impl ArcballCamera {
         self.is_rotating = false;
     }
 
-    pub fn pan(&mut self, mouse_delta: Vec2) {
+    pub fn pan(&mut self, mouse_cur: Vec2) {
+        let mouse_delta = mouse_cur - self.prev_mouse;
         let zoom_dist = self.translation.m33.abs();
         let delta = Vec4::new(
             mouse_delta.x * self.inv_screen.x,
@@ -92,6 +97,7 @@ impl ArcballCamera {
 
         let motion = self.inv_camera * delta;
         self.center_translation = Mat4::new_translation(&motion.xyz()) * self.center_translation;
+        self.prev_mouse = mouse_cur;
         self.update_camera();
     }
 
@@ -115,6 +121,7 @@ impl ArcballCamera {
     pub fn input_event(&mut self, event: &WindowEvent) {
         match *event {
             WindowEvent::MouseButton(mouse_btn, action, _mods) => {
+                // info!("Mouse button down: {:?}", mouse_btn);
                 if mouse_btn == MouseButton::Button3 {
                     if action == Action::Press {
                         self.is_first_rotation = true;
@@ -124,6 +131,17 @@ impl ArcballCamera {
                     if action == Action::Release {
                         self.is_rotating = false;
                         self.is_first_rotation = true;
+                    }
+                }
+
+                if mouse_btn == MouseButton::Button2 {
+                    if action == Action::Press {
+                        self.is_panning = true;
+                        self.is_first_panning = true;
+                    }
+                    if action == Action::Release {
+                        self.is_panning = false;
+                        self.is_first_panning = true;
                     }
                 }
             }
@@ -137,7 +155,18 @@ impl ArcballCamera {
                         self.rotate(Vec2::new(x as f32, y as f32));
                     }
                 }
+
+                if self.is_panning {
+                    if self.is_first_panning {
+                        self.prev_mouse = Vec2::new(x as f32, y as f32);
+                        self.is_first_panning = false;
+                    } else {
+                        self.pan(Vec2::new(x as f32, y as f32));
+                    }
+                }
             }
+
+            WindowEvent::FramebufferSize(x, y) => self.update_screen(x, y),
 
             WindowEvent::Scroll(x, y) => self.zoom(y as f32, x as f32),
 
