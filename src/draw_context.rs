@@ -8,8 +8,8 @@ pub struct DrawContext<'a> {
     pub frame_id: u32,
     pub viewport: Viewport,
     pub scissor: Rect2D,
-    pub camera: &'a dyn Camera, // pub view_matrix: Mat4,
-                                // pub eye_pos: Vec3,
+    pub camera: &'a dyn Camera,
+    pub projection: nalgebra_glm::Mat4,
 }
 
 impl<'a> DrawContext<'a> {
@@ -18,6 +18,7 @@ impl<'a> DrawContext<'a> {
         width: i32,
         height: i32,
         camera: &'a dyn Camera,
+        projection: nalgebra_glm::Mat4,
     ) -> Self {
         Self {
             renderer,
@@ -39,6 +40,7 @@ impl<'a> DrawContext<'a> {
                 },
             },
             camera,
+            projection,
         }
     }
 }

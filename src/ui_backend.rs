@@ -235,25 +235,6 @@ impl UiBackend {
                 .build(),
         )?;
 
-        // let (pipeline_layout, descriptor_set_layouts) = GraphicsPipelineLayoutBuilder::new()
-        //     .add_binding(
-        //         DescriptorSetLayoutBinding::builder()
-        //             .binding(0)
-        //             .stage_flags(ShaderStageFlags::VERTEX)
-        //             .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-        //             .descriptor_count(1)
-        //             .build(),
-        //     )
-        //     .add_binding(
-        //         DescriptorSetLayoutBinding::builder()
-        //             .binding(1)
-        //             .stage_flags(ShaderStageFlags::FRAGMENT)
-        //             .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-        //             .descriptor_count(1)
-        //             .build(),
-        //     )
-        //     .build(renderer.graphics_device())?;
-
         info!("Creating ui graphics pipeline");
 
         let pipeline = GraphicsPipelineBuilder::new()

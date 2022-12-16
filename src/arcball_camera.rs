@@ -21,7 +21,6 @@ pub struct ArcballCamera {
     is_first_rotation: bool,
     is_panning: bool,
     is_first_panning: bool,
-    // fov: f32,
 }
 
 /// Adapted from this: https://github.com/Twinklebear/arcball/blob/master/src/lib.rs

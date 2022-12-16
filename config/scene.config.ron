@@ -1,0 +1,20 @@
+(
+    skyboxes: [
+        (
+            tag: "starfield1",
+            path: "skybox/skybox-ibl",
+        ),
+    ],
+
+	geometry: [
+		(
+			tag: "sa23",
+			path: "sa23/ivanova_fury.glb",
+		),
+
+		(
+			tag: "eas_omega",
+			path: "omega/eas_omega.glb",
+		),
+	]
+)

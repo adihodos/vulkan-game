@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use libktx_rs::TextureCreateFlags;
 use log::{error, info, warn};
 use std::{
@@ -648,10 +650,11 @@ impl UniqueImage {
         let mut copy_regions = smallvec::SmallVec::<[BufferImageCopy; 16]>::new();
         let mut buffer_offset = 0u32;
 
-        ktx_texture.iterate_levels(
-            |miplevel: i32, face: i32, width: i32, height: i32, depth: i32, pixels: &[u8]| {
+        let _ = ktx_texture.iterate_levels(
+            |miplevel: i32, face: i32, width: i32, height: i32, depth: i32, _pixels: &[u8]| {
                 info!("Mip level {}, face {}", miplevel, face);
                 if face == 0 {
+                    // let
                     copy_regions.push(
                         BufferImageCopy::builder()
                             .buffer_offset(buffer_offset as DeviceSize)
@@ -677,7 +680,8 @@ impl UniqueImage {
                     buffer_offset += (ktx_texture
                         .get_image_size(miplevel as u32)
                         .expect("Failed to get size for miplevel"))
-                        as u32;
+                        as u32
+                        * copy_regions_layer_count;
                 }
 
                 Ok(())
@@ -685,7 +689,7 @@ impl UniqueImage {
         );
 
         info!("Copy region count {}", copy_regions.len());
-        info!("Copy regions {:?}", copy_regions);
+        // info!("Copy regions {:?}", copy_regions);
 
         let image_create_info = ImageCreateInfo::builder()
             .flags(image_create_flags)
@@ -789,11 +793,53 @@ impl UniqueImageView {
             device: graphics_device as *const _,
         })
     }
+
+    pub fn from_image(renderer: &VulkanRenderer, image: &UniqueImage) -> Option<UniqueImageView> {
+        Self::new(
+            renderer.graphics_device(),
+            &ImageViewCreateInfo::builder()
+                .image(image.image)
+                .view_type(image.info.view_type)
+                .format(image.info.format)
+                .subresource_range(
+                    ImageSubresourceRange::builder()
+                        .aspect_mask(ImageAspectFlags::COLOR)
+                        .layer_count(image.info.num_layers)
+                        .level_count(image.info.num_levels)
+                        .base_array_layer(0)
+                        .base_mip_level(0)
+                        .build(),
+                ),
+        )
+    }
 }
 
 impl std::ops::Drop for UniqueImageView {
     fn drop(&mut self) {
         unsafe { (*self.device).destroy_image_view(self.view, None) }
+    }
+}
+
+pub struct UniqueImageWithView(pub UniqueImage, pub UniqueImageView);
+
+impl UniqueImageWithView {
+    pub fn from_ktx<P: AsRef<std::path::Path>>(
+        renderer: &VulkanRenderer,
+        work_pkg: &RendererWorkPackage,
+        path: P,
+    ) -> Option<UniqueImageWithView> {
+        let image = UniqueImage::from_ktx(
+            renderer,
+            ImageTiling::OPTIMAL,
+            ImageUsageFlags::SAMPLED,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            work_pkg,
+            path,
+        )?;
+
+        let image_view = UniqueImageView::from_image(renderer, &image)?;
+
+        Some(UniqueImageWithView(image, image_view))
     }
 }
 
@@ -1419,6 +1465,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
                 .depth_test_enable(true)
                 .stencil_test_enable(false)
                 .depth_compare_op(CompareOp::LESS)
+                .depth_write_enable(true)
                 .min_depth_bounds(1f32)
                 .max_depth_bounds(0f32)
                 .build(),
@@ -1473,6 +1520,11 @@ impl<'a> GraphicsPipelineBuilder<'a> {
         self
     }
 
+    pub fn set_depth_compare_op(mut self, cmp_op: CompareOp) -> Self {
+        self.depth_stencil_state.depth_compare_op = cmp_op;
+        self
+    }
+
     pub fn build(
         self,
         graphics_device: &Device,
@@ -1503,14 +1555,8 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             })
             .collect::<Vec<_>>();
 
-        info!(
-            "shader stages len = {}, built shader modules = {}",
-            self.shader_stages.len(),
-            built_shader_modules.len(),
-        );
-
         if built_shader_modules.len() != self.shader_stages.len() {
-            info!("plm frate");
+            info!("Failed to build all required shader modules");
             return None;
         }
 
@@ -2884,8 +2930,8 @@ fn pick_physical_device(
 
         if surface_format.is_none() {
             info!(
-                "Rejecting device {} because it does not support R8G8G8A8_SRGB as surface format",
-                device_name
+                "Rejecting device {} because it does not support any of {:?}",
+                device_name, desired_formats
             );
             continue;
         }
@@ -2924,6 +2970,11 @@ fn pick_physical_device(
                 .get_physical_device_surface_capabilities(phys_dev, vk_surface)
                 .ok()?
         };
+
+        info!(
+            "Surface format {:?}, presentation format {:?}",
+            surface_format, presentation_format
+        );
 
         return Some((
             phys_dev,

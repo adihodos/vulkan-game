@@ -25,30 +25,35 @@ use std::{
     time::Instant,
 };
 
+mod app_config;
 mod arcball_camera;
 mod camera;
 mod draw_context;
 mod imported_geometry;
 mod pbr;
+mod resource_cache;
+mod skybox;
+mod starfury;
 mod ui_backend;
 mod vk_renderer;
 
 use nalgebra_glm as glm;
 
 use crate::{
+    app_config::AppConfig,
     arcball_camera::ArcballCamera,
     camera::Camera,
     draw_context::DrawContext,
     imported_geometry::{GeometryVertex, ImportedGeometry},
     pbr::{PbrMaterial, PbrMaterialTextureCollection},
+    resource_cache::ResourceHolder,
+    skybox::Skybox,
     vk_renderer::{
-        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
-        ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline,
-        UniqueImage, UniqueImageView, UniqueSampler, VulkanRenderer,
+        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, RendererWorkPackage,
+        ScopedBufferMapping, ShaderModuleDescription, ShaderModuleSource, UniqueBuffer,
+        UniqueGraphicsPipeline, UniqueImage, UniqueImageView, UniqueSampler, VulkanRenderer,
     },
 };
-
-use serde::{Deserialize, Serialize};
 
 #[repr(C)]
 struct WireframeShaderUBO {
@@ -56,179 +61,26 @@ struct WireframeShaderUBO {
     color: Vec4,
 }
 
+#[derive(Copy, Clone, Debug)]
+struct DrawOpts {
+    wireframe_color: Vec4,
+    draw_normals: bool,
+    normals_color: Vec4,
+}
+
 struct OKurwaJebaneObject {
-    value: Cell<i32>,
-    vertex_count: u32,
-    index_count: u32,
+    draw_opts: RefCell<DrawOpts>,
     ubo_bytes_one_frame: DeviceSize,
     ubo: UniqueBuffer,
-    vertices: UniqueBuffer,
-    indices: UniqueBuffer,
+    resource_cache: ResourceHolder,
     pipeline: UniqueGraphicsPipeline,
     descriptor_sets: Vec<DescriptorSet>,
-    pbr_tex: PbrMaterialTextureCollection,
-    ktx: UniqueImage,
-}
-
-#[derive(Copy, Clone, Debug)]
-struct RenderableGeometry {
-    vertex_offset: u32,
-    index_offset: u32,
-    index_count: u32,
-    pbr_data_offset: u32,
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
-struct RenderableGeometryHandle(u32);
-
-struct ResourceHolder {
-    vertex_buffer: UniqueBuffer,
-    index_buffer: UniqueBuffer,
-    pbr_data_buffer: UniqueBuffer,
-    pbr_materials: Vec<PbrMaterialTextureCollection>,
-    skybox_materials: Vec<(UniqueImage, UniqueImageView)>,
-}
-
-type UniqueImageWithView = (UniqueImage, UniqueImageView);
-
-#[derive(Serialize, Deserialize, Debug)]
-struct SkyboxDescription {
-    tag: String,
-    path: std::path::PathBuf,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct SceneDescription {
-    skyboxes: Vec<SkyboxDescription>,
-}
-
-struct Skybox {
-    colormap: Vec<UniqueImageWithView>,
-    irradiance: Vec<UniqueImageWithView>,
-    specular: Vec<UniqueImageWithView>,
-    brdf_lut: Vec<UniqueImageWithView>,
-    index_buffer: UniqueBuffer,
-    pipeline: UniqueGraphicsPipeline,
-    sampler: UniqueSampler,
-    descriptor_set: Vec<DescriptorSet>,
-    active_skybox: u32,
-}
-
-impl Skybox {
-    pub fn create<P: AsRef<Path>>(paths: &[P]) -> Option<Skybox> {
-        None
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct EngineConfig {
-    pub root_path: PathBuf,
-    pub textures: PathBuf,
-    pub models: PathBuf,
-    pub shaders: PathBuf,
-}
-
-fn write_config() {
-    use ron::ser::{to_writer_pretty, PrettyConfig};
-
-    let engine_cfg = EngineConfig {
-        root_path: "data".into(),
-        textures: "data/textures".into(),
-        models: "data/models".into(),
-        shaders: "data/shaders".into(),
-    };
-
-    let cfg_opts = PrettyConfig::new()
-        .depth_limit(8)
-        .separate_tuple_members(true);
-
-    to_writer_pretty(
-        File::create("config/engine.cfg.ron").expect("cykaaaaa"),
-        &engine_cfg,
-        cfg_opts.clone(),
-    )
-    .expect("oh noes ...");
-
-    let my_scene = SceneDescription {
-        skyboxes: vec![SkyboxDescription {
-            tag: "starfield1".into(),
-            path: "skybox-ibl".into(),
-        }],
-    };
-
-    to_writer_pretty(
-        File::create("config/scene.cfg.ron").expect("kurwa jebane!"),
-        &my_scene,
-        cfg_opts,
-    )
-    .expect("Dublu plm ,,,");
+    skybox: Skybox,
 }
 
 impl OKurwaJebaneObject {
-    pub fn new(renderer: &VulkanRenderer) -> Option<OKurwaJebaneObject> {
-        let ktx = {
-            let work_pkg = renderer.create_work_package()?;
-            let ts = Instant::now();
-            let ktx = UniqueImage::from_ktx(
-                renderer,
-                ImageTiling::OPTIMAL,
-                ImageUsageFlags::SAMPLED,
-                ImageLayout::READ_ONLY_OPTIMAL,
-                &work_pkg,
-                "data/textures/skybox/skybox-ibl/skybox.cubemap.ktx2",
-            )?;
-            let elapsed = Duration::from_std(ts.elapsed()).expect("Timer error");
-            renderer.push_work_package(work_pkg);
-            info!(
-                "KTX texture loaded in {}m {}s {}ms",
-                elapsed.num_minutes(),
-                elapsed.num_seconds(),
-                elapsed.num_milliseconds()
-            );
-            ktx
-        };
-
-        let start_time = Instant::now();
-        let imported_geometry =
-            ImportedGeometry::import_from_file(&"data/models/sa23/ivanova_fury.glb")
-                .expect("Failed to load model");
-        let elapsed = Duration::from_std(start_time.elapsed()).expect("Timer error");
-
-        info!(
-            "Geometry imported in {} min {} sec {} msec, vertices: {}, indices: {}",
-            elapsed.num_minutes(),
-            elapsed.num_seconds(),
-            elapsed.num_milliseconds(),
-            imported_geometry.vertex_count(),
-            imported_geometry.index_count()
-        );
-
-        let texture_copy_work_package = renderer.create_work_package()?;
-        let pbr_mtl_tex = PbrMaterialTextureCollection::create(
-            renderer,
-            imported_geometry.pbr_base_color_images(),
-            imported_geometry.pbr_metallic_roughness_images(),
-            imported_geometry.pbr_normal_images(),
-            &texture_copy_work_package,
-        )?;
-
-        imported_geometry.nodes().iter().for_each(|node| {
-            info!("Node {}, transform {}", node.name, node.transform);
-        });
-
-        let vertices = UniqueBuffer::gpu_only_buffer(
-            renderer,
-            BufferUsageFlags::VERTEX_BUFFER,
-            MemoryPropertyFlags::DEVICE_LOCAL,
-            &[imported_geometry.vertices()],
-        )?;
-
-        let indices = UniqueBuffer::gpu_only_buffer(
-            renderer,
-            BufferUsageFlags::INDEX_BUFFER,
-            MemoryPropertyFlags::DEVICE_LOCAL,
-            &[imported_geometry.indices()],
-        )?;
+    pub fn new(renderer: &VulkanRenderer, app_cfg: &AppConfig) -> Option<OKurwaJebaneObject> {
+        let resource_cache = ResourceHolder::create(renderer, app_cfg)?;
 
         let pipeline = GraphicsPipelineBuilder::new()
             .add_vertex_input_attribute_description(
@@ -316,21 +168,23 @@ impl OKurwaJebaneObject {
         unsafe { renderer.graphics_device().update_descriptor_sets(&wds, &[]) }
 
         Some(OKurwaJebaneObject {
-            value: Cell::new(0),
-            vertex_count: imported_geometry.vertex_count(),
-            index_count: imported_geometry.index_count(),
+            draw_opts: RefCell::new(DrawOpts {
+                wireframe_color: Vec4::new(0f32, 1f32, 0f32, 1f32),
+                draw_normals: false,
+                normals_color: Vec4::new(1f32, 0f32, 0f32, 1f32),
+            }),
             ubo_bytes_one_frame,
             ubo,
-            vertices,
-            indices,
+            resource_cache,
             pipeline,
             descriptor_sets,
-            pbr_tex: pbr_mtl_tex,
-            ktx,
+            skybox: Skybox::create(renderer, &app_cfg.scene, &app_cfg.engine)?,
         })
     }
 
     pub fn draw(&self, draw_context: &DrawContext) {
+        self.skybox.draw(draw_context);
+
         let device = draw_context.renderer.graphics_device();
 
         let viewports = [draw_context.viewport];
@@ -338,10 +192,10 @@ impl OKurwaJebaneObject {
 
         let view_matrix = draw_context.camera.view_transform();
 
-        let perspective = perspective(75f32, 1920f32 / 1200f32, 0.1f32, 1000f32);
+        let perspective = draw_context.projection;
         let ubo_data = WireframeShaderUBO {
             transform: perspective * view_matrix,
-            color: Vec4::new(0f32, 1f32, 0f32, 1f32),
+            color: self.draw_opts.borrow().wireframe_color,
         };
 
         ScopedBufferMapping::create(
@@ -367,8 +221,11 @@ impl OKurwaJebaneObject {
             device.cmd_set_viewport(draw_context.cmd_buff, 0, &viewports);
             device.cmd_set_scissor(draw_context.cmd_buff, 0, &scisssors);
 
-            let vertex_buffers = [self.vertices.buffer];
-            let vertex_offsets = [0 as DeviceSize];
+            let sa23_handle = self.resource_cache.get_geometry_handle("sa23");
+            let sa23_geom = self.resource_cache.get_renderable_geometry(sa23_handle);
+
+            let vertex_buffers = [self.resource_cache.vertex_buffer()];
+            let vertex_offsets = [0u64];
             device.cmd_bind_vertex_buffers(
                 draw_context.cmd_buff,
                 0,
@@ -377,7 +234,7 @@ impl OKurwaJebaneObject {
             );
             device.cmd_bind_index_buffer(
                 draw_context.cmd_buff,
-                self.indices.buffer,
+                self.resource_cache.index_buffer(),
                 0,
                 IndexType::UINT32,
             );
@@ -392,7 +249,14 @@ impl OKurwaJebaneObject {
                 &ubo_offsets,
             );
 
-            device.cmd_draw_indexed(draw_context.cmd_buff, self.index_count, 1, 0, 0, 0);
+            device.cmd_draw_indexed(
+                draw_context.cmd_buff,
+                sa23_geom.index_count,
+                1,
+                sa23_geom.index_offset,
+                sa23_geom.vertex_offset as i32,
+                0,
+            );
         }
     }
 
@@ -401,42 +265,16 @@ impl OKurwaJebaneObject {
         ui.window("Hello world")
             .size([300.0, 110.0], Condition::FirstUseEver)
             .build(|| {
-                ui.text_wrapped("Hello world!");
-                ui.text_wrapped("O kurwa! Jebane pierdole bober!");
-                if ui.button(choices[self.value.get() as usize]) {
-                    self.value.set(self.value.get() + 1);
-                    self.value.set(self.value.get() % 2);
+                let mut draw_opts = self.draw_opts.borrow_mut();
+                let mut wf_color = [
+                    draw_opts.wireframe_color.x,
+                    draw_opts.wireframe_color.y,
+                    draw_opts.wireframe_color.z,
+                ];
+                if ui.color_picker3("wireframe color", &mut wf_color) {
+                    draw_opts.wireframe_color =
+                        Vec4::new(wf_color[0], wf_color[1], wf_color[2], 1f32);
                 }
-
-                ui.button("This...is...imgui-rs!");
-                ui.separator();
-                let mouse_pos = ui.io().mouse_pos;
-                ui.text(format!(
-                    "Kurwa mouse position @ ({:.1},{:.1})",
-                    mouse_pos[0], mouse_pos[1]
-                ));
-                ui.text(format!(
-                    r#"
-Lip, co ty kurwa robisz?
-Lip, what the fuck you doing?
-Ed, co ty kurwa robisz?
-Ed, what the fuck you doing?
-(Joł Skam, co ty kurwa robisz?) [Refren]
-(Yo Skam what the fuck you doin?) [Hook]
-Vito, co ty kurwa robisz?
-vito, what the fuck you doing?
-Co ty kurwa robisz w mojej knajpie?
-What the fuck you doing in my boozer?
-Estelle, co ty kurwa robisz?
-Estelle, what the fuck are you doing?
-Hicks, co ty kurwa robisz?
-Hicks, what the fuck are you doing, man?
-Tolliver, co ty kurwa robisz?
-Tolliver, what the fuck are you doing?
-Randy, co ty kurwa robisz?
-Randy, what the hell are you doing? 
-"#
-                ));
             });
     }
 }
@@ -456,10 +294,11 @@ impl BasicWindow {
         glfw: glfw::Glfw,
         window: glfw::Window,
         renderer: VulkanRenderer,
+        app_cfg: &AppConfig,
     ) -> Option<BasicWindow> {
         renderer.begin_resource_loading();
 
-        let kurwa = OKurwaJebaneObject::new(&renderer)?;
+        let kurwa = OKurwaJebaneObject::new(&renderer, app_cfg)?;
         let ui = ui_backend::UiBackend::new(&renderer, &window)?;
 
         renderer.wait_all_work_packages();
@@ -505,11 +344,14 @@ impl BasicWindow {
 
         renderer.begin_frame();
         {
+            let fb_size = self.fb_size.get();
+
             let draw_context = DrawContext::create(
                 &renderer,
-                self.fb_size.get().x,
-                self.fb_size.get().y,
+                fb_size.x,
+                fb_size.y,
                 &self.camera,
+                perspective(75f32, fb_size.x as f32 / fb_size.y as f32, 0.1f32, 5000f32),
             );
 
             self.kurwa.draw(&draw_context);
@@ -544,6 +386,8 @@ fn main() {
         panic!("Failed to start the logger {}", e);
     });
 
+    let app_config = AppConfig::load();
+
     info!("uraaa this be info!");
     warn!("urraa! this be warn cyka!");
     error!("urrra! this be error pierdole!");
@@ -574,7 +418,7 @@ fn main() {
         })
         .and_then(|(mut glfw, mut window, events)| {
             let renderer = VulkanRenderer::create(&mut window)?;
-            let mut wnd = BasicWindow::new(glfw, window, renderer)?;
+            let mut wnd = BasicWindow::new(glfw, window, renderer, &app_config)?;
 
             wnd.main_loop(&events);
 
@@ -585,7 +429,7 @@ fn main() {
 
 /// Symmetric perspective projection with reverse depth (1.0 -> 0.0) and
 /// Vulkan coordinate space.
-fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> glm::Mat4 {
+pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> glm::Mat4 {
     let fov_rad = vertical_fov * 2.0f32 * std::f32::consts::PI / 360.0f32;
     let focal_length = 1.0f32 / (fov_rad / 2.0f32).tan();
 

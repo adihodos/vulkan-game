@@ -39,8 +39,6 @@ impl PbrMaterialTextureCollection {
         normal_images: (u32, u32, Vec<ImageCopySource>),
         gpu_work_pkg: &RendererWorkPackage,
     ) -> Option<PbrMaterialTextureCollection> {
-        // let work_pkg_pixels2gpu = renderer.create_work_package()?;
-
         let mut images_and_views = [base_color_images, metallic_roughness_images, normal_images]
             .iter()
             .zip(
