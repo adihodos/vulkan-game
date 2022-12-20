@@ -682,18 +682,18 @@ impl UiBackend {
             }
 
             WindowEvent::CursorMoved {
-                device_id,
+                device_id: _,
                 position,
-                modifiers,
+                modifiers: _,
             } => {
                 io.mouse_pos = [position.x as f32, position.y as f32];
             }
 
             WindowEvent::MouseWheel {
-                device_id,
+                device_id: _,
                 delta,
-                phase,
-                modifiers,
+                phase: _,
+                modifiers: _,
             } => match delta {
                 MouseScrollDelta::LineDelta(horizontal, vertical) => {
                     io.mouse_wheel_h = *horizontal as f32;
@@ -709,9 +709,9 @@ impl UiBackend {
             }
 
             WindowEvent::KeyboardInput {
-                device_id,
+                device_id: _,
                 input,
-                is_synthetic,
+                is_synthetic: _,
             } => {
                 input.virtual_keycode.map(|key_code| {
                     let pressed = input.state == ElementState::Pressed;
@@ -727,10 +727,10 @@ impl UiBackend {
             }
 
             WindowEvent::MouseInput {
-                device_id,
+                device_id: _,
                 state,
                 button,
-                modifiers,
+                modifiers: _,
             } => {
                 let pressed = *state == ElementState::Pressed;
                 use winit::event::MouseButton;
@@ -752,79 +752,6 @@ impl UiBackend {
 
             _ => {}
         }
-
-        // match *event {
-        //     WindowEvent::FramebufferSize(width, height) => {
-        //         self.framebuffer_size.set(I32Vec2::new(width, height));
-        //
-        //         let winsize = self.window_size.get();
-        //         let fbsize = self.framebuffer_size.get();
-        //
-        //         if winsize.x > 0 && winsize.y > 0 {
-        //             io.display_framebuffer_scale = [
-        //                 fbsize.x as f32 / winsize.x as f32,
-        //                 fbsize.y as f32 / winsize.y as f32,
-        //             ];
-        //         }
-        //     }
-        //
-        //     WindowEvent::Size(width, height) => {
-        //         self.window_size.set(I32Vec2::new(width, height));
-        //
-        //         let winsize = self.window_size.get();
-        //         let fbsize = self.framebuffer_size.get();
-        //
-        //         if winsize.x > 0 && winsize.y > 0 {
-        //             io.display_framebuffer_scale = [
-        //                 fbsize.x as f32 / winsize.x as f32,
-        //                 fbsize.y as f32 / winsize.y as f32,
-        //             ];
-        //         }
-        //     }
-        //
-        //     WindowEvent::CursorPos(xpos, ypos) => {
-        //         io.mouse_pos = [xpos as f32, ypos as f32];
-        //     }
-        //
-        //     WindowEvent::Scroll(xoffset, yoffset) => {
-        //         io.mouse_wheel_h = yoffset as f32;
-        //         io.mouse_wheel = xoffset as f32;
-        //     }
-        //
-        //     WindowEvent::Focus(focused) => io.app_focus_lost = !focused,
-        //
-        //     WindowEvent::Key(key, _, action, modifiers) => {
-        //         let pressed = action == Action::Press;
-        //         let imguy_key = ImguiGlfwData::glfw_key2imgui_hey(key);
-        //         io.keys_down[imguy_key as usize] = pressed;
-        //
-        //         match modifiers {
-        //             Modifiers::Shift => io.key_shift = pressed,
-        //             Modifiers::Alt => io.key_alt = pressed,
-        //             Modifiers::Control => io.key_ctrl = pressed,
-        //             Modifiers::Super => io.key_super = pressed,
-        //             _ => {}
-        //         }
-        //     }
-        //
-        //     WindowEvent::Char(ch) => {
-        //         if ch != '\u{7f}' {
-        //             io.add_input_character(ch)
-        //         }
-        //     }
-        //
-        //     WindowEvent::MouseButton(button, action, _modifiers) => {
-        //         let pressed = action == Action::Press;
-        //         match button {
-        //             MouseButton::Button1 => io.mouse_down[0] = pressed,
-        //             MouseButton::Button2 => io.mouse_down[1] = pressed,
-        //             MouseButton::Button3 => io.mouse_down[2] = pressed,
-        //             _ => {}
-        //         }
-        //     }
-        //
-        //     _ => {}
-        // }
     }
 
     pub fn new_frame(&self) -> RefMut<imgui::Ui> {

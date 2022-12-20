@@ -96,6 +96,7 @@ struct GameMain {
 
 impl std::ops::Drop for GameMain {
     fn drop(&mut self) {
+        log::info!("Waiting for all GPU submits to finish ...");
         self.renderer.wait_idle();
     }
 }
