@@ -28,5 +28,6 @@ vec4 toLinear(vec4 sRGB)
 }
 
 void main() {
-	FinalFragColor = fromLinear(vec4(texture(Skybox, fs_in.texcoords).rgb, 1.0));
+	FinalFragColor = vec4(texture(Skybox, fs_in.texcoords).rgb, 1.0);
+	//fromLinear(vec4(texture(Skybox, fs_in.texcoords).rgb, 1.0));
 }

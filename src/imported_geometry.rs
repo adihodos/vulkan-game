@@ -12,7 +12,6 @@ use gltf::{
     scene::Transform,
     Document, Node,
 };
-use log::{error, info};
 use mmap_rs::MmapOptions;
 use nalgebra_glm::{identity, quat, translate, Mat4, Qua, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
@@ -208,9 +207,12 @@ impl ImportedGeometry {
             .collect::<Vec<_>>();
 
         materials.iter().for_each(|m| {
-            info!(
+            log::info!(
                 "Mtl {}, base color {}, metal + rough {}, normals {}",
-                m.name, m.base_color_src, m.metallic_src, m.normal_src
+                m.name,
+                m.base_color_src,
+                m.metallic_src,
+                m.normal_src
             );
         });
 
@@ -304,7 +306,7 @@ impl ImportedGeometry {
     }
 
     fn process_node(&mut self, node: &gltf::Node, gltf_doc: &gltf::Document, parent: Option<u32>) {
-        info!("Node {}", node.name().unwrap_or("unnamed"));
+        log::info!("Node {}", node.name().unwrap_or("unnamed"));
 
         let node_matrix = match node.transform() {
             Transform::Matrix { matrix } => Mat4::from_column_slice(matrix.flat()),
@@ -345,8 +347,6 @@ impl ImportedGeometry {
             self.nodes[node_id as usize].transform = matrix;
 
             let normals_matrix = glm::transpose(&glm::inverse(&matrix));
-
-            // info!("Processing {}", mesh.name().unwrap_or(""));
 
             for primitive in mesh.primitives() {
                 let mut first_index = self.indices.len() as u32;
@@ -441,7 +441,7 @@ impl ImportedGeometry {
         };
 
         let (gltf_doc, buffers, images) = gltf::import_slice(mapped_file.as_slice())
-            .map_err(|e| error!("GLTF import error: {}", e))
+            .map_err(|e| log::error!("GLTF import error: {}", e))
             .ok()?;
 
         //

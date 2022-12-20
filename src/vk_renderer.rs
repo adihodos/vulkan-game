@@ -9,7 +9,6 @@ use std::{
     mem::size_of,
     path::PathBuf,
     ptr::copy_nonoverlapping,
-    sync::{Arc, Mutex},
 };
 
 use ash::{
@@ -1226,6 +1225,20 @@ impl<'a> std::ops::Drop for ScopedBufferMapping<'a> {
     }
 }
 
+impl<'a> std::ops::Deref for ScopedBufferMapping<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &'a Self::Target {
+        unsafe { std::slice::from_raw_parts(self.memptr as *const u8, self.size as usize) }
+    }
+}
+
+impl<'a> std::ops::DerefMut for ScopedBufferMapping<'a> {
+    fn deref_mut(&mut self) -> &'a mut Self::Target {
+        unsafe { std::slice::from_raw_parts_mut(self.memptr as *mut u8, self.size as usize) }
+    }
+}
+
 pub struct UniqueSampler {
     pub sampler: ash::vk::Sampler,
     device: *const Device,
@@ -2082,8 +2095,8 @@ pub struct VulkanRenderer {
 
 impl VulkanRenderer {
     #[cfg(target_os = "windows")]
-    fn create_vulkan_surface(
-        glfw: &glfw::Window,
+    fn create_vulkan_surface_winit(
+        window: &winit::window::Window,
         vk_instance: &ash::Instance,
         vk_entry: &ash::Entry,
     ) -> VkResult<vk::SurfaceKHR> {
@@ -2095,9 +2108,14 @@ impl VulkanRenderer {
 
         let win32_surface = ash::extensions::khr::Win32Surface::new(vk_entry, vk_instance);
         unsafe {
+            use winit::platform::windows::WindowExtWindows;
+
             win32_surface.create_win32_surface(
                 &vk::Win32SurfaceCreateInfoKHR::builder()
-                    .hwnd(glfw.get_win32_window())
+                    .hwnd(std::mem::transmute::<
+                        winit::platform::windows::HWND,
+                        ash::vk::HWND,
+                    >(window.hwnd()))
                     .hinstance(win32_module_handle)
                     .build(),
                 None,
@@ -2903,9 +2921,14 @@ fn pick_physical_device(
             unsafe { surface_loader.get_physical_device_surface_formats(phys_dev, vk_surface) }
                 .ok()
                 .and_then(|surface_formats| {
-                    surface_formats
+                    desired_formats
                         .iter()
-                        .find(|surface_format| desired_formats.contains(&surface_format.format))
+                        .filter_map(|desired_format| {
+                            surface_formats
+                                .iter()
+                                .find(|surface_fmt| surface_fmt.format == *desired_format)
+                        })
+                        .nth(0)
                         .copied()
                 });
 
