@@ -14,7 +14,7 @@ use crate::{
     draw_context::DrawContext,
     game_world::GameWorld,
     ui_backend::UiBackend,
-    vk_renderer::VulkanRenderer,
+    vk_renderer::{UniqueImage, VulkanRenderer},
 };
 
 use nalgebra_glm as glm;

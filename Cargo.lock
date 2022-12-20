@@ -822,6 +822,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ktx2"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87d65e08a9ec02e409d27a0139eaa6b9756b4d81fe7cde71f6941a83730ce838"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -832,28 +841,6 @@ name = "libc"
 version = "0.2.138"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db6d7e329c562c5dfab7a46a2afabc8b987ab9a4834c9d1ca04dc54c1546cef8"
-
-[[package]]
-name = "libktx-rs"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d9240d86bfaee4dc0c9e2d0953cbff99df5cbefd893f8ec012b8234252cad0c"
-dependencies = [
- "bitflags",
- "libktx-rs-sys",
- "log",
-]
-
-[[package]]
-name = "libktx-rs-sys"
-version = "0.3.3+v4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e31f79d7157896e5b3140fc210bfcb033a8271d0d6af32e0e4fcc7761d10cb32"
-dependencies = [
- "cmake",
- "glob",
- "log",
-]
 
 [[package]]
 name = "libloading"
@@ -1793,13 +1780,13 @@ dependencies = [
  "gltf",
  "image",
  "imgui",
- "libktx-rs",
+ "ktx2",
  "log",
  "memoffset 0.7.1",
  "mmap-rs",
  "nalgebra",
  "nalgebra-glm",
- "raw-window-handle 0.4.3",
+ "raw-window-handle 0.5.0",
  "rayon",
  "ron",
  "serde",

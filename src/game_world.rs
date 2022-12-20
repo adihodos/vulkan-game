@@ -2,9 +2,9 @@ use std::{cell::RefCell, mem::size_of};
 
 use ash::vk::{
     BorderColor, BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
-    DescriptorSetAllocateInfo, DescriptorType, DeviceSize, Filter, ImageLayout, IndexType,
-    MemoryPropertyFlags, PipelineBindPoint, SamplerAddressMode, SamplerCreateInfo,
-    SamplerMipmapMode, WriteDescriptorSet,
+    DescriptorSetAllocateInfo, DescriptorType, DeviceSize, Filter, ImageLayout, ImageTiling,
+    ImageUsageFlags, IndexType, MemoryPropertyFlags, PipelineBindPoint, SamplerAddressMode,
+    SamplerCreateInfo, SamplerMipmapMode, WriteDescriptorSet,
 };
 use glm::Mat4;
 use nalgebra_glm::Vec4;
@@ -17,7 +17,7 @@ use crate::{
     draw_context::DrawContext,
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     skybox::Skybox,
-    vk_renderer::{ScopedBufferMapping, UniqueBuffer, UniqueSampler, VulkanRenderer},
+    vk_renderer::{ScopedBufferMapping, UniqueBuffer, UniqueImage, UniqueSampler, VulkanRenderer},
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -69,6 +69,18 @@ pub struct GameWorld {
 
 impl GameWorld {
     pub fn new(renderer: &VulkanRenderer, app_cfg: &AppConfig) -> Option<GameWorld> {
+        {
+            // let pkg = renderer.create_work_package()?;
+            // let img = UniqueImage::from_ktx2(
+            //     renderer,
+            //     ImageTiling::OPTIMAL,
+            //     ImageUsageFlags::SAMPLED,
+            //     ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            //     &pkg,
+            //     "data/textures/skybox/skybox-ibl/skybox.cubemap.ktx2",
+            // )?;
+        }
+
         let skybox = Skybox::create(renderer, &app_cfg.scene, &app_cfg.engine)?;
 
         let resource_cache = ResourceHolder::create(renderer, app_cfg)?;

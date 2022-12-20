@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use libktx_rs::TextureCreateFlags;
 use log::{error, info, warn};
+use smallvec::SmallVec;
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -82,6 +82,48 @@ pub struct ImageInfo {
     pub format: Format,
     pub image_type: ImageType,
     pub view_type: ImageViewType,
+}
+
+impl std::convert::From<ktx2::Header> for ImageInfo {
+    fn from(header: ktx2::Header) -> Self {
+        let num_dimensions = if header.pixel_depth > 0 {
+            3
+        } else if header.pixel_height > 0 {
+            2
+        } else {
+            1
+        };
+
+        let is_cubemap = header.face_count == 6;
+        let is_array = header.layer_count.max(1) > 1;
+        let layer_count = if is_cubemap {
+            header.layer_count.max(1) * 6
+        } else {
+            header.layer_count.max(1)
+        };
+
+        let (image_type, view_type) =
+            UniqueImage::get_image_and_view_type(num_dimensions, is_array, is_cubemap);
+
+        let format = header
+            .format
+            .expect("KTX2 header does not specify a format");
+
+        ImageInfo {
+            is_array,
+            is_cubemap,
+            num_faces: header.face_count,
+            num_layers: layer_count,
+            num_levels: header.level_count,
+            num_dimensions,
+            width: header.pixel_width,
+            height: header.pixel_height,
+            depth: header.pixel_depth.max(1),
+            format: Format::from_raw(format.0.get() as i32),
+            image_type,
+            view_type,
+        }
+    }
 }
 
 impl std::convert::From<ImageCreateInfo> for ImageInfo {
@@ -514,71 +556,26 @@ impl UniqueImage {
         work_package: &RendererWorkPackage,
         path: P,
     ) -> Option<UniqueImage> {
-        use libktx_rs::{sources, stream, texture};
+        let ktx_file = std::fs::File::open(path).expect("Failed to open texture file");
+        let ktx_file_mapping = unsafe {
+            mmap_rs::MmapOptions::new(ktx_file.metadata().unwrap().len() as usize)
+                .with_file(ktx_file, 0)
+                .map()
+                .expect("Failed to mmap texture file")
+        };
 
-        let ktx_stream = stream::RustKtxStream::new(Box::new(std::fs::File::open(path).ok()?))
-            .map_err(|e| error!("Failed to load KTX texure, error: {}", e))
-            .ok()?;
+        let reader = ktx2::Reader::new(&ktx_file_mapping).expect("Failed to read KTX2");
+        let header = reader.header();
 
-        let mut ktx_texture = texture::Texture::new(sources::StreamSource::new(
-            Arc::new(Mutex::new(ktx_stream)),
-            TextureCreateFlags::LOAD_IMAGE_DATA,
-        ))
-        .map_err(|e| error!("Failed to create KTX texture, error: {}", e))
-        .ok()?;
+        log::info!("KTX2 header {:?}", header);
 
-        let ktx2 = ktx_texture
-            .ktx2()
-            .expect("Textures must be in KTX2 format!");
-
-        let (num_components, component_size) = ktx2.component_info();
-        info!(
-            "texture has {} components, component size {}, format is {:?}",
-            num_components,
-            component_size,
-            Format::from_raw(ktx2.vk_format() as i32)
-        );
-
-        let ptr = ktx2.handle();
-        let format = Format::from_raw(ktx2.vk_format() as i32);
-        if format == Format::UNDEFINED {
-            error!("Texture format is invalid!");
+        if header.pixel_width == 0 || (header.pixel_depth >= 1 && header.pixel_height == 0) {
+            log::error!("Invalid KTX2 texture dimensions");
             return None;
         }
 
-        let (image_info, copy_regions_layer_count) = unsafe {
-            let num_layers = if (*ptr).isCubemap {
-                (*ptr).numLayers * 6
-            } else {
-                (*ptr).numLayers
-            };
-
-            let (image_type, view_type) = Self::get_image_and_view_type(
-                (*ptr).numDimensions,
-                (*ptr).isArray,
-                (*ptr).isCubemap,
-            );
-
-            (
-                ImageInfo {
-                    is_array: (*ptr).isArray,
-                    is_cubemap: (*ptr).isCubemap,
-                    num_faces: (*ptr).numFaces,
-                    num_layers,
-                    num_levels: (*ptr).numLevels,
-                    num_dimensions: (*ptr).numDimensions,
-                    width: (*ptr).baseWidth,
-                    height: (*ptr).baseHeight,
-                    depth: (*ptr).baseDepth,
-                    format,
-                    image_type,
-                    view_type,
-                },
-                (*ptr).numLayers * (*ptr).numFaces,
-            )
-        };
-
-        info!("Image info {:?}", image_info);
+        let image_info = ImageInfo::from(header);
+        log::info!("Image info: {:?}", image_info);
 
         let mut image_create_flags = if image_info.is_cubemap {
             ImageCreateFlags::CUBE_COMPATIBLE
@@ -591,12 +588,6 @@ impl UniqueImage {
         } else {
             usage_flags
         };
-
-        unsafe {
-            if (*ptr).generateMipmaps {
-                unimplemented!("Generating mipmaps is not supported yet ...");
-            }
-        }
 
         let image_fmt_properties = unsafe {
             renderer
@@ -626,9 +617,7 @@ impl UniqueImage {
             return None;
         }
 
-        let texture_size = ktx_texture
-            .get_data_size_uncompressed()
-            .expect("Failed to get uncompressed texture data size");
+        let texture_size = reader.data().len();
 
         let staging_buffer = UniqueBuffer::new(
             renderer,
@@ -640,56 +629,51 @@ impl UniqueImage {
         ScopedBufferMapping::create(renderer, &staging_buffer, WHOLE_SIZE, 0)
             .map(|staging_buffer_mapping| unsafe {
                 copy_nonoverlapping(
-                    ktx_texture.data().as_ptr(),
+                    reader.data().as_ptr(),
                     staging_buffer_mapping.memptr() as *mut u8,
-                    ktx_texture.data().len(),
+                    texture_size,
                 );
             })
             .expect("Failed to map staging buffer into host memory");
 
-        let mut copy_regions = smallvec::SmallVec::<[BufferImageCopy; 16]>::new();
-        let mut buffer_offset = 0u32;
+        let mut buffer_offset = texture_size;
 
-        let _ = ktx_texture.iterate_levels(
-            |miplevel: i32, face: i32, width: i32, height: i32, depth: i32, _pixels: &[u8]| {
-                info!("Mip level {}, face {}", miplevel, face);
-                if face == 0 {
-                    // let
-                    copy_regions.push(
-                        BufferImageCopy::builder()
-                            .buffer_offset(buffer_offset as DeviceSize)
-                            .buffer_row_length(0)
-                            .buffer_image_height(0)
-                            .image_subresource(
-                                ImageSubresourceLayers::builder()
-                                    .aspect_mask(ImageAspectFlags::COLOR)
-                                    .layer_count(copy_regions_layer_count)
-                                    .mip_level(miplevel as u32)
-                                    .base_array_layer(face as u32)
-                                    .build(),
-                            )
-                            .image_offset(Offset3D { x: 0, y: 0, z: 0 })
-                            .image_extent(Extent3D {
-                                width: width as u32,
-                                height: height as u32,
-                                depth: depth as u32,
-                            })
+        let copy_region_layer_count = header.layer_count.max(1) * header.face_count;
+
+        let copy_regions = reader
+            .levels()
+            .enumerate()
+            .map(|(level, pixels)| {
+                let width = image_info.width >> level as u32;
+                let height = image_info.height >> level as u32;
+                let depth = image_info.depth;
+                log::info!("Mip level {}, width {}, height {}", level, width, height);
+
+                buffer_offset -= pixels.len() as usize;
+
+                let copy_region = BufferImageCopy::builder()
+                    .buffer_offset(buffer_offset as DeviceSize)
+                    .buffer_row_length(0)
+                    .buffer_image_height(0)
+                    .image_subresource(
+                        ImageSubresourceLayers::builder()
+                            .aspect_mask(ImageAspectFlags::COLOR)
+                            .layer_count(copy_region_layer_count)
+                            .mip_level(level as u32)
+                            .base_array_layer(0)
                             .build(),
-                    );
+                    )
+                    .image_offset(Offset3D { x: 0, y: 0, z: 0 })
+                    .image_extent(Extent3D {
+                        width: width as u32,
+                        height: height as u32,
+                        depth: depth as u32,
+                    })
+                    .build();
 
-                    buffer_offset += (ktx_texture
-                        .get_image_size(miplevel as u32)
-                        .expect("Failed to get size for miplevel"))
-                        as u32
-                        * copy_regions_layer_count;
-                }
-
-                Ok(())
-            },
-        );
-
-        info!("Copy region count {}", copy_regions.len());
-        // info!("Copy regions {:?}", copy_regions);
+                copy_region
+            })
+            .collect::<SmallVec<[BufferImageCopy; 8]>>();
 
         let image_create_info = ImageCreateInfo::builder()
             .flags(image_create_flags)
@@ -708,8 +692,6 @@ impl UniqueImage {
                 depth: image_info.depth,
             })
             .build();
-
-        assert!(image_info == ImageInfo::from(image_create_info));
 
         let image = UniqueImage::new(
             renderer.graphics_device(),
