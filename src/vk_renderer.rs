@@ -1308,10 +1308,12 @@ impl GraphicsPipelineLayoutBuilder {
         self,
         graphics_device: &Device,
     ) -> Option<(PipelineLayout, Vec<DescriptorSetLayout>)> {
-        let descriptor_set_layouts = self
-            .layout_bindings
+        let mut layout_descriptions = self.layout_bindings.into_iter().collect::<Vec<_>>();
+        layout_descriptions.sort_unstable_by_key(|(set_id, _)| *set_id);
+
+        let descriptor_set_layouts = layout_descriptions
             .iter()
-            .filter_map(|(set_id, set_bindings)| unsafe {
+            .filter_map(|(_, set_bindings)| unsafe {
                 graphics_device
                     .create_descriptor_set_layout(
                         &DescriptorSetLayoutCreateInfo::builder()
@@ -1325,7 +1327,7 @@ impl GraphicsPipelineLayoutBuilder {
             })
             .collect::<Vec<_>>();
 
-        if descriptor_set_layouts.len() != self.layout_bindings.len() {
+        if descriptor_set_layouts.len() != layout_descriptions.len() {
             error!("Failed to create all required descriptor set layouts");
             return None;
         }

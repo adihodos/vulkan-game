@@ -11,6 +11,7 @@ use crate::vk_renderer::{
     ImageCopySource, RendererWorkPackage, UniqueImage, UniqueImageView, VulkanRenderer,
 };
 
+#[repr(C, align(16))]
 #[derive(Copy, Clone, Debug)]
 pub struct PbrMaterial {
     pub base_color_factor: Vec4,

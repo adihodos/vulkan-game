@@ -25,6 +25,8 @@ rayon = "*"
 libktx-rs = "*"
 serde = "*"
 ron = "*"
+winit = "*"
+raw-window-handle = "*"
 
 [dependencies.glfw]
 	version = "*"

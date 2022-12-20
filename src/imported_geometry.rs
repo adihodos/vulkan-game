@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::pbr::PbrMaterial;
-use ash::vk::DeviceSize;
+use ash::vk::{DeviceSize, Format, VertexInputAttributeDescription};
 use gltf::{
     buffer::{self, Data},
     image::{self, Source},
