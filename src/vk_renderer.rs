@@ -2124,26 +2124,23 @@ impl VulkanRenderer {
     }
 
     #[cfg(target_family = "unix")]
-    fn create_vulkan_surface(
-        win: &glfw::Window,
+    fn create_vulkan_surface_winit(
+        win: &winit::window::Window,
         vk_instance: &ash::Instance,
         vk_entry: &ash::Entry,
     ) -> VkResult<vk::SurfaceKHR> {
-        use std::ffi::c_void;
+        use std::mem::transmute;
+        use winit::platform::unix::WindowExtUnix;
 
-        use ash::vk::Window;
-
-        let x11_win = win.get_x11_window();
-        let mut x11_dpy = win.glfw.get_x11_display();
+        let native_window = win.xlib_window().expect("Failed to query native window id");
+        let native_display = win.xlib_display().expect("Failed to query native display");
 
         let xlib_surface = ash::extensions::khr::XlibSurface::new(vk_entry, vk_instance);
         unsafe {
-            let dpy_ptr = x11_dpy.as_mut().unwrap() as *mut _ as *mut ash::vk::Display;
-            let win_ptr = std::mem::transmute::<&mut c_void, Window>(x11_win.as_mut().unwrap());
             xlib_surface.create_xlib_surface(
                 &vk::XlibSurfaceCreateInfoKHR::builder()
-                    .dpy(dpy_ptr)
-                    .window(win_ptr)
+                    .dpy(native_display as *mut ash::vk::Display)
+                    .window(transmute::<u64, ash::vk::Window>(native_window))
                     .build(),
                 None,
             )
@@ -2238,7 +2235,7 @@ impl VulkanRenderer {
         self.work_packages.borrow_mut().clear();
     }
 
-    pub fn create(glfw: &mut glfw::Window) -> Option<VulkanRenderer> {
+    pub fn create(window: &winit::window::Window) -> Option<VulkanRenderer> {
         let vk_entry = Entry::linked();
         let validation_layer_name =
             CStr::from_bytes_with_nul(b"VK_LAYER_KHRONOS_validation\0").unwrap();
@@ -2348,7 +2345,7 @@ impl VulkanRenderer {
         .ok()?;
 
         let surface_loader = ash::extensions::khr::Surface::new(&vk_entry, &vk_instance);
-        let vk_surface = Self::create_vulkan_surface(glfw, &vk_instance, &vk_entry)
+        let vk_surface = Self::create_vulkan_surface_winit(window, &vk_instance, &vk_entry)
             .map_err(|e| {
                 error!("Failed to create Vulkan surface: {}", e);
             })

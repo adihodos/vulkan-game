@@ -11,11 +11,11 @@ use ash::vk::{
     ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, VertexInputAttributeDescription,
     VertexInputBindingDescription, VertexInputRate, WriteDescriptorSet,
 };
-use glfw::{Action, Cursor, Modifiers, MouseButton, WindowEvent};
 use imgui::{draw_list, DrawCmd, DrawVert, TextureId};
 use log::{error, info};
 use memoffset::offset_of;
 use nalgebra_glm::{I32Vec2, Vec2};
+use winit::event::{ElementState, MouseScrollDelta};
 
 use crate::{
     draw_context::DrawContext,
@@ -42,65 +42,32 @@ struct Uniform {
     world_view_proj: nalgebra_glm::Mat4,
 }
 
-struct ImguiGlfwData {
-    time: f64,
-    cursors: Vec<Cursor>,
-    last_valid_mousepos: Vec2,
-}
+fn translate_winit_key(key: winit::event::VirtualKeyCode) -> imgui::Key {
+    use winit::event::VirtualKeyCode;
 
-impl ImguiGlfwData {
-    pub fn new(window: &glfw::Window) -> Self {
-        let cursors = imgui::MouseCursor::VARIANTS
-            .iter()
-            .map(|imgui_cursor| {
-                let glfw_cursor = match imgui_cursor {
-                    imgui::MouseCursor::Arrow => glfw::StandardCursor::Arrow,
-                    imgui::MouseCursor::TextInput => glfw::StandardCursor::IBeam,
-                    imgui::MouseCursor::ResizeNS => glfw::StandardCursor::VResize,
-                    imgui::MouseCursor::ResizeEW => glfw::StandardCursor::HResize,
-                    imgui::MouseCursor::Hand => glfw::StandardCursor::Hand,
-                    imgui::MouseCursor::ResizeAll => glfw::StandardCursor::Arrow,
-                    imgui::MouseCursor::ResizeNESW => glfw::StandardCursor::Arrow,
-                    imgui::MouseCursor::ResizeNWSE => glfw::StandardCursor::Arrow,
-                    imgui::MouseCursor::NotAllowed => glfw::StandardCursor::Arrow,
-                };
-
-                glfw::Cursor::standard(glfw_cursor)
-            })
-            .collect::<Vec<_>>();
-
-        ImguiGlfwData {
-            time: 0f64,
-            cursors,
-            last_valid_mousepos: Vec2::new(f32::MAX, f32::MAX),
-        }
-    }
-
-    fn glfw_key2imgui_hey(key: glfw::Key) -> imgui::Key {
-        match key {
-            glfw::Key::Tab => imgui::Key::Tab,
-            glfw::Key::Left => imgui::Key::LeftArrow,
-            glfw::Key::Right => imgui::Key::RightArrow,
-            glfw::Key::Up => imgui::Key::UpArrow,
-            glfw::Key::Down => imgui::Key::DownArrow,
-            glfw::Key::PageUp => imgui::Key::PageUp,
-            glfw::Key::PageDown => imgui::Key::PageDown,
-            glfw::Key::Home => imgui::Key::Home,
-            glfw::Key::End => imgui::Key::End,
-            glfw::Key::Insert => imgui::Key::Insert,
-            glfw::Key::Delete => imgui::Key::Delete,
-            glfw::Key::Backspace => imgui::Key::Backspace,
-            glfw::Key::Space => imgui::Key::Space,
-            glfw::Key::Enter => imgui::Key::Enter,
-            glfw::Key::Escape => imgui::Key::Escape,
-            glfw::Key::A => imgui::Key::A,
-            glfw::Key::C => imgui::Key::C,
-            glfw::Key::V => imgui::Key::V,
-            glfw::Key::X => imgui::Key::X,
-            glfw::Key::Y => imgui::Key::Y,
-            glfw::Key::Z => imgui::Key::Z,
-            _ => imgui::Key::Escape,
-        }
+    match key {
+        VirtualKeyCode::Tab => imgui::Key::Tab,
+        VirtualKeyCode::Left => imgui::Key::LeftArrow,
+        VirtualKeyCode::Right => imgui::Key::RightArrow,
+        VirtualKeyCode::Up => imgui::Key::UpArrow,
+        VirtualKeyCode::Down => imgui::Key::DownArrow,
+        VirtualKeyCode::PageUp => imgui::Key::PageUp,
+        VirtualKeyCode::PageDown => imgui::Key::PageDown,
+        VirtualKeyCode::Home => imgui::Key::Home,
+        VirtualKeyCode::End => imgui::Key::End,
+        VirtualKeyCode::Insert => imgui::Key::Insert,
+        VirtualKeyCode::Delete => imgui::Key::Delete,
+        VirtualKeyCode::Back => imgui::Key::Backspace,
+        VirtualKeyCode::Space => imgui::Key::Space,
+        VirtualKeyCode::Return => imgui::Key::Enter,
+        VirtualKeyCode::Escape => imgui::Key::Escape,
+        VirtualKeyCode::A => imgui::Key::A,
+        VirtualKeyCode::C => imgui::Key::C,
+        VirtualKeyCode::V => imgui::Key::V,
+        VirtualKeyCode::X => imgui::Key::X,
+        VirtualKeyCode::Y => imgui::Key::Y,
+        VirtualKeyCode::Z => imgui::Key::Z,
+        _ => imgui::Key::Escape,
     }
 }
 
@@ -125,7 +92,7 @@ impl UiBackend {
     const MAX_VERTICES: u32 = 8192;
     const MAX_INDICES: u32 = 16535;
 
-    pub fn new(renderer: &VulkanRenderer, window: &glfw::Window) -> Option<UiBackend> {
+    pub fn new(renderer: &VulkanRenderer, window: &winit::window::Window) -> Option<UiBackend> {
         info!(
             "UI vertex type size = {}, index type size = {}",
             std::mem::size_of::<UiVertex>(),
@@ -377,16 +344,16 @@ impl UiBackend {
         }
 
         info!("UI backend created ...");
-        let win_size = window.get_size();
-        let fb_size = window.get_framebuffer_size();
+        let win_size = window.outer_size();
+        let fb_size = window.inner_size();
 
         Some(UiBackend {
             imgui: RefCell::new(imgui),
             vertex_bytes_one_frame: vertex_bytes_one_frame as u64,
             index_bytes_one_frame: index_bytes_one_frame as u64,
             ubo_bytes_one_frame,
-            window_size: Cell::new(I32Vec2::new(win_size.0, win_size.1)),
-            framebuffer_size: Cell::new(I32Vec2::new(fb_size.0, fb_size.1)),
+            window_size: Cell::new(I32Vec2::new(win_size.width as i32, win_size.height as i32)),
+            framebuffer_size: Cell::new(I32Vec2::new(fb_size.width as i32, fb_size.height as i32)),
             uniform_buffer,
             sampler,
             pipeline,
@@ -632,11 +599,11 @@ impl UiBackend {
         }
     }
 
-    fn init_imgui(window: &glfw::Window) -> imgui::Context {
+    fn init_imgui(window: &winit::window::Window) -> imgui::Context {
         let mut imgui = imgui::Context::create();
         let io = imgui.io_mut();
-        use glfw::Key as VirtualKeyCode;
         use imgui::Key;
+        use winit::event::VirtualKeyCode;
 
         io[Key::Tab] = VirtualKeyCode::Tab as _;
         io[Key::LeftArrow] = VirtualKeyCode::Left as _;
@@ -649,11 +616,11 @@ impl UiBackend {
         io[Key::End] = VirtualKeyCode::End as _;
         io[Key::Insert] = VirtualKeyCode::Insert as _;
         io[Key::Delete] = VirtualKeyCode::Delete as _;
-        io[Key::Backspace] = VirtualKeyCode::Backspace as _;
+        io[Key::Backspace] = VirtualKeyCode::Back as _;
         io[Key::Space] = VirtualKeyCode::Space as _;
-        io[Key::Enter] = VirtualKeyCode::Enter as _;
+        io[Key::Enter] = VirtualKeyCode::Return as _;
         io[Key::Escape] = VirtualKeyCode::Escape as _;
-        io[Key::KeyPadEnter] = VirtualKeyCode::KpEnter as _;
+        io[Key::KeyPadEnter] = VirtualKeyCode::NumpadEnter as _;
         io[Key::A] = VirtualKeyCode::A as _;
         io[Key::C] = VirtualKeyCode::C as _;
         io[Key::V] = VirtualKeyCode::V as _;
@@ -661,24 +628,28 @@ impl UiBackend {
         io[Key::Y] = VirtualKeyCode::Y as _;
         io[Key::Z] = VirtualKeyCode::Z as _;
 
-        let (win_width, win_height) = window.get_size();
-        io.display_size = [win_width as f32, win_height as f32];
-        let (fb_width, fb_height) = window.get_framebuffer_size();
+        let wnd_size = window.outer_size();
+        io.display_size = [wnd_size.width as f32, wnd_size.height as f32];
+        let fb_size = window.inner_size();
         io.display_framebuffer_scale = [
-            fb_width as f32 / io.display_size[0],
-            fb_height as f32 / io.display_size[1],
+            fb_size.width as f32 / io.display_size[0],
+            fb_size.height as f32 / io.display_size[1],
         ];
 
         imgui
     }
 
-    pub fn handle_event(&self, event: &glfw::WindowEvent) {
+    pub fn input_event(&self, event: &winit::event::WindowEvent) {
         let mut context = self.imgui.borrow_mut();
         let mut io = context.io_mut();
+        use winit::event::WindowEvent;
 
-        match *event {
-            WindowEvent::FramebufferSize(width, height) => {
-                self.framebuffer_size.set(I32Vec2::new(width, height));
+        match event {
+            WindowEvent::Resized(phys_size) => {
+                self.framebuffer_size.set(I32Vec2::new(
+                    phys_size.width as i32,
+                    phys_size.height as i32,
+                ));
 
                 let winsize = self.window_size.get();
                 let fbsize = self.framebuffer_size.get();
@@ -691,9 +662,14 @@ impl UiBackend {
                 }
             }
 
-            WindowEvent::Size(width, height) => {
+            WindowEvent::ScaleFactorChanged {
+                scale_factor,
+                new_inner_size,
+            } => {
+                let width = (new_inner_size.width as f64 * scale_factor).ceil() as i32;
+                let height = (new_inner_size.height as f64 * scale_factor).ceil() as i32;
                 self.window_size.set(I32Vec2::new(width, height));
-
+                //
                 let winsize = self.window_size.get();
                 let fbsize = self.framebuffer_size.get();
 
@@ -705,49 +681,150 @@ impl UiBackend {
                 }
             }
 
-            WindowEvent::CursorPos(xpos, ypos) => {
-                io.mouse_pos = [xpos as f32, ypos as f32];
+            WindowEvent::CursorMoved {
+                device_id,
+                position,
+                modifiers,
+            } => {
+                io.mouse_pos = [position.x as f32, position.y as f32];
             }
 
-            WindowEvent::Scroll(xoffset, yoffset) => {
-                io.mouse_wheel_h = yoffset as f32;
-                io.mouse_wheel = xoffset as f32;
+            WindowEvent::MouseWheel {
+                device_id,
+                delta,
+                phase,
+                modifiers,
+            } => match delta {
+                MouseScrollDelta::LineDelta(horizontal, vertical) => {
+                    io.mouse_wheel_h = *horizontal as f32;
+                    io.mouse_wheel = *vertical as f32;
+                }
+                MouseScrollDelta::PixelDelta(amount) => {
+                    log::info!("Pixel delta {:?}", amount);
+                }
+            },
+
+            WindowEvent::Focused(focused) => {
+                io.app_focus_lost = !focused;
             }
 
-            WindowEvent::Focus(focused) => io.app_focus_lost = !focused,
+            WindowEvent::KeyboardInput {
+                device_id,
+                input,
+                is_synthetic,
+            } => {
+                input.virtual_keycode.map(|key_code| {
+                    let pressed = input.state == ElementState::Pressed;
+                    let imguy_key = translate_winit_key(key_code);
+                    io.keys_down[imguy_key as usize] = pressed;
+                });
+            }
 
-            WindowEvent::Key(key, _, action, modifiers) => {
-                let pressed = action == Action::Press;
-                let imguy_key = ImguiGlfwData::glfw_key2imgui_hey(key);
-                io.keys_down[imguy_key as usize] = pressed;
-
-                match modifiers {
-                    Modifiers::Shift => io.key_shift = pressed,
-                    Modifiers::Alt => io.key_alt = pressed,
-                    Modifiers::Control => io.key_ctrl = pressed,
-                    Modifiers::Super => io.key_super = pressed,
-                    _ => {}
+            WindowEvent::ReceivedCharacter(char_code) => {
+                if *char_code != '\u{7f}' {
+                    io.add_input_character(*char_code);
                 }
             }
 
-            WindowEvent::Char(ch) => {
-                if ch != '\u{7f}' {
-                    io.add_input_character(ch)
-                }
-            }
+            WindowEvent::MouseInput {
+                device_id,
+                state,
+                button,
+                modifiers,
+            } => {
+                let pressed = *state == ElementState::Pressed;
+                use winit::event::MouseButton;
 
-            WindowEvent::MouseButton(button, action, _modifiers) => {
-                let pressed = action == Action::Press;
                 match button {
-                    MouseButton::Button1 => io.mouse_down[0] = pressed,
-                    MouseButton::Button2 => io.mouse_down[1] = pressed,
-                    MouseButton::Button3 => io.mouse_down[2] = pressed,
+                    MouseButton::Left => io.mouse_down[0] = pressed,
+                    MouseButton::Right => io.mouse_down[1] = pressed,
+                    MouseButton::Middle => io.mouse_down[2] = pressed,
                     _ => {}
                 }
+            }
+
+            WindowEvent::ModifiersChanged(modifier_state) => {
+                io.key_shift = modifier_state.shift();
+                io.key_ctrl = modifier_state.ctrl();
+                io.key_alt = modifier_state.alt();
+                io.key_super = modifier_state.logo();
             }
 
             _ => {}
         }
+
+        // match *event {
+        //     WindowEvent::FramebufferSize(width, height) => {
+        //         self.framebuffer_size.set(I32Vec2::new(width, height));
+        //
+        //         let winsize = self.window_size.get();
+        //         let fbsize = self.framebuffer_size.get();
+        //
+        //         if winsize.x > 0 && winsize.y > 0 {
+        //             io.display_framebuffer_scale = [
+        //                 fbsize.x as f32 / winsize.x as f32,
+        //                 fbsize.y as f32 / winsize.y as f32,
+        //             ];
+        //         }
+        //     }
+        //
+        //     WindowEvent::Size(width, height) => {
+        //         self.window_size.set(I32Vec2::new(width, height));
+        //
+        //         let winsize = self.window_size.get();
+        //         let fbsize = self.framebuffer_size.get();
+        //
+        //         if winsize.x > 0 && winsize.y > 0 {
+        //             io.display_framebuffer_scale = [
+        //                 fbsize.x as f32 / winsize.x as f32,
+        //                 fbsize.y as f32 / winsize.y as f32,
+        //             ];
+        //         }
+        //     }
+        //
+        //     WindowEvent::CursorPos(xpos, ypos) => {
+        //         io.mouse_pos = [xpos as f32, ypos as f32];
+        //     }
+        //
+        //     WindowEvent::Scroll(xoffset, yoffset) => {
+        //         io.mouse_wheel_h = yoffset as f32;
+        //         io.mouse_wheel = xoffset as f32;
+        //     }
+        //
+        //     WindowEvent::Focus(focused) => io.app_focus_lost = !focused,
+        //
+        //     WindowEvent::Key(key, _, action, modifiers) => {
+        //         let pressed = action == Action::Press;
+        //         let imguy_key = ImguiGlfwData::glfw_key2imgui_hey(key);
+        //         io.keys_down[imguy_key as usize] = pressed;
+        //
+        //         match modifiers {
+        //             Modifiers::Shift => io.key_shift = pressed,
+        //             Modifiers::Alt => io.key_alt = pressed,
+        //             Modifiers::Control => io.key_ctrl = pressed,
+        //             Modifiers::Super => io.key_super = pressed,
+        //             _ => {}
+        //         }
+        //     }
+        //
+        //     WindowEvent::Char(ch) => {
+        //         if ch != '\u{7f}' {
+        //             io.add_input_character(ch)
+        //         }
+        //     }
+        //
+        //     WindowEvent::MouseButton(button, action, _modifiers) => {
+        //         let pressed = action == Action::Press;
+        //         match button {
+        //             MouseButton::Button1 => io.mouse_down[0] = pressed,
+        //             MouseButton::Button2 => io.mouse_down[1] = pressed,
+        //             MouseButton::Button3 => io.mouse_down[2] = pressed,
+        //             _ => {}
+        //         }
+        //     }
+        //
+        //     _ => {}
+        // }
     }
 
     pub fn new_frame(&self) -> RefMut<imgui::Ui> {

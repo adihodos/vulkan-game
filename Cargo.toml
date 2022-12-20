@@ -28,11 +28,6 @@ ron = "*"
 winit = "*"
 raw-window-handle = "*"
 
-[dependencies.glfw]
-	version = "*"
-	default-features = false
-	# features = ["vulkan"]
-
 [target.'cfg(target_os = "windows")'.dependencies]
 	windows-sys = { version = "*", features = ["Win32_Foundation", "Win32_System_LibraryLoader"]}
 

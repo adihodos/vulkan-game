@@ -1,5 +1,4 @@
 use crate::camera::Camera;
-use glfw::{Action, MouseButton, WindowEvent};
 use glm::{clamp, cross, dot, inverse, length, normalize, Mat3, Quat, Vec4};
 use log::info;
 use nalgebra::{DualQuaternion, Isometry, UnitQuaternion};
@@ -117,35 +116,46 @@ impl ArcballCamera {
         }
     }
 
-    pub fn input_event(&mut self, event: &WindowEvent) {
-        match *event {
-            WindowEvent::MouseButton(mouse_btn, action, _mods) => {
+    pub fn input_event(&mut self, event: &winit::event::WindowEvent) {
+        use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+
+        match event {
+            WindowEvent::MouseInput {
+                device_id,
+                state,
+                button,
+                modifiers,
+            } => {
                 // info!("Mouse button down: {:?}", mouse_btn);
-                if mouse_btn == MouseButton::Button3 {
-                    if action == Action::Press {
+                if button == &MouseButton::Middle {
+                    if state == &ElementState::Pressed {
                         self.is_first_rotation = true;
                         self.is_rotating = true;
                     }
 
-                    if action == Action::Release {
+                    if state == &ElementState::Released {
                         self.is_rotating = false;
                         self.is_first_rotation = true;
                     }
                 }
 
-                if mouse_btn == MouseButton::Button2 {
-                    if action == Action::Press {
+                if button == &MouseButton::Right {
+                    if state == &ElementState::Pressed {
                         self.is_panning = true;
                         self.is_first_panning = true;
                     }
-                    if action == Action::Release {
+                    if state == &ElementState::Released {
                         self.is_panning = false;
                         self.is_first_panning = true;
                     }
                 }
             }
-
-            WindowEvent::CursorPos(x, y) => {
+            WindowEvent::CursorMoved {
+                device_id,
+                position,
+                modifiers,
+            } => {
+                let (x, y) = (position.x as f32, position.y as f32);
                 if self.is_rotating {
                     if self.is_first_rotation {
                         self.prev_mouse = Vec2::new(x as f32, y as f32);
@@ -165,11 +175,24 @@ impl ArcballCamera {
                 }
             }
 
-            WindowEvent::FramebufferSize(x, y) => self.update_screen(x, y),
+            WindowEvent::Resized(new_size) => {
+                self.update_screen(new_size.width as i32, new_size.height as i32)
+            }
+            WindowEvent::MouseWheel {
+                device_id,
+                delta,
+                phase,
+                modifiers,
+            } => match delta {
+                MouseScrollDelta::LineDelta(horizontal, vertical) => {
+                    self.zoom(*vertical, 0f32);
+                }
+                MouseScrollDelta::PixelDelta(amount) => {
+                    log::info!("Pixel delta {:?}", amount);
+                }
+            },
 
-            WindowEvent::Scroll(x, y) => self.zoom(y as f32, x as f32),
-
-            _ => {}
+            _ => (),
         }
     }
 }

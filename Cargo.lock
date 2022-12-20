@@ -642,18 +642,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "glfw"
-version = "0.47.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2c532509718cb34e0c449ec5ef74529c1af3a33b664e6b8ddfe29252f86f936"
-dependencies = [
- "bitflags",
- "objc",
- "raw-window-handle 0.4.3",
- "winapi",
-]
-
-[[package]]
 name = "glob"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1802,7 +1790,6 @@ dependencies = [
  "ash",
  "chrono",
  "flexi_logger",
- "glfw",
  "gltf",
  "image",
  "imgui",
