@@ -14,6 +14,7 @@ use smallvec::SmallVec;
 
 use crate::{
     app_config::AppConfig,
+    debug_draw_overlay::DebugDrawOverlay,
     draw_context::DrawContext,
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     skybox::Skybox,
@@ -61,6 +62,7 @@ struct GameObjectData {
 
 pub struct GameWorld {
     draw_opts: RefCell<DrawOpts>,
+    debug_draw_overlay: DebugDrawOverlay,
     resource_cache: ResourceHolder,
     skybox: Skybox,
     pbr_cpu_2_gpu: PbrCpu2GpuData,
@@ -69,18 +71,7 @@ pub struct GameWorld {
 
 impl GameWorld {
     pub fn new(renderer: &VulkanRenderer, app_cfg: &AppConfig) -> Option<GameWorld> {
-        {
-            // let pkg = renderer.create_work_package()?;
-            // let img = UniqueImage::from_ktx2(
-            //     renderer,
-            //     ImageTiling::OPTIMAL,
-            //     ImageUsageFlags::SAMPLED,
-            //     ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            //     &pkg,
-            //     "data/textures/skybox/skybox-ibl/skybox.cubemap.ktx2",
-            // )?;
-        }
-
+        let debug_draw_overlay = DebugDrawOverlay::create(renderer)?;
         let skybox = Skybox::create(renderer, &app_cfg.scene, &app_cfg.engine)?;
 
         let resource_cache = ResourceHolder::create(renderer, app_cfg)?;
@@ -293,6 +284,7 @@ impl GameWorld {
                 draw_normals: false,
                 normals_color: Vec4::new(1f32, 0f32, 0f32, 1f32),
             }),
+            debug_draw_overlay,
             resource_cache,
             skybox,
             pbr_cpu_2_gpu: PbrCpu2GpuData {
@@ -419,11 +411,23 @@ impl GameWorld {
                 0,
             );
         }
+
+        self.debug_draw_overlay.add_axes(
+            glm::vec3(0f32, 0f32, 0f32),
+            0.5f32,
+            &glm::Mat3::from_columns(&[
+                glm::vec3(1f32, 0f32, 0f32),
+                glm::vec3(0f32, 1f32, 0f32),
+                glm::vec3(0f32, 0f32, 1f32),
+            ]),
+            Some(&[0xFF0000FF, 0xFF00FF00, 0xFFFF0000]),
+        );
+        self.debug_draw_overlay.draw(draw_context);
+        self.debug_draw_overlay.clear();
     }
 
     pub fn ui(&self, ui: &mut imgui::Ui) {
-        let choices = ["test test this is 1", "test test this is 2"];
-        ui.window("Hello world")
+        ui.window("Options")
             .size([300.0, 110.0], imgui::Condition::FirstUseEver)
             .build(|| {
                 let mut draw_opts = self.draw_opts.borrow_mut();

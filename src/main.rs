@@ -1,6 +1,7 @@
 mod app_config;
 mod arcball_camera;
 mod camera;
+mod debug_draw_overlay;
 mod draw_context;
 mod game_world;
 mod imported_geometry;

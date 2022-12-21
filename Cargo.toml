@@ -28,6 +28,7 @@ ron = "*"
 winit = "*"
 raw-window-handle = "*"
 ktx2 = "*"
+palette = "*"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 	windows-sys = { version = "*", features = ["Win32_Foundation", "Win32_System_LibraryLoader"]}

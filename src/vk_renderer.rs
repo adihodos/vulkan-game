@@ -2405,7 +2405,7 @@ impl VulkanRenderer {
                 .map_err(|e| error!("Failed to get images from the swapchain {}", e))
                 .ok()?;
 
-        info!("Swapchain created, image count {}", max_inflight_frames);
+        log::info!("Swapchain created, image count {}", max_inflight_frames);
 
         let cmd_pool = UniqueCommandPool::new(
             &graphics_device,
@@ -2943,8 +2943,8 @@ fn pick_physical_device(
         let surface_format = surface_format.unwrap();
 
         let desired_present_modes = [
-            PresentModeKHR::MAILBOX,
             PresentModeKHR::FIFO,
+            PresentModeKHR::MAILBOX,
             PresentModeKHR::IMMEDIATE,
         ];
 
@@ -2953,9 +2953,14 @@ fn pick_physical_device(
         }
         .ok()
         .and_then(|present_modes| {
-            present_modes
+            desired_present_modes
                 .iter()
-                .find(|&pm| desired_present_modes.contains(pm))
+                .filter_map(|desired_present_mode| {
+                    present_modes
+                        .iter()
+                        .find(|pmode| *pmode == desired_present_mode)
+                })
+                .nth(0)
                 .copied()
         });
 
