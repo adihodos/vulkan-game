@@ -1,4 +1,7 @@
-use std::cell::RefCell;
+use std::{
+    cell::{Cell, RefCell},
+    time::Instant,
+};
 
 use nalgebra_glm::{IVec2, Vec3};
 use raw_window_handle::HasRawWindowHandle;
@@ -11,6 +14,8 @@ use winit::{
 use crate::{
     app_config::{self, AppConfig},
     arcball_camera::ArcballCamera,
+    camera::Camera,
+    debug_draw_overlay::DebugDrawOverlay,
     draw_context::DrawContext,
     game_world::GameWorld,
     ui_backend::UiBackend,
@@ -87,7 +92,9 @@ impl MainWindow {
 
 struct GameMain {
     ui: UiBackend,
+    debug_draw_overlay: std::rc::Rc<RefCell<DebugDrawOverlay>>,
     game_world: RefCell<GameWorld>,
+    timestamp: Cell<Instant>,
     app_config: AppConfig,
     renderer: VulkanRenderer,
     camera: ArcballCamera,
@@ -121,7 +128,11 @@ impl GameMain {
 
         GameMain {
             ui,
+            debug_draw_overlay: std::rc::Rc::new(RefCell::new(
+                DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
+            )),
             game_world: RefCell::new(game_world),
+            timestamp: Cell::new(Instant::now()),
             app_config,
             renderer,
             camera: ArcballCamera::new(Vec3::new(0f32, 0f32, 0f32), 0.1f32, framebuffer_size),
@@ -150,7 +161,18 @@ impl GameMain {
     fn draw_frame(&self) {
         self.renderer.begin_frame();
 
+        let projection = perspective(
+            75f32,
+            self.framebuffer_size.x as f32 / self.framebuffer_size.y as f32,
+            0.1f32,
+            5000f32,
+        );
+
         {
+            // let mut dbg_draw_overlay = self.debug_draw_overlay.borrow_mut();
+            // dbg_draw_overlay.clear();
+            self.debug_draw_overlay.borrow_mut().clear();
+
             let draw_context = DrawContext::create(
                 &self.renderer,
                 self.framebuffer_size.x,
@@ -162,16 +184,29 @@ impl GameMain {
                     0.1f32,
                     5000f32,
                 ),
+                self.debug_draw_overlay.clone()
             );
 
             self.game_world.borrow().draw(&draw_context);
             self.ui.draw_frame(&draw_context);
         }
 
+        self.debug_draw_overlay
+            .borrow_mut()
+            .draw(&self.renderer, &(projection * self.camera.view_transform()));
+
         self.renderer.end_frame();
     }
 
     fn main(&mut self) {
+        let current_time = Instant::now();
+
+        let frame_time = (current_time - self.timestamp.get())
+            .as_secs_f64()
+            .clamp(0f64, 0.25f64);
+        self.timestamp.set(current_time);
+
+        self.game_world.borrow().update(frame_time);
         self.do_ui();
         self.draw_frame();
     }

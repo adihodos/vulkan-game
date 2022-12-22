@@ -3,7 +3,7 @@ use std::{
     mem::size_of,
 };
 
-use crate::pbr::PbrMaterial;
+use crate::{math::AABB3, pbr::PbrMaterial};
 use ash::vk::{DeviceSize, Format, VertexInputAttributeDescription};
 use gltf::{
     buffer::{self, Data},
@@ -21,10 +21,12 @@ use nalgebra_glm as glm;
 
 use crate::vk_renderer::ImageCopySource;
 
+#[derive(Clone, Debug)]
 pub struct GeometryNode {
     pub parent: Option<u32>,
     pub name: String,
     pub transform: Mat4,
+    pub aabb: AABB3,
 }
 
 impl std::default::Default for GeometryNode {
@@ -33,6 +35,7 @@ impl std::default::Default for GeometryNode {
             parent: None,
             name: String::new(),
             transform: glm::identity::<f32, 4>(),
+            aabb: AABB3::identity(),
         }
     }
 }
@@ -82,6 +85,7 @@ pub struct ImportedGeometry {
     pixels_base_color: Vec<(u32, u32)>,
     pixels_metallic_roughness: Vec<(u32, u32)>,
     pixels_normal: Vec<(u32, u32)>,
+    pub aabb: AABB3,
 }
 
 impl ImportedGeometry {
@@ -329,6 +333,7 @@ impl ImportedGeometry {
             parent,
             name: node.name().unwrap_or("unknown").into(),
             transform: node_matrix,
+            aabb: AABB3::identity(),
         });
 
         node.children()
@@ -377,6 +382,11 @@ impl ImportedGeometry {
                 self.vertices.extend(positions.map(|vtx_pos| {
                     let transformed_pos =
                         matrix * Vec4::new(vtx_pos[0], vtx_pos[1], vtx_pos[2], 1f32);
+
+                    self.nodes[node_id as usize]
+                        .aabb
+                        .add_point(transformed_pos.xyz());
+
                     GeometryVertex {
                         pos: transformed_pos.xyz(),
                         pbr_buf_id: material_index,
@@ -387,7 +397,7 @@ impl ImportedGeometry {
                 reader.read_normals().map(|normals| {
                     for (idx, normal) in normals.enumerate() {
                         let n = Vec3::from_column_slice(&normal);
-                        let n = glm::normalize(&(matrix * Vec4::new(n.x, n.y, n.z, 0f32)).xyz());
+                        // let n = glm::normalize(&(matrix * Vec4::new(n.x, n.y, n.z, 0f32)).xyz());
                         self.vertices[vertex_start + idx].normal = n;
                     }
                 });
@@ -480,11 +490,22 @@ impl ImportedGeometry {
             pixels_base_color: Vec::new(),
             pixels_metallic_roughness: Vec::new(),
             pixels_normal: Vec::new(),
+            aabb: AABB3::identity(),
         };
 
         imported.process_materials(&gltf_doc);
         imported.process_nodes(&gltf_doc);
+        imported.compute_aabb();
 
         Some(imported)
+    }
+
+    fn compute_aabb(&mut self) {
+        self.aabb = self
+            .nodes
+            .iter()
+            .fold(AABB3::identity(), |aabb, current_node| {
+                crate::math::aabb_merge(&aabb, &current_node.aabb)
+            });
     }
 }

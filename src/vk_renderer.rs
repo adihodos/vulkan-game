@@ -2610,33 +2610,26 @@ impl VulkanRenderer {
         }
     }
 
-    // pub fn draw_context(&self) -> DrawContext {
-    //     let viewport = Viewport {
-    //         x: 0f32,
-    //         y: 0f32,
-    //         width: self.framebuffer_extents.width as f32,
-    //         height: self.framebuffer_extents.height as f32,
-    //         min_depth: 1f32,
-    //         max_depth: 0f32,
-    //     };
-    //
-    //     let scissor = Rect2D {
-    //         offset: Offset2D { x: 0, y: 0 },
-    //         extent: Extent2D {
-    //             width: self.framebuffer_extents.width,
-    //             height: self.framebuffer_extents.height,
-    //         },
-    //     };
-    //
-    //     DrawContext {
-    //         renderer: self,
-    //         graphics_device: self.graphics_device(),
-    //         cmd_buff: self.frame_render_data[self.current_frame_id() as usize].command_buffer,
-    //         frame_id: self.current_frame_id(),
-    //         viewport,
-    //         scissor,
-    //     }
-    // }
+    pub fn viewport(&self) -> Viewport {
+        Viewport {
+            x: 0f32,
+            y: 0f32,
+            width: self.framebuffer_extents.width as f32,
+            height: self.framebuffer_extents.height as f32,
+            min_depth: 1f32,
+            max_depth: 0f32,
+        }
+    }
+
+    pub fn scissor(&self) -> Rect2D {
+        Rect2D {
+            offset: Offset2D { x: 0, y: 0 },
+            extent: Extent2D {
+                width: self.framebuffer_extents.width,
+                height: self.framebuffer_extents.height,
+            },
+        }
+    }
 
     fn current_frame_data(&self) -> &FrameRenderData {
         &self.frame_render_data[self.current_frame_id() as usize]

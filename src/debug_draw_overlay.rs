@@ -35,7 +35,7 @@ pub struct DebugDrawOverlay {
     lines_gpu: UniqueBuffer,
     uniforms: UniqueBuffer,
     pipeline: UniqueGraphicsPipeline,
-    lines_cpu: std::cell::RefCell<Vec<Line>>,
+    lines_cpu: Vec<Line>,
 }
 
 impl DebugDrawOverlay {
@@ -179,20 +179,19 @@ impl DebugDrawOverlay {
             lines_gpu,
             uniforms,
             pipeline,
-            lines_cpu: std::cell::RefCell::new(Vec::with_capacity(Self::MAX_LINES as usize)),
+            lines_cpu: Vec::with_capacity(Self::MAX_LINES as usize),
         })
     }
 
     pub fn add_line(
-        &self,
+        &mut self,
         start_pos: glm::Vec3,
         end_pos: glm::Vec3,
         start_color: u32,
         end_color: u32,
     ) {
-        let mut lines_buff = self.lines_cpu.borrow_mut();
-        if lines_buff.len() < Self::MAX_LINES as usize {
-            lines_buff.push(Line {
+        if self.lines_cpu.len() < Self::MAX_LINES as usize {
+            self.lines_cpu.push(Line {
                 start_pos,
                 end_pos,
                 start_color,
@@ -201,14 +200,53 @@ impl DebugDrawOverlay {
         }
     }
 
+    pub fn add_aabb(&mut self, min: &glm::Vec3, max: &glm::Vec3, color: u32) {
+        // let extents = (max - min) * 0.5f32;
+        // let center = (min + max) * 0.5f32;
+
+        let points = [
+            //
+            //1st face
+            glm::vec3(max.x, max.y, max.z),
+            glm::vec3(min.x, max.y, max.z),
+            glm::vec3(min.x, min.y, max.z),
+            glm::vec3(max.x, min.y, max.z),
+            //
+            // 2nd face
+            glm::vec3(max.x, max.y, min.z),
+            glm::vec3(min.x, max.y, min.z),
+            glm::vec3(min.x, min.y, min.z),
+            glm::vec3(max.x, min.y, min.z),
+        ];
+
+        let indices = [
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 0),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (7, 4),
+            (0, 4),
+            (1, 5),
+            (2, 6),
+            (3, 7),
+        ];
+
+        indices.iter().for_each(|&(i, j)| {
+            self.add_line(points[i as usize], points[j as usize], color, color);
+        });
+    }
+
     pub fn add_axes(
-        &self,
+        &mut self,
         origin: glm::Vec3,
         extents: f32,
         orientation: &glm::Mat3,
         axis_colors: Option<&[u32]>,
     ) {
-        if self.lines_cpu.borrow().len() + 6 >= Self::MAX_LINES as usize {
+        if self.lines_cpu.len() + 6 >= Self::MAX_LINES as usize {
             return;
         }
 
@@ -237,100 +275,110 @@ impl DebugDrawOverlay {
             });
     }
 
-    pub fn clear(&self) {
-        self.lines_cpu.borrow_mut().clear();
+    pub fn clear(&mut self) {
+        self.lines_cpu.clear();
     }
 
-    pub fn draw(&self, draw_context: &DrawContext) {
+    pub fn draw(&mut self, renderer: &VulkanRenderer, view_projection: &glm::Mat4) {
         ScopedBufferMapping::create(
-            draw_context.renderer,
+            renderer,
             &self.lines_gpu,
             Self::MAX_LINES * size_of::<Line>() as DeviceSize,
-            self.aligned_lines_size * Self::MAX_LINES * draw_context.frame_id as DeviceSize,
+            self.aligned_lines_size * Self::MAX_LINES * renderer.current_frame_id() as DeviceSize,
         )
-        .map(|buffer_mapping| {
-            let lines = self.lines_cpu.borrow();
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    lines.as_ptr(),
-                    buffer_mapping.memptr() as *mut Line,
-                    lines.len(),
-                );
-            }
+        .map(|buffer_mapping| unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.lines_cpu.as_ptr(),
+                buffer_mapping.memptr() as *mut Line,
+                self.lines_cpu.len(),
+            );
         });
 
         ScopedBufferMapping::create(
-            draw_context.renderer,
+            renderer,
             &self.uniforms,
             size_of::<glm::Mat4>() as DeviceSize,
-            self.aligned_ubo_size * draw_context.frame_id as DeviceSize,
+            self.aligned_ubo_size * renderer.current_frame_id() as DeviceSize,
         )
-        .map(|mapping| {
-            let transform = draw_context.projection * draw_context.camera.view_transform();
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    &transform as *const _,
-                    mapping.memptr() as *mut glm::Mat4,
-                    1,
-                );
-            }
+        .map(|mapping| unsafe {
+            let mtx_slice = view_projection.as_slice();
+            std::ptr::copy_nonoverlapping(
+                mtx_slice.as_ptr(),
+                mapping.memptr() as *mut f32,
+                mtx_slice.len(),
+            );
         });
 
         unsafe {
-            draw_context.renderer.graphics_device().cmd_bind_pipeline(
-                draw_context.cmd_buff,
+            renderer.graphics_device().cmd_bind_pipeline(
+                renderer.current_command_buffer(),
                 PipelineBindPoint::GRAPHICS,
                 self.pipeline.pipeline,
             );
 
-            let viewports = [draw_context.viewport];
-            let scissors = [draw_context.scissor];
+            let viewports = [renderer.viewport()];
+            let scissors = [renderer.scissor()];
 
-            draw_context.renderer.graphics_device().cmd_set_viewport(
-                draw_context.cmd_buff,
+            renderer.graphics_device().cmd_set_viewport(
+                renderer.current_command_buffer(),
                 0,
                 &viewports,
             );
-            draw_context.renderer.graphics_device().cmd_set_scissor(
-                draw_context.cmd_buff,
+            renderer.graphics_device().cmd_set_scissor(
+                renderer.current_command_buffer(),
                 0,
                 &scissors,
             );
 
             let vertex_buffers = [self.lines_gpu.buffer];
-            let vertex_offsets =
-                [self.aligned_lines_size * Self::MAX_LINES * draw_context.frame_id as DeviceSize];
+            let vertex_offsets = [self.aligned_lines_size
+                * Self::MAX_LINES
+                * renderer.current_frame_id() as DeviceSize];
 
-            draw_context
-                .renderer
-                .graphics_device()
-                .cmd_bind_vertex_buffers(
-                    draw_context.cmd_buff,
-                    0,
-                    &vertex_buffers,
-                    &vertex_offsets,
-                );
+            renderer.graphics_device().cmd_bind_vertex_buffers(
+                renderer.current_command_buffer(),
+                0,
+                &vertex_buffers,
+                &vertex_offsets,
+            );
 
-            let descriptor_offsets = [self.aligned_ubo_size as u32 * draw_context.frame_id];
-            draw_context
-                .renderer
-                .graphics_device()
-                .cmd_bind_descriptor_sets(
-                    draw_context.cmd_buff,
-                    PipelineBindPoint::GRAPHICS,
-                    self.pipeline.layout,
-                    0,
-                    &self.descriptor_set,
-                    &descriptor_offsets,
-                );
+            let descriptor_offsets = [self.aligned_ubo_size as u32 * renderer.current_frame_id()];
+            renderer.graphics_device().cmd_bind_descriptor_sets(
+                renderer.current_command_buffer(),
+                PipelineBindPoint::GRAPHICS,
+                self.pipeline.layout,
+                0,
+                &self.descriptor_set,
+                &descriptor_offsets,
+            );
 
-            draw_context.renderer.graphics_device().cmd_draw(
-                draw_context.cmd_buff,
-                self.lines_cpu.borrow().len() as u32,
+            renderer.graphics_device().cmd_draw(
+                renderer.current_command_buffer(),
+                self.lines_cpu.len() as u32,
                 1,
                 0,
                 0,
             );
         }
+    }
+}
+
+impl rapier3d::pipeline::DebugRenderBackend for DebugDrawOverlay {
+    fn draw_line(
+        &mut self,
+        _object: rapier3d::prelude::DebugRenderObject,
+        a: rapier3d::prelude::Point<rapier3d::prelude::Real>,
+        b: rapier3d::prelude::Point<rapier3d::prelude::Real>,
+        color: [f32; 4],
+    ) {
+        let color: palette::Packed = palette::Srgba::new(color[0], color[1], color[2], color[3])
+            .into_format()
+            .into();
+        self.add_line(
+            a.to_homogeneous().xyz(),
+            b.to_homogeneous().xyz(),
+            color.color,
+            color.color,
+        );
     }
 }
