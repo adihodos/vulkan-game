@@ -201,12 +201,9 @@ impl DebugDrawOverlay {
     }
 
     pub fn add_aabb(&mut self, min: &glm::Vec3, max: &glm::Vec3, color: u32) {
-        // let extents = (max - min) * 0.5f32;
-        // let center = (min + max) * 0.5f32;
-
         let points = [
             //
-            //1st face
+            // 1st face
             glm::vec3(max.x, max.y, max.z),
             glm::vec3(min.x, max.y, max.z),
             glm::vec3(min.x, min.y, max.z),
@@ -266,12 +263,7 @@ impl DebugDrawOverlay {
             .iter()
             .zip(axis_colors.iter())
             .for_each(|(axis, color)| {
-                self.add_line(
-                    origin + axis * extents,
-                    origin - axis * extents,
-                    *color,
-                    *color,
-                );
+                self.add_line(origin, origin + axis * extents, *color, *color);
             });
     }
 

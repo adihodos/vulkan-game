@@ -11,8 +11,8 @@ log = { version = "*"}
 flexi_logger = { version = "*"}
 imgui = "*"
 mmap-rs = "*"
-nalgebra = "*"
-nalgebra-glm = "*"
+nalgebra = { version = "*", features = ["serde-serialize"] }
+nalgebra-glm = { version = "*", features = ["serde-serialize"] }
 memoffset = "*"
 strum = "*"
 strum_macros = "*"

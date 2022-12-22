@@ -10,7 +10,7 @@ use ash::vk::{
     ImageUsageFlags, IndexType, MemoryPropertyFlags, PipelineBindPoint, SamplerAddressMode,
     SamplerCreateInfo, SamplerMipmapMode, WriteDescriptorSet,
 };
-use glm::Mat4;
+use glm::{Mat4, Vec3};
 use nalgebra::Isometry3;
 use nalgebra_glm::Vec4;
 
@@ -37,6 +37,8 @@ struct DebugDrawOptions {
     debug_draw_physics: bool,
     debug_draw_nodes_bounding: bool,
     debug_draw_mesh: bool,
+    debug_draw_world_axis: bool,
+    world_axis_length: f32,
 }
 
 impl std::default::Default for DebugDrawOptions {
@@ -48,6 +50,8 @@ impl std::default::Default for DebugDrawOptions {
             debug_draw_physics: false,
             debug_draw_nodes_bounding: false,
             debug_draw_mesh: false,
+            debug_draw_world_axis: false,
+            world_axis_length: 1f32,
         }
     }
 }
@@ -146,9 +150,6 @@ impl GameWorld {
             pbr_descriptor_layouts[PbrDescriptorType::FsLightingData as usize],
         ];
 
-        log::info!("PBR desc layouts {:?}", pbr_descriptor_layouts);
-        log::info!("Per object layouts: {:?}", per_object_ds_layouts);
-
         let object_pbr_descriptor_sets = unsafe {
             renderer.graphics_device().allocate_descriptor_sets(
                 &DescriptorSetAllocateInfo::builder()
@@ -158,11 +159,6 @@ impl GameWorld {
             )
         }
         .expect("Papali, papali sukyyyyyyyyyyyyyy");
-
-        log::info!(
-            "Descriptor sets transforms + UBO : {:?}",
-            object_pbr_descriptor_sets
-        );
 
         let desc_buff_info = [
             DescriptorBufferInfo::builder()
@@ -176,8 +172,6 @@ impl GameWorld {
                 .range(size_of::<PbrLightingData>() as DeviceSize)
                 .build(),
         ];
-
-        log::info!("DS updates: {:?}", desc_buff_info);
 
         let write_descriptors_transforms_lighting = [
             WriteDescriptorSet::builder()
@@ -355,6 +349,15 @@ impl GameWorld {
     }
 
     pub fn draw(&self, draw_context: &DrawContext) {
+        if self.draw_opts.borrow().debug_draw_world_axis {
+            draw_context.debug_draw.borrow_mut().add_axes(
+                Vec3::zeros(),
+                self.draw_opts.borrow().world_axis_length,
+                &glm::Mat3::identity(),
+                None,
+            );
+        }
+
         self.skybox.draw(draw_context);
 
         let device = draw_context.renderer.graphics_device();
@@ -495,32 +498,42 @@ impl GameWorld {
         ui.window("Options")
             .size([400.0, 110.0], imgui::Condition::FirstUseEver)
             .build(|| {
-                let frames_histogram_values = self.frame_times.borrow();
-                ui.plot_histogram("Frame times", &frames_histogram_values)
-                    .scale_min(0f32)
-                    .scale_max(0.05f32)
-                    .graph_size([400f32, 150f32])
-                    .build();
+                {
+                    let frames_histogram_values = self.frame_times.borrow();
+                    ui.plot_histogram("Frame times", &frames_histogram_values)
+                        .scale_min(0f32)
+                        .scale_max(0.05f32)
+                        .graph_size([400f32, 150f32])
+                        .build();
 
-                ui.plot_lines("Frame times (lines)", &frames_histogram_values)
-                    .scale_min(0f32)
-                    .scale_max(0.05f32)
-                    .graph_size([400f32, 150f32])
-                    .build();
+                    ui.plot_lines("Frame times (lines)", &frames_histogram_values)
+                        .scale_min(0f32)
+                        .scale_max(0.05f32)
+                        .graph_size([400f32, 150f32])
+                        .build();
+                }
 
                 ui.separator();
+                ui.text("Debug draw:");
 
-                let mut dbg_draw_phys = self.draw_opts.borrow().debug_draw_physics;
-                ui.checkbox("Debug draw physics objects", &mut dbg_draw_phys);
-                self.draw_opts.borrow_mut().debug_draw_physics = dbg_draw_phys;
+                {
+                    let mut dbg_draw = self.draw_opts.borrow_mut();
+                    ui.checkbox("World axis", &mut dbg_draw.debug_draw_world_axis);
+                    ui.same_line();
+                    ui.slider(
+                        "World axis length",
+                        0.1f32,
+                        4f32,
+                        &mut dbg_draw.world_axis_length,
+                    );
 
-                let mut dbg_draw_nodes_bbox = self.draw_opts.borrow().debug_draw_nodes_bounding;
-                ui.checkbox("Debug draw mesh bounding boxes", &mut dbg_draw_nodes_bbox);
-                self.draw_opts.borrow_mut().debug_draw_nodes_bounding = dbg_draw_nodes_bbox;
-
-                let mut dbg_draw_mesh = self.draw_opts.borrow().debug_draw_mesh;
-                ui.checkbox("Debug draw mesh bounding box", &mut dbg_draw_mesh);
-                self.draw_opts.borrow_mut().debug_draw_mesh = dbg_draw_mesh;
+                    ui.checkbox("Physics objects", &mut dbg_draw.debug_draw_physics);
+                    ui.checkbox(
+                        "Mesh nodes bounding boxes",
+                        &mut dbg_draw.debug_draw_nodes_bounding,
+                    );
+                    ui.checkbox("Mesh bounding box", &mut dbg_draw.debug_draw_mesh);
+                }
             });
     }
 

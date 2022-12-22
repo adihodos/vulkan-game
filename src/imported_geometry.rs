@@ -210,15 +210,15 @@ impl ImportedGeometry {
             })
             .collect::<Vec<_>>();
 
-        materials.iter().for_each(|m| {
-            log::info!(
-                "Mtl {}, base color {}, metal + rough {}, normals {}",
-                m.name,
-                m.base_color_src,
-                m.metallic_src,
-                m.normal_src
-            );
-        });
+        // materials.iter().for_each(|m| {
+        //     log::info!(
+        //         "Mtl {}, base color {}, metal + rough {}, normals {}",
+        //         m.name,
+        //         m.base_color_src,
+        //         m.metallic_src,
+        //         m.normal_src
+        //     );
+        // });
 
         let mut base_color_images = materials
             .iter()
@@ -310,7 +310,7 @@ impl ImportedGeometry {
     }
 
     fn process_node(&mut self, node: &gltf::Node, gltf_doc: &gltf::Document, parent: Option<u32>) {
-        log::info!("Node {}", node.name().unwrap_or("unnamed"));
+        // log::info!("Node {}", node.name().unwrap_or("unnamed"));
 
         let node_matrix = match node.transform() {
             Transform::Matrix { matrix } => Mat4::from_column_slice(matrix.flat()),

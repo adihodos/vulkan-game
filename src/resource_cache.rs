@@ -161,7 +161,7 @@ impl ResourceHolder {
             handles.insert((*tag).clone(), geometry_handle);
         });
 
-        log::info!("PBR data: {:?}", pbr_data);
+        // log::info!("PBR data: {:?}", pbr_data);
 
         let vertex_bytes = vertex_offset as DeviceSize * size_of::<GeometryVertex>() as DeviceSize;
         let vertex_data: SmallVec<[&[GeometryVertex]; 8]> = imported_geometries
