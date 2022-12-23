@@ -592,20 +592,21 @@ impl GameWorld {
         //
         // interpolate transforms
         let physics_time_factor = self.accumulator.get() / Self::PHYSICS_TIME_STEP;
-        let pe = self.physics_engine.borrow();
-        pe.rigid_body_set
+        let phys_engine = self.physics_engine.borrow();
+        phys_engine
+            .rigid_body_set
             .get(self.starfury.rigid_body_handle)
             .map(|rbody| {
-                let render_state = *self.get_object_state(self.starfury.object_handle);
+                let previous_object_state = *self.get_object_state(self.starfury.object_handle);
 
-                let new_render_state = GameObjectRenderState {
+                let new_object_state = GameObjectRenderState {
                     physics_pos: *rbody.position(),
-                    render_pos: rbody
-                        .position()
-                        .lerp_slerp(&render_state.physics_pos, physics_time_factor as f32),
+                    render_pos: previous_object_state
+                        .physics_pos
+                        .lerp_slerp(rbody.position(), physics_time_factor as f32),
                 };
 
-                *self.get_object_state_mut(self.starfury.object_handle) = new_render_state;
+                *self.get_object_state_mut(self.starfury.object_handle) = new_object_state;
             });
     }
 
