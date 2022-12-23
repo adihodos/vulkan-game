@@ -14,7 +14,9 @@ use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, RigidBodyType};
 use serde::{Deserialize, Serialize};
 use strum_macros;
 
-#[derive(Copy, Clone, Debug, strum_macros::EnumIter, strum_macros::EnumProperty)]
+#[derive(
+    Copy, Clone, Debug, strum_macros::EnumIter, strum_macros::EnumProperty, Serialize, Deserialize,
+)]
 #[repr(u8)]
 enum EngineThrusterId {
     #[strum(props(node_id = "engine.thruster.upper.left.front",))]
@@ -66,6 +68,58 @@ enum EngineThrusterId {
     LowerRightBack,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct Roll {
+    left: Vec<EngineThrusterId>,
+    right: Vec<EngineThrusterId>,
+}
+
+impl std::default::Default for Roll {
+    fn default() -> Self {
+        Roll {
+            left: vec![EngineThrusterId::UpperLeftFront],
+            right: vec![EngineThrusterId::LowerRightBack],
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct Pitch {
+    up: Vec<EngineThrusterId>,
+    down: Vec<EngineThrusterId>,
+}
+
+impl std::default::Default for Pitch {
+    fn default() -> Self {
+        Pitch {
+            up: vec![EngineThrusterId::LowerRightRight],
+            down: vec![EngineThrusterId::UpperLeftLeft],
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct Yaw {
+    left: Vec<EngineThrusterId>,
+    right: Vec<EngineThrusterId>,
+}
+
+impl std::default::Default for Yaw {
+    fn default() -> Self {
+        Yaw {
+            left: vec![EngineThrusterId::LowerRightDown],
+            right: vec![EngineThrusterId::UpperLeftUp],
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+struct Maneuver {
+    roll: Roll,
+    pitch: Pitch,
+    yaw: Yaw,
+}
+
 #[derive(Serialize, Deserialize)]
 struct FlightModel {
     mass: f32,
@@ -74,6 +128,7 @@ struct FlightModel {
     thruster_force_primary: f32,
     thruster_force_secondary: f32,
     thruster_force_vectors: [glm::Vec3; 16],
+    maneuver: Maneuver,
 }
 
 struct EngineThruster {
@@ -96,6 +151,10 @@ impl FlightModel {
             cfg_opts.clone(),
         )
         .expect("Failed to write default flight model config");
+    }
+
+    fn thruster_force_vector(&self, thruster_id: EngineThrusterId) -> glm::Vec3 {
+        self.thruster_force_vectors[thruster_id as usize]
     }
 }
 
@@ -133,14 +192,16 @@ impl std::default::Default for FlightModel {
                 glm::vec3(-1f32, 0f32, 0f32),
                 glm::vec3(0f32, 0f32, 1f32),
             ],
+            maneuver: Maneuver::default(),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum ImpulseType {
-    Force(glm::Vec3),
-    Torque(glm::Vec3),
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+enum PhysicsOp {
+    ApplyForce(glm::Vec3),
+    ApplyTorque(glm::Vec3),
+    Reset,
 }
 
 pub struct Starfury {
@@ -150,7 +211,7 @@ pub struct Starfury {
     pub collider_handle: rapier3d::prelude::ColliderHandle,
     flight_model: FlightModel,
     thrusters: Vec<EngineThruster>,
-    impulses: RefCell<Vec<ImpulseType>>,
+    physics_ops_queue: RefCell<Vec<PhysicsOp>>,
 }
 
 impl Starfury {
@@ -160,7 +221,7 @@ impl Starfury {
         physics_engine: &mut PhysicsEngine,
         geometry: &GeometryRenderInfo,
     ) -> Starfury {
-        // FlightModel::write_default_config();
+        FlightModel::write_default_config();
 
         let flight_model: FlightModel = ron::de::from_reader(
             std::fs::File::open("config/starfury.flightmodel.cfg.ron")
@@ -191,6 +252,8 @@ impl Starfury {
             .angular_damping(flight_model.angular_damping)
             .build();
 
+        // body.angvel()
+
         let bbox_half_extents = geometry.aabb.extents() * 0.5f32;
         let collider = ColliderBuilder::cuboid(
             bbox_half_extents.x,
@@ -214,34 +277,63 @@ impl Starfury {
             collider_handle,
             flight_model,
             thrusters,
-            impulses: RefCell::new(Vec::new()),
+            physics_ops_queue: RefCell::new(Vec::new()),
         }
     }
 
     pub fn input_event(&self, event: &winit::event::KeyboardInput) {
         use winit::event::VirtualKeyCode;
 
-        let impulse = event.virtual_keycode.and_then(|key_code| match key_code {
-            VirtualKeyCode::W => Some(ImpulseType::Force(
-                self.flight_model.thruster_force_primary
+        let physics_op = event.virtual_keycode.and_then(|key_code| match key_code {
+            VirtualKeyCode::F10 => Some(PhysicsOp::Reset),
+
+            VirtualKeyCode::Q => Some(PhysicsOp::ApplyTorque(
+                self.flight_model.thruster_force_secondary
                     * self.flight_model.thruster_force_vectors
-                        [EngineThrusterId::UpperLeftBack as usize],
+                        [self.flight_model.maneuver.roll.left[0] as usize],
             )),
-            VirtualKeyCode::S => Some(ImpulseType::Force(
-                self.flight_model.thruster_force_primary
+
+            VirtualKeyCode::E => Some(PhysicsOp::ApplyTorque(
+                self.flight_model.thruster_force_secondary
                     * self.flight_model.thruster_force_vectors
-                        [EngineThrusterId::UpperLeftFront as usize],
+                        [self.flight_model.maneuver.roll.right[0] as usize],
+            )),
+
+            VirtualKeyCode::W => Some(PhysicsOp::ApplyTorque(
+                self.flight_model.thruster_force_secondary
+                    * self.flight_model.thruster_force_vectors
+                        [self.flight_model.maneuver.pitch.down[0] as usize],
+            )),
+
+            VirtualKeyCode::S => Some(PhysicsOp::ApplyTorque(
+                self.flight_model.thruster_force_secondary
+                    * self.flight_model.thruster_force_vectors
+                        [self.flight_model.maneuver.pitch.up[0] as usize],
+            )),
+
+            VirtualKeyCode::A => Some(PhysicsOp::ApplyTorque(
+                self.flight_model.thruster_force_secondary
+                    * self
+                        .flight_model
+                        .thruster_force_vector(self.flight_model.maneuver.yaw.left[0]),
+            )),
+
+            VirtualKeyCode::D => Some(PhysicsOp::ApplyTorque(
+                self.flight_model.thruster_force_secondary
+                    * self
+                        .flight_model
+                        .thruster_force_vector(self.flight_model.maneuver.yaw.right[0]),
             )),
             _ => None,
         });
 
-        impulse.map(|i| {
-            self.impulses.borrow_mut().push(i);
+        physics_op.map(|i| {
+            self.physics_ops_queue.borrow_mut().push(i);
         });
     }
 
     pub fn physics_update(&self, phys_engine: &mut PhysicsEngine) {
-        if self.impulses.borrow().is_empty() {
+        if self.physics_ops_queue.borrow().is_empty() {
             return;
         }
 
@@ -250,17 +342,27 @@ impl Starfury {
             .get_mut(self.rigid_body_handle)
             .unwrap();
 
-        self.impulses
+        self.physics_ops_queue
             .borrow()
             .iter()
             .for_each(|&impulse| match impulse {
-                ImpulseType::Force(f) => {
-                    rigid_body.add_force(f, true);
+                PhysicsOp::ApplyForce(f) => {
+                    rigid_body.apply_impulse(f, true);
                 }
 
-                ImpulseType::Torque(t) => rigid_body.add_torque(t, true),
+                PhysicsOp::ApplyTorque(t) => {
+                    rigid_body.apply_torque_impulse(t, true);
+                }
+
+                PhysicsOp::Reset => {
+                    rigid_body.reset_forces(true);
+                    rigid_body.reset_torques(true);
+                    rigid_body.set_linvel(Vec3::zeros(), true);
+                    rigid_body.set_angvel(Vec3::zeros(), true);
+                    rigid_body.set_position(nalgebra::Isometry::identity(), true);
+                }
             });
 
-        self.impulses.borrow_mut().clear();
+        self.physics_ops_queue.borrow_mut().clear();
     }
 }

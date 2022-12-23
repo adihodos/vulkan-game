@@ -86,4 +86,30 @@
             1.0,
         ],
     ),
+    maneuver: (
+        roll: (
+            left: [
+                UpperLeftFront,
+            ],
+            right: [
+                LowerRightBack,
+            ],
+        ),
+        pitch: (
+            up: [
+                LowerRightRight,
+            ],
+            down: [
+                UpperLeftLeft,
+            ],
+        ),
+        yaw: (
+            left: [
+                LowerRightDown,
+            ],
+            right: [
+                UpperLeftUp,
+            ],
+        ),
+    ),
 )

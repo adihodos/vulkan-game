@@ -562,6 +562,27 @@ impl GameWorld {
                     );
                     ui.checkbox("Mesh bounding box", &mut dbg_draw.debug_draw_mesh);
                 }
+
+                ui.separator();
+                ui.text("Starfury:");
+
+                {
+                    let phys_eng = self.physics_engine.borrow();
+
+                    phys_eng
+                        .rigid_body_set
+                        .get(self.starfury.rigid_body_handle)
+                        .map(|b| {
+                            ui.text_colored(
+                                [1f32, 0f32, 0f32, 1f32],
+                                format!("Linear velocity: {}", b.linvel()),
+                            );
+                            ui.text_colored(
+                                [1f32, 0f32, 0f32, 1f32],
+                                format!("Angular velocity: {}", b.angvel()),
+                            );
+                        });
+                }
             });
     }
 
