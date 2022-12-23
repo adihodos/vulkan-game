@@ -252,8 +252,6 @@ impl Starfury {
             .angular_damping(flight_model.angular_damping)
             .build();
 
-        // body.angvel()
-
         let bbox_half_extents = geometry.aabb.extents() * 0.5f32;
         let collider = ColliderBuilder::cuboid(
             bbox_half_extents.x,
@@ -342,16 +340,18 @@ impl Starfury {
             .get_mut(self.rigid_body_handle)
             .unwrap();
 
+        let isometry = *rigid_body.position();
+
         self.physics_ops_queue
             .borrow()
             .iter()
             .for_each(|&impulse| match impulse {
                 PhysicsOp::ApplyForce(f) => {
-                    rigid_body.apply_impulse(f, true);
+                    rigid_body.apply_impulse(isometry * f, true);
                 }
 
                 PhysicsOp::ApplyTorque(t) => {
-                    rigid_body.apply_torque_impulse(t, true);
+                    rigid_body.apply_torque_impulse(isometry * t, true);
                 }
 
                 PhysicsOp::Reset => {

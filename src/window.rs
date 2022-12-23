@@ -85,6 +85,10 @@ impl MainWindow {
                     game_main.main();
                 }
 
+                Event::DeviceEvent { device_id, event } => {
+                    log::info!("Device event {:?}", event);
+                }
+
                 _ => (),
             }
         });
@@ -147,7 +151,9 @@ impl GameMain {
                 self.framebuffer_size = IVec2::new(new_size.width as i32, new_size.height as i32);
             }
 
-            _ => (),
+            _ => {
+                log::info!("event {:?}", *event);
+            }
         }
 
         self.game_world.borrow().input_event(event);
