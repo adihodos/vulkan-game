@@ -18,6 +18,7 @@ use crate::{
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::DrawContext,
     game_world::GameWorld,
+    math,
     ui_backend::UiBackend,
     vk_renderer::{UniqueImage, VulkanRenderer},
 };
@@ -149,6 +150,7 @@ impl GameMain {
             _ => (),
         }
 
+        self.game_world.borrow().input_event(event);
         self.camera.input_event(event);
         self.ui.input_event(event);
     }
@@ -161,7 +163,7 @@ impl GameMain {
     fn draw_frame(&self) {
         self.renderer.begin_frame();
 
-        let projection = perspective(
+        let projection = math::perspective(
             75f32,
             self.framebuffer_size.x as f32 / self.framebuffer_size.y as f32,
             0.1f32,
@@ -169,8 +171,6 @@ impl GameMain {
         );
 
         {
-            // let mut dbg_draw_overlay = self.debug_draw_overlay.borrow_mut();
-            // dbg_draw_overlay.clear();
             self.debug_draw_overlay.borrow_mut().clear();
 
             let draw_context = DrawContext::create(
@@ -178,13 +178,8 @@ impl GameMain {
                 self.framebuffer_size.x,
                 self.framebuffer_size.y,
                 &self.camera,
-                perspective(
-                    75f32,
-                    self.framebuffer_size.x as f32 / self.framebuffer_size.y as f32,
-                    0.1f32,
-                    5000f32,
-                ),
-                self.debug_draw_overlay.clone()
+                projection,
+                self.debug_draw_overlay.clone(),
             );
 
             self.game_world.borrow().draw(&draw_context);
@@ -210,35 +205,4 @@ impl GameMain {
         self.do_ui();
         self.draw_frame();
     }
-}
-
-/// Symmetric perspective projection with reverse depth (1.0 -> 0.0) and
-/// Vulkan coordinate space.
-pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> glm::Mat4 {
-    let fov_rad = vertical_fov * 2.0f32 * std::f32::consts::PI / 360.0f32;
-    let focal_length = 1.0f32 / (fov_rad / 2.0f32).tan();
-
-    let x = focal_length / aspect_ratio;
-    let y = -focal_length;
-    let a: f32 = n / (f - n);
-    let b: f32 = f * a;
-
-    // clang-format off
-    glm::Mat4::from_column_slice(&[
-        x, 0.0f32, 0.0f32, 0.0f32, 0.0f32, y, 0.0f32, 0.0f32, 0.0f32, 0.0f32, a, -1.0f32, 0.0f32,
-        0.0f32, b, 0.0f32,
-    ])
-
-    //   if (inverse)
-    //   {
-    //       *inverse = glm::mat4{
-    //           1/x,  0.0f, 0.0f,  0.0f,
-    //           0.0f,  1/y, 0.0f,  0.0f,
-    //           0.0f, 0.0f, 0.0f, -1.0f,
-    //           0.0f, 0.0f,  1/B,   A/B,
-    //       };
-    //   }
-    //
-    // // clang-format on
-    // return projection;
 }

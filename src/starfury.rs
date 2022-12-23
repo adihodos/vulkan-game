@@ -1,10 +1,14 @@
+use std::cell::RefCell;
+
 use crate::{
+    draw_context::DrawContext,
     game_world::GameObjectHandle,
     math::AABB3,
     physics_engine::PhysicsEngine,
     resource_cache::{GeometryRenderInfo, PbrRenderable, PbrRenderableHandle},
 };
 
+use glm::Vec3;
 use nalgebra_glm as glm;
 use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, RigidBodyType};
 use serde::{Deserialize, Serialize};
@@ -65,6 +69,8 @@ enum EngineThrusterId {
 #[derive(Serialize, Deserialize)]
 struct FlightModel {
     mass: f32,
+    linear_damping: f32,
+    angular_damping: f32,
     thruster_force_primary: f32,
     thruster_force_secondary: f32,
     thruster_force_vectors: [glm::Vec3; 16],
@@ -97,6 +103,8 @@ impl std::default::Default for FlightModel {
     fn default() -> Self {
         Self {
             mass: 23_000f32,
+            linear_damping: 1f32,
+            angular_damping: 1f32,
             thruster_force_primary: 10_000f32,
             thruster_force_secondary: 2500f32,
             thruster_force_vectors: [
@@ -129,6 +137,12 @@ impl std::default::Default for FlightModel {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ImpulseType {
+    Force(glm::Vec3),
+    Torque(glm::Vec3),
+}
+
 pub struct Starfury {
     pub renderable: PbrRenderableHandle,
     pub object_handle: GameObjectHandle,
@@ -136,6 +150,7 @@ pub struct Starfury {
     pub collider_handle: rapier3d::prelude::ColliderHandle,
     flight_model: FlightModel,
     thrusters: Vec<EngineThruster>,
+    impulses: RefCell<Vec<ImpulseType>>,
 }
 
 impl Starfury {
@@ -172,6 +187,8 @@ impl Starfury {
 
         let body = RigidBodyBuilder::new(RigidBodyType::Dynamic)
             .translation(glm::vec3(0f32, 0f32, 0f32))
+            .linear_damping(flight_model.linear_damping)
+            .angular_damping(flight_model.angular_damping)
             .build();
 
         let bbox_half_extents = geometry.aabb.extents() * 0.5f32;
@@ -197,6 +214,53 @@ impl Starfury {
             collider_handle,
             flight_model,
             thrusters,
+            impulses: RefCell::new(Vec::new()),
         }
+    }
+
+    pub fn input_event(&self, event: &winit::event::KeyboardInput) {
+        use winit::event::VirtualKeyCode;
+
+        let impulse = event.virtual_keycode.and_then(|key_code| match key_code {
+            VirtualKeyCode::W => Some(ImpulseType::Force(
+                self.flight_model.thruster_force_primary
+                    * self.flight_model.thruster_force_vectors
+                        [EngineThrusterId::UpperLeftBack as usize],
+            )),
+            VirtualKeyCode::S => Some(ImpulseType::Force(
+                self.flight_model.thruster_force_primary
+                    * self.flight_model.thruster_force_vectors
+                        [EngineThrusterId::UpperLeftFront as usize],
+            )),
+            _ => None,
+        });
+
+        impulse.map(|i| {
+            self.impulses.borrow_mut().push(i);
+        });
+    }
+
+    pub fn physics_update(&self, phys_engine: &mut PhysicsEngine) {
+        if self.impulses.borrow().is_empty() {
+            return;
+        }
+
+        let rigid_body = phys_engine
+            .rigid_body_set
+            .get_mut(self.rigid_body_handle)
+            .unwrap();
+
+        self.impulses
+            .borrow()
+            .iter()
+            .for_each(|&impulse| match impulse {
+                ImpulseType::Force(f) => {
+                    rigid_body.add_force(f, true);
+                }
+
+                ImpulseType::Torque(t) => rigid_body.add_torque(t, true),
+            });
+
+        self.impulses.borrow_mut().clear();
     }
 }

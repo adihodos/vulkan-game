@@ -1,5 +1,7 @@
 (
     mass: 23000.0,
+    linear_damping: 1.0,
+    angular_damping: 1.0,
     thruster_force_primary: 10000.0,
     thruster_force_secondary: 2500.0,
     thruster_force_vectors: (

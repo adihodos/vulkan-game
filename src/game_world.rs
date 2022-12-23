@@ -68,9 +68,10 @@ pub struct PbrTransformDataUBO {
     pub world: glm::Mat4,
 }
 
+#[derive(Copy, Clone, Debug)]
 struct GameObjectRenderState {
-    previous: Isometry3<f32>,
-    current: Isometry3<f32>,
+    physics_pos: Isometry3<f32>,
+    render_pos: Isometry3<f32>,
 }
 
 struct PbrCpu2GpuData {
@@ -109,6 +110,27 @@ pub struct GameWorld {
 impl GameWorld {
     const PHYSICS_TIME_STEP: f64 = 1f64 / 60f64;
     const MAX_HISTOGRAM_VALUES: usize = 32;
+
+    fn get_object_state(&self, handle: GameObjectHandle) -> std::cell::Ref<GameObjectRenderState> {
+        let b = self.render_state.borrow();
+        std::cell::Ref::map(b, |game_objs| &game_objs[handle.0 as usize])
+    }
+
+    fn get_object_state_mut(
+        &self,
+        handle: GameObjectHandle,
+    ) -> std::cell::RefMut<GameObjectRenderState> {
+        let b = self.render_state.borrow_mut();
+        std::cell::RefMut::map(b, |game_objs| &mut game_objs[handle.0 as usize])
+    }
+
+    fn draw_options(&self) -> std::cell::Ref<DebugDrawOptions> {
+        self.draw_opts.borrow()
+    }
+
+    fn draw_options_mut(&self) -> std::cell::RefMut<DebugDrawOptions> {
+        self.draw_opts.borrow_mut()
+    }
 
     pub fn new(renderer: &VulkanRenderer, app_cfg: &AppConfig) -> Option<GameWorld> {
         let debug_draw_overlay = DebugDrawOverlay::create(renderer)?;
@@ -320,8 +342,8 @@ impl GameWorld {
         );
 
         let render_state = vec![GameObjectRenderState {
-            current: Isometry3::identity(),
-            previous: Isometry3::identity(),
+            render_pos: Isometry3::identity(),
+            physics_pos: Isometry3::identity(),
         }];
 
         Some(GameWorld {
@@ -349,7 +371,7 @@ impl GameWorld {
     }
 
     pub fn draw(&self, draw_context: &DrawContext) {
-        if self.draw_opts.borrow().debug_draw_world_axis {
+        if self.draw_options().debug_draw_world_axis {
             draw_context.debug_draw.borrow_mut().add_axes(
                 Vec3::zeros(),
                 self.draw_opts.borrow().world_axis_length,
@@ -369,10 +391,13 @@ impl GameWorld {
 
         let perspective = draw_context.projection;
 
-        let isometry = self.render_state.borrow()[self.starfury.object_handle.0 as usize].current;
+        let starfury_transform = self
+            .get_object_state(self.starfury.object_handle)
+            .render_pos
+            .to_homogeneous();
 
         let transforms = PbrTransformDataUBO {
-            world: isometry.to_homogeneous(),
+            world: starfury_transform,
             view: draw_context.camera.view_transform(),
             projection: perspective,
         };
@@ -422,19 +447,22 @@ impl GameWorld {
                 .resource_cache
                 .get_pbr_renderable(self.starfury.renderable);
 
-            if self.draw_opts.borrow().debug_draw_mesh {
-                draw_context.debug_draw.borrow_mut().add_aabb(
-                    &sa23_renderable.geometry.aabb.min,
-                    &sa23_renderable.geometry.aabb.max,
-                    0xFF_00_00_FF,
-                );
+            if self.draw_options().debug_draw_mesh {
+                let aabb = starfury_transform * sa23_renderable.geometry.aabb;
+
+                draw_context
+                    .debug_draw
+                    .borrow_mut()
+                    .add_aabb(&aabb.min, &aabb.max, 0xFF_00_00_FF);
             }
 
-            if self.draw_opts.borrow().debug_draw_nodes_bounding {
+            if self.draw_options().debug_draw_nodes_bounding {
                 sa23_renderable.geometry.nodes.iter().for_each(|node| {
+                    let transformed_aabb = starfury_transform * node.aabb;
+
                     draw_context.debug_draw.borrow_mut().add_aabb(
-                        &node.aabb.min,
-                        &node.aabb.max,
+                        &transformed_aabb.min,
+                        &transformed_aabb.max,
                         0xFF_00_FF_00,
                     );
                 });
@@ -487,7 +515,7 @@ impl GameWorld {
             );
         }
 
-        if self.draw_opts.borrow().debug_draw_physics {
+        if self.draw_options().debug_draw_physics {
             self.physics_engine
                 .borrow_mut()
                 .debug_draw(&mut draw_context.debug_draw.borrow_mut());
@@ -517,7 +545,7 @@ impl GameWorld {
                 ui.text("Debug draw:");
 
                 {
-                    let mut dbg_draw = self.draw_opts.borrow_mut();
+                    let mut dbg_draw = self.draw_options_mut();
                     ui.checkbox("World axis", &mut dbg_draw.debug_draw_world_axis);
                     ui.same_line();
                     ui.slider(
@@ -539,6 +567,9 @@ impl GameWorld {
 
     pub fn update(&self, frame_time: f64) {
         // log::info!("Frame time: {}", frame_time);
+        self.starfury
+            .physics_update(&mut self.physics_engine.borrow_mut());
+
         {
             let mut frame_times = self.frame_times.borrow_mut();
             if (frame_times.len() + 1) > Self::MAX_HISTOGRAM_VALUES {
@@ -565,8 +596,30 @@ impl GameWorld {
         pe.rigid_body_set
             .get(self.starfury.rigid_body_handle)
             .map(|rbody| {
-                self.render_state.borrow_mut()[self.starfury.object_handle.0 as usize].current =
-                    rbody.predict_position_using_velocity_and_forces(physics_time_factor as f32);
+                let render_state = *self.get_object_state(self.starfury.object_handle);
+
+                let new_render_state = GameObjectRenderState {
+                    physics_pos: *rbody.position(),
+                    render_pos: rbody
+                        .position()
+                        .lerp_slerp(&render_state.physics_pos, physics_time_factor as f32),
+                };
+
+                *self.get_object_state_mut(self.starfury.object_handle) = new_render_state;
             });
+    }
+
+    pub fn input_event(&self, event: &winit::event::WindowEvent) {
+        use winit::event::WindowEvent;
+        match event {
+            WindowEvent::KeyboardInput {
+                device_id: _,
+                input,
+                is_synthetic: _,
+            } => {
+                self.starfury.input_event(input);
+            }
+            _ => {}
+        }
     }
 }
