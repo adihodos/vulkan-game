@@ -16,7 +16,8 @@ use std::{
 
 use crate::{
     app_config::{self, AppConfig},
-    imported_geometry::{GeometryVertex, ImportedGeometry},
+    imported_geometry::{GeometryNode, GeometryVertex, ImportedGeometry},
+    math::AABB3,
     pbr::{PbrMaterial, PbrMaterialTextureCollection},
     vk_renderer::{
         GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ImageInfo, ScopedBufferMapping,
@@ -25,13 +26,15 @@ use crate::{
     },
 };
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct GeometryRenderInfo {
     pub vertex_offset: u32,
     pub index_offset: u32,
     pub index_count: u32,
     pub pbr_data_offset: u32,
     pub pbr_data_range: u32,
+    pub nodes: Vec<GeometryNode>,
+    pub aabb: AABB3,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
@@ -147,6 +150,8 @@ impl ResourceHolder {
                 index_count: geom.index_count(),
                 pbr_data_offset,
                 pbr_data_range: (geom.pbr_materials().len() * size_of::<PbrMaterial>()) as u32,
+                nodes: geom.nodes().to_vec(),
+                aabb: geom.aabb,
             });
             pbr_data.extend(geom.pbr_materials().iter());
 
@@ -156,7 +161,7 @@ impl ResourceHolder {
             handles.insert((*tag).clone(), geometry_handle);
         });
 
-        log::info!("PBR data: {:?}", pbr_data);
+        // log::info!("PBR data: {:?}", pbr_data);
 
         let vertex_bytes = vertex_offset as DeviceSize * size_of::<GeometryVertex>() as DeviceSize;
         let vertex_data: SmallVec<[&[GeometryVertex]; 8]> = imported_geometries

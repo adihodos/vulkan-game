@@ -1,10 +1,13 @@
 mod app_config;
 mod arcball_camera;
 mod camera;
+mod debug_draw_overlay;
 mod draw_context;
 mod game_world;
 mod imported_geometry;
+mod math;
 mod pbr;
+mod physics_engine;
 mod resource_cache;
 mod skybox;
 mod starfury;

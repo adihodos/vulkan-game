@@ -1,4 +1,7 @@
-use std::cell::RefCell;
+use std::{
+    cell::{Cell, RefCell},
+    time::Instant,
+};
 
 use nalgebra_glm::{IVec2, Vec3};
 use raw_window_handle::HasRawWindowHandle;
@@ -11,13 +14,47 @@ use winit::{
 use crate::{
     app_config::{self, AppConfig},
     arcball_camera::ArcballCamera,
+    camera::Camera,
+    debug_draw_overlay::DebugDrawOverlay,
     draw_context::DrawContext,
     game_world::GameWorld,
+    math,
     ui_backend::UiBackend,
-    vk_renderer::VulkanRenderer,
+    vk_renderer::{UniqueImage, VulkanRenderer},
 };
 
 use nalgebra_glm as glm;
+
+#[derive(Clone, Copy, Debug)]
+pub struct GamepadStick {
+    pub code: gilrs::ev::Code,
+    pub deadzone: f32,
+    pub axis_data: Option<gilrs::ev::state::AxisData>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GamepadButton {
+    pub code: gilrs::ev::Code,
+    pub deadzone: f32,
+    pub data: Option<gilrs::ev::state::ButtonData>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GamepadInputState {
+    pub id: gilrs::GamepadId,
+    pub left_stick_x: GamepadStick,
+    pub left_stick_y: GamepadStick,
+    pub right_stick_x: GamepadStick,
+    pub right_stick_y: GamepadStick,
+    pub right_z: GamepadButton,
+    pub left_z: GamepadButton,
+    pub counter: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct InputState {
+    pub gamepad: GamepadInputState,
+}
 
 pub struct MainWindow {}
 
@@ -25,7 +62,7 @@ impl MainWindow {
     pub fn run() {
         let logger = flexi_logger::Logger::with(
             flexi_logger::LogSpecification::builder()
-                .default(flexi_logger::LevelFilter::Trace)
+                .default(flexi_logger::LevelFilter::Debug)
                 .build(),
         )
         .adaptive_format_for_stderr(flexi_logger::AdaptiveFormat::Detailed)
@@ -58,6 +95,8 @@ impl MainWindow {
         window.set_fullscreen(Some(Fullscreen::Exclusive(vidmode)));
 
         let mut game_main = GameMain::new(&window);
+        let mut gilrs = gilrs::Gilrs::new().expect("Failed to initialize input library");
+        let mut gamepad_input_state = None;
 
         event_loop.run(move |event, _, control_flow| {
             control_flow.set_poll();
@@ -76,6 +115,99 @@ impl MainWindow {
                 }
 
                 Event::MainEventsCleared => {
+                    while let Some(event) = gilrs.next_event() {
+                        // log::info!("gamepad {:?}", event);
+
+                        if gamepad_input_state.is_none() {
+                            let gamepad = gilrs.gamepad(event.id);
+                            let code_right_x = gamepad.axis_code(gilrs::Axis::RightStickX).unwrap();
+                            let code_right_y = gamepad.axis_code(gilrs::Axis::RightStickY).unwrap();
+                            let code_z_right =
+                                gamepad.button_code(gilrs::Button::LeftTrigger2).unwrap();
+                            let code_z_left =
+                                gamepad.button_code(gilrs::Button::RightTrigger2).unwrap();
+
+                            let code_left_x = gamepad.axis_code(gilrs::Axis::LeftStickX).unwrap();
+                            let code_left_y = gamepad.axis_code(gilrs::Axis::LeftStickY).unwrap();
+
+                            gamepad_input_state = Some(InputState {
+                                gamepad: GamepadInputState {
+                                    id: event.id,
+                                    left_stick_x: GamepadStick {
+                                        code: code_left_x,
+                                        deadzone: gamepad.deadzone(code_left_x).unwrap_or(0.1f32),
+                                        axis_data: None,
+                                    },
+                                    left_stick_y: GamepadStick {
+                                        code: code_left_y,
+                                        deadzone: gamepad.deadzone(code_left_y).unwrap_or(0.1f32),
+                                        axis_data: None,
+                                    },
+                                    right_stick_x: GamepadStick {
+                                        code: code_right_x,
+                                        deadzone: gamepad.deadzone(code_right_x).unwrap_or(0.1f32),
+                                        axis_data: None,
+                                    },
+                                    right_stick_y: GamepadStick {
+                                        code: code_right_y,
+                                        deadzone: gamepad.deadzone(code_right_y).unwrap_or(0.1f32),
+                                        axis_data: None,
+                                    },
+                                    left_z: GamepadButton {
+                                        code: code_z_left,
+                                        deadzone: gamepad.deadzone(code_z_left).unwrap_or(0.1f32),
+                                        data: None,
+                                    },
+                                    right_z: GamepadButton {
+                                        code: code_z_right,
+                                        deadzone: gamepad.deadzone(code_z_right).unwrap_or(0.1f32),
+                                        data: None,
+                                    },
+
+                                    counter: gilrs.counter(),
+                                },
+                            })
+                        }
+                    }
+
+                    gamepad_input_state.as_mut().map(|in_st| {
+                        in_st.gamepad.counter = gilrs.counter();
+                        let gamepad = gilrs.gamepad(in_st.gamepad.id);
+
+                        in_st.gamepad.left_stick_x.axis_data = gamepad
+                            .state()
+                            .axis_data(in_st.gamepad.left_stick_x.code)
+                            .copied();
+
+                        in_st.gamepad.left_stick_y.axis_data = gamepad
+                            .state()
+                            .axis_data(in_st.gamepad.left_stick_y.code)
+                            .copied();
+
+                        in_st.gamepad.right_stick_x.axis_data = gamepad
+                            .state()
+                            .axis_data(in_st.gamepad.right_stick_x.code)
+                            .copied();
+
+                        in_st.gamepad.right_stick_y.axis_data = gamepad
+                            .state()
+                            .axis_data(in_st.gamepad.right_stick_y.code)
+                            .copied();
+
+                        in_st.gamepad.left_z.data = gamepad
+                            .state()
+                            .button_data(in_st.gamepad.left_z.code)
+                            .copied();
+
+                        in_st.gamepad.right_z.data = gamepad
+                            .state()
+                            .button_data(in_st.gamepad.right_z.code)
+                            .copied();
+
+                        game_main.gamepad_input(in_st);
+                    });
+
+                    gilrs.inc();
                     game_main.main();
                 }
 
@@ -87,7 +219,9 @@ impl MainWindow {
 
 struct GameMain {
     ui: UiBackend,
+    debug_draw_overlay: std::rc::Rc<RefCell<DebugDrawOverlay>>,
     game_world: RefCell<GameWorld>,
+    timestamp: Cell<Instant>,
     app_config: AppConfig,
     renderer: VulkanRenderer,
     camera: ArcballCamera,
@@ -121,7 +255,11 @@ impl GameMain {
 
         GameMain {
             ui,
+            debug_draw_overlay: std::rc::Rc::new(RefCell::new(
+                DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
+            )),
             game_world: RefCell::new(game_world),
+            timestamp: Cell::new(Instant::now()),
             app_config,
             renderer,
             camera: ArcballCamera::new(Vec3::new(0f32, 0f32, 0f32), 0.1f32, framebuffer_size),
@@ -135,11 +273,16 @@ impl GameMain {
                 self.framebuffer_size = IVec2::new(new_size.width as i32, new_size.height as i32);
             }
 
-            _ => (),
+            _ => {}
         }
 
+        self.game_world.borrow().input_event(event);
         self.camera.input_event(event);
         self.ui.input_event(event);
+    }
+
+    fn gamepad_input(&mut self, input_state: &InputState) {
+        self.game_world.borrow().gamepad_input(input_state);
     }
 
     fn do_ui(&self) {
@@ -150,60 +293,46 @@ impl GameMain {
     fn draw_frame(&self) {
         self.renderer.begin_frame();
 
+        let projection = math::perspective(
+            75f32,
+            self.framebuffer_size.x as f32 / self.framebuffer_size.y as f32,
+            0.1f32,
+            5000f32,
+        );
+
         {
+            self.debug_draw_overlay.borrow_mut().clear();
+
             let draw_context = DrawContext::create(
                 &self.renderer,
                 self.framebuffer_size.x,
                 self.framebuffer_size.y,
                 &self.camera,
-                perspective(
-                    75f32,
-                    self.framebuffer_size.x as f32 / self.framebuffer_size.y as f32,
-                    0.1f32,
-                    5000f32,
-                ),
+                projection,
+                self.debug_draw_overlay.clone(),
             );
 
             self.game_world.borrow().draw(&draw_context);
             self.ui.draw_frame(&draw_context);
         }
 
+        self.debug_draw_overlay
+            .borrow_mut()
+            .draw(&self.renderer, &(projection * self.camera.view_transform()));
+
         self.renderer.end_frame();
     }
 
     fn main(&mut self) {
+        let current_time = Instant::now();
+
+        let frame_time = (current_time - self.timestamp.get())
+            .as_secs_f64()
+            .clamp(0f64, 0.25f64);
+        self.timestamp.set(current_time);
+
+        self.game_world.borrow().update(frame_time);
         self.do_ui();
         self.draw_frame();
     }
-}
-
-/// Symmetric perspective projection with reverse depth (1.0 -> 0.0) and
-/// Vulkan coordinate space.
-pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> glm::Mat4 {
-    let fov_rad = vertical_fov * 2.0f32 * std::f32::consts::PI / 360.0f32;
-    let focal_length = 1.0f32 / (fov_rad / 2.0f32).tan();
-
-    let x = focal_length / aspect_ratio;
-    let y = -focal_length;
-    let a: f32 = n / (f - n);
-    let b: f32 = f * a;
-
-    // clang-format off
-    glm::Mat4::from_column_slice(&[
-        x, 0.0f32, 0.0f32, 0.0f32, 0.0f32, y, 0.0f32, 0.0f32, 0.0f32, 0.0f32, a, -1.0f32, 0.0f32,
-        0.0f32, b, 0.0f32,
-    ])
-
-    //   if (inverse)
-    //   {
-    //       *inverse = glm::mat4{
-    //           1/x,  0.0f, 0.0f,  0.0f,
-    //           0.0f,  1/y, 0.0f,  0.0f,
-    //           0.0f, 0.0f, 0.0f, -1.0f,
-    //           0.0f, 0.0f,  1/B,   A/B,
-    //       };
-    //   }
-    //
-    // // clang-format on
-    // return projection;
 }

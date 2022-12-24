@@ -11,8 +11,8 @@ log = { version = "*"}
 flexi_logger = { version = "*"}
 imgui = "*"
 mmap-rs = "*"
-nalgebra = "*"
-nalgebra-glm = "*"
+nalgebra = { version = "*", features = ["serde-serialize"] }
+nalgebra-glm = { version = "*", features = ["serde-serialize"] }
 memoffset = "*"
 strum = "*"
 strum_macros = "*"
@@ -22,11 +22,15 @@ chrono = "*"
 smallvec = "*"
 image = "*"
 rayon = "*"
-libktx-rs = "*"
+# libktx-rs = "*"
 serde = "*"
 ron = "*"
 winit = "*"
 raw-window-handle = "*"
+ktx2 = "*"
+palette = "*"
+rapier3d = { version = "*", features = [ "simd-stable", "debug-render" ] }
+gilrs = "*"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 	windows-sys = { version = "*", features = ["Win32_Foundation", "Win32_System_LibraryLoader"]}

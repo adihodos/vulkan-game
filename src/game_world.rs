@@ -1,30 +1,60 @@
-use std::{cell::RefCell, mem::size_of};
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    mem::size_of,
+};
 
 use ash::vk::{
     BorderColor, BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
-    DescriptorSetAllocateInfo, DescriptorType, DeviceSize, Filter, ImageLayout, IndexType,
-    MemoryPropertyFlags, PipelineBindPoint, SamplerAddressMode, SamplerCreateInfo,
-    SamplerMipmapMode, WriteDescriptorSet,
+    DescriptorSetAllocateInfo, DescriptorType, DeviceSize, Filter, ImageLayout, ImageTiling,
+    ImageUsageFlags, IndexType, MemoryPropertyFlags, PipelineBindPoint, SamplerAddressMode,
+    SamplerCreateInfo, SamplerMipmapMode, WriteDescriptorSet,
 };
-use glm::Mat4;
+use glm::{Mat4, Vec3};
+use nalgebra::Isometry3;
 use nalgebra_glm::Vec4;
 
 use nalgebra_glm as glm;
+use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, RigidBodyType};
 use smallvec::SmallVec;
 
 use crate::{
     app_config::AppConfig,
+    debug_draw_overlay::DebugDrawOverlay,
     draw_context::DrawContext,
+    physics_engine::PhysicsEngine,
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     skybox::Skybox,
-    vk_renderer::{ScopedBufferMapping, UniqueBuffer, UniqueSampler, VulkanRenderer},
+    starfury::Starfury,
+    vk_renderer::{ScopedBufferMapping, UniqueBuffer, UniqueImage, UniqueSampler, VulkanRenderer},
+    window::InputState,
 };
 
 #[derive(Copy, Clone, Debug)]
-struct DrawOpts {
+struct DebugDrawOptions {
     wireframe_color: Vec4,
     draw_normals: bool,
     normals_color: Vec4,
+    debug_draw_physics: bool,
+    debug_draw_nodes_bounding: bool,
+    debug_draw_mesh: bool,
+    debug_draw_world_axis: bool,
+    world_axis_length: f32,
+}
+
+impl std::default::Default for DebugDrawOptions {
+    fn default() -> Self {
+        Self {
+            wireframe_color: glm::vec4(1f32, 0f32, 0f32, 1f32),
+            draw_normals: false,
+            normals_color: glm::vec4(0f32, 1f32, 0f32, 1f32),
+            debug_draw_physics: false,
+            debug_draw_nodes_bounding: false,
+            debug_draw_mesh: false,
+            debug_draw_world_axis: false,
+            world_axis_length: 1f32,
+        }
+    }
 }
 
 #[repr(C)]
@@ -37,6 +67,12 @@ pub struct PbrTransformDataUBO {
     pub projection: glm::Mat4,
     pub view: glm::Mat4,
     pub world: glm::Mat4,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct GameObjectRenderState {
+    physics_pos: Isometry3<f32>,
+    render_pos: Isometry3<f32>,
 }
 
 struct PbrCpu2GpuData {
@@ -52,7 +88,7 @@ struct PbrCpu2GpuData {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-struct GameObjectHandle(u32);
+pub struct GameObjectHandle(u32);
 
 struct GameObjectData {
     handle: GameObjectHandle,
@@ -60,15 +96,45 @@ struct GameObjectData {
 }
 
 pub struct GameWorld {
-    draw_opts: RefCell<DrawOpts>,
+    draw_opts: RefCell<DebugDrawOptions>,
     resource_cache: ResourceHolder,
     skybox: Skybox,
     pbr_cpu_2_gpu: PbrCpu2GpuData,
     objects: Vec<GameObjectData>,
+    starfury: Starfury,
+    accumulator: Cell<f64>,
+    frame_times: RefCell<Vec<f32>>,
+    physics_engine: RefCell<PhysicsEngine>,
+    render_state: RefCell<Vec<GameObjectRenderState>>,
 }
 
 impl GameWorld {
+    const PHYSICS_TIME_STEP: f64 = 1f64 / 60f64;
+    const MAX_HISTOGRAM_VALUES: usize = 32;
+
+    fn get_object_state(&self, handle: GameObjectHandle) -> std::cell::Ref<GameObjectRenderState> {
+        let b = self.render_state.borrow();
+        std::cell::Ref::map(b, |game_objs| &game_objs[handle.0 as usize])
+    }
+
+    fn get_object_state_mut(
+        &self,
+        handle: GameObjectHandle,
+    ) -> std::cell::RefMut<GameObjectRenderState> {
+        let b = self.render_state.borrow_mut();
+        std::cell::RefMut::map(b, |game_objs| &mut game_objs[handle.0 as usize])
+    }
+
+    fn draw_options(&self) -> std::cell::Ref<DebugDrawOptions> {
+        self.draw_opts.borrow()
+    }
+
+    fn draw_options_mut(&self) -> std::cell::RefMut<DebugDrawOptions> {
+        self.draw_opts.borrow_mut()
+    }
+
     pub fn new(renderer: &VulkanRenderer, app_cfg: &AppConfig) -> Option<GameWorld> {
+        let debug_draw_overlay = DebugDrawOverlay::create(renderer)?;
         let skybox = Skybox::create(renderer, &app_cfg.scene, &app_cfg.engine)?;
 
         let resource_cache = ResourceHolder::create(renderer, app_cfg)?;
@@ -107,9 +173,6 @@ impl GameWorld {
             pbr_descriptor_layouts[PbrDescriptorType::FsLightingData as usize],
         ];
 
-        log::info!("PBR desc layouts {:?}", pbr_descriptor_layouts);
-        log::info!("Per object layouts: {:?}", per_object_ds_layouts);
-
         let object_pbr_descriptor_sets = unsafe {
             renderer.graphics_device().allocate_descriptor_sets(
                 &DescriptorSetAllocateInfo::builder()
@@ -119,11 +182,6 @@ impl GameWorld {
             )
         }
         .expect("Papali, papali sukyyyyyyyyyyyyyy");
-
-        log::info!(
-            "Descriptor sets transforms + UBO : {:?}",
-            object_pbr_descriptor_sets
-        );
 
         let desc_buff_info = [
             DescriptorBufferInfo::builder()
@@ -137,8 +195,6 @@ impl GameWorld {
                 .range(size_of::<PbrLightingData>() as DeviceSize)
                 .build(),
         ];
-
-        log::info!("DS updates: {:?}", desc_buff_info);
 
         let write_descriptors_transforms_lighting = [
             WriteDescriptorSet::builder()
@@ -275,12 +331,24 @@ impl GameWorld {
             renderable: resource_cache.get_geometry_handle(&"sa23"),
         }];
 
+        let mut physics_engine = PhysicsEngine::new();
+
+        let starfury = Starfury::new(
+            objects[0].renderable,
+            objects[0].handle,
+            &mut physics_engine,
+            &resource_cache
+                .get_pbr_renderable(objects[0].renderable)
+                .geometry,
+        );
+
+        let render_state = vec![GameObjectRenderState {
+            render_pos: Isometry3::identity(),
+            physics_pos: Isometry3::identity(),
+        }];
+
         Some(GameWorld {
-            draw_opts: RefCell::new(DrawOpts {
-                wireframe_color: Vec4::new(0f32, 1f32, 0f32, 1f32),
-                draw_normals: false,
-                normals_color: Vec4::new(1f32, 0f32, 0f32, 1f32),
-            }),
+            draw_opts: RefCell::new(DebugDrawOptions::default()),
             resource_cache,
             skybox,
             pbr_cpu_2_gpu: PbrCpu2GpuData {
@@ -295,10 +363,24 @@ impl GameWorld {
                 samplers: samplers_ibl.into_vec(),
             },
             objects,
+            starfury,
+            accumulator: Cell::new(0f64),
+            frame_times: RefCell::new(Vec::with_capacity(Self::MAX_HISTOGRAM_VALUES)),
+            physics_engine: RefCell::new(physics_engine),
+            render_state: RefCell::new(render_state),
         })
     }
 
     pub fn draw(&self, draw_context: &DrawContext) {
+        if self.draw_options().debug_draw_world_axis {
+            draw_context.debug_draw.borrow_mut().add_axes(
+                Vec3::zeros(),
+                self.draw_opts.borrow().world_axis_length,
+                &glm::Mat3::identity(),
+                None,
+            );
+        }
+
         self.skybox.draw(draw_context);
 
         let device = draw_context.renderer.graphics_device();
@@ -310,8 +392,13 @@ impl GameWorld {
 
         let perspective = draw_context.projection;
 
+        let starfury_transform = self
+            .get_object_state(self.starfury.object_handle)
+            .render_pos
+            .to_homogeneous();
+
         let transforms = PbrTransformDataUBO {
-            world: Mat4::identity(),
+            world: starfury_transform,
             view: draw_context.camera.view_transform(),
             projection: perspective,
         };
@@ -359,7 +446,28 @@ impl GameWorld {
 
             let sa23_renderable = self
                 .resource_cache
-                .get_pbr_renderable(self.objects[0].renderable);
+                .get_pbr_renderable(self.starfury.renderable);
+
+            if self.draw_options().debug_draw_mesh {
+                let aabb = starfury_transform * sa23_renderable.geometry.aabb;
+
+                draw_context
+                    .debug_draw
+                    .borrow_mut()
+                    .add_aabb(&aabb.min, &aabb.max, 0xFF_00_00_FF);
+            }
+
+            if self.draw_options().debug_draw_nodes_bounding {
+                sa23_renderable.geometry.nodes.iter().for_each(|node| {
+                    let transformed_aabb = starfury_transform * node.aabb;
+
+                    draw_context.debug_draw.borrow_mut().add_aabb(
+                        &transformed_aabb.min,
+                        &transformed_aabb.max,
+                        0xFF_00_FF_00,
+                    );
+                });
+            }
 
             let vertex_buffers = [self.resource_cache.vertex_buffer()];
             let vertex_offsets = [0u64];
@@ -407,23 +515,138 @@ impl GameWorld {
                 0,
             );
         }
+
+        if self.draw_options().debug_draw_physics {
+            self.physics_engine
+                .borrow_mut()
+                .debug_draw(&mut draw_context.debug_draw.borrow_mut());
+        }
     }
 
     pub fn ui(&self, ui: &mut imgui::Ui) {
-        let choices = ["test test this is 1", "test test this is 2"];
-        ui.window("Hello world")
-            .size([300.0, 110.0], imgui::Condition::FirstUseEver)
+        ui.window("Options")
+            .size([400.0, 110.0], imgui::Condition::FirstUseEver)
             .build(|| {
-                let mut draw_opts = self.draw_opts.borrow_mut();
-                let mut wf_color = [
-                    draw_opts.wireframe_color.x,
-                    draw_opts.wireframe_color.y,
-                    draw_opts.wireframe_color.z,
-                ];
-                if ui.color_picker3("wireframe color", &mut wf_color) {
-                    draw_opts.wireframe_color =
-                        Vec4::new(wf_color[0], wf_color[1], wf_color[2], 1f32);
+                {
+                    let frames_histogram_values = self.frame_times.borrow();
+                    ui.plot_histogram("Frame times", &frames_histogram_values)
+                        .scale_min(0f32)
+                        .scale_max(0.05f32)
+                        .graph_size([400f32, 150f32])
+                        .build();
+
+                    ui.plot_lines("Frame times (lines)", &frames_histogram_values)
+                        .scale_min(0f32)
+                        .scale_max(0.05f32)
+                        .graph_size([400f32, 150f32])
+                        .build();
+                }
+
+                ui.separator();
+                ui.text("Debug draw:");
+
+                {
+                    let mut dbg_draw = self.draw_options_mut();
+                    ui.checkbox("World axis", &mut dbg_draw.debug_draw_world_axis);
+                    ui.same_line();
+                    ui.slider(
+                        "World axis length",
+                        0.1f32,
+                        4f32,
+                        &mut dbg_draw.world_axis_length,
+                    );
+
+                    ui.checkbox("Physics objects", &mut dbg_draw.debug_draw_physics);
+                    ui.checkbox(
+                        "Mesh nodes bounding boxes",
+                        &mut dbg_draw.debug_draw_nodes_bounding,
+                    );
+                    ui.checkbox("Mesh bounding box", &mut dbg_draw.debug_draw_mesh);
+                }
+
+                ui.separator();
+                ui.text("Starfury:");
+
+                {
+                    let phys_eng = self.physics_engine.borrow();
+
+                    phys_eng
+                        .rigid_body_set
+                        .get(self.starfury.rigid_body_handle)
+                        .map(|b| {
+                            ui.text_colored(
+                                [1f32, 0f32, 0f32, 1f32],
+                                format!("Linear velocity: {}", b.linvel()),
+                            );
+                            ui.text_colored(
+                                [1f32, 0f32, 0f32, 1f32],
+                                format!("Angular velocity: {}", b.angvel()),
+                            );
+                        });
                 }
             });
+    }
+
+    pub fn update(&self, frame_time: f64) {
+        // log::info!("Frame time: {}", frame_time);
+        self.starfury
+            .physics_update(&mut self.physics_engine.borrow_mut());
+
+        {
+            let mut frame_times = self.frame_times.borrow_mut();
+            if (frame_times.len() + 1) > Self::MAX_HISTOGRAM_VALUES {
+                frame_times.rotate_left(1);
+                frame_times[Self::MAX_HISTOGRAM_VALUES - 1] = frame_time as f32;
+            } else {
+                frame_times.push(frame_time as f32);
+            }
+        }
+        self.accumulator.set(self.accumulator.get() + frame_time);
+
+        while self.accumulator.get() >= Self::PHYSICS_TIME_STEP {
+            //
+            // do physics step
+            self.physics_engine.borrow_mut().update();
+            self.accumulator
+                .set(self.accumulator.get() - Self::PHYSICS_TIME_STEP);
+        }
+
+        //
+        // interpolate transforms
+        let physics_time_factor = self.accumulator.get() / Self::PHYSICS_TIME_STEP;
+        let phys_engine = self.physics_engine.borrow();
+        phys_engine
+            .rigid_body_set
+            .get(self.starfury.rigid_body_handle)
+            .map(|rbody| {
+                let previous_object_state = *self.get_object_state(self.starfury.object_handle);
+
+                let new_object_state = GameObjectRenderState {
+                    physics_pos: *rbody.position(),
+                    render_pos: previous_object_state
+                        .physics_pos
+                        .lerp_slerp(rbody.position(), physics_time_factor as f32),
+                };
+
+                *self.get_object_state_mut(self.starfury.object_handle) = new_object_state;
+            });
+    }
+
+    pub fn input_event(&self, event: &winit::event::WindowEvent) {
+        use winit::event::WindowEvent;
+        match event {
+            WindowEvent::KeyboardInput {
+                device_id: _,
+                input,
+                is_synthetic: _,
+            } => {
+                self.starfury.input_event(input);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn gamepad_input(&self, input_state: &InputState) {
+        self.starfury.gamepad_input(input_state);
     }
 }
