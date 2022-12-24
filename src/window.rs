@@ -32,11 +32,20 @@ pub struct GamepadStick {
     pub axis_data: Option<gilrs::ev::state::AxisData>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct GamepadButton {
+    pub code: gilrs::ev::Code,
+    pub deadzone: f32,
+    pub data: Option<gilrs::ev::state::ButtonData>,
+}
+
 #[derive(Clone, Debug)]
 pub struct GamepadInputState {
     pub id: gilrs::GamepadId,
     pub right_stick_x: GamepadStick,
     pub right_stick_y: GamepadStick,
+    pub right_z: GamepadButton,
+    pub left_z: GamepadButton,
     pub counter: u64,
 }
 
@@ -105,10 +114,16 @@ impl MainWindow {
 
                 Event::MainEventsCleared => {
                     while let Some(event) = gilrs.next_event() {
+                        // log::info!("gamepad {:?}", event);
+
                         if gamepad_input_state.is_none() {
                             let gamepad = gilrs.gamepad(event.id);
                             let code_right_x = gamepad.axis_code(gilrs::Axis::RightStickX).unwrap();
                             let code_right_y = gamepad.axis_code(gilrs::Axis::RightStickY).unwrap();
+                            let code_z_right =
+                                gamepad.button_code(gilrs::Button::LeftTrigger2).unwrap();
+                            let code_z_left =
+                                gamepad.button_code(gilrs::Button::RightTrigger2).unwrap();
 
                             gamepad_input_state = Some(InputState {
                                 gamepad: GamepadInputState {
@@ -123,6 +138,17 @@ impl MainWindow {
                                         deadzone: gamepad.deadzone(code_right_y).unwrap_or(0.1f32),
                                         axis_data: None,
                                     },
+                                    left_z: GamepadButton {
+                                        code: code_z_left,
+                                        deadzone: gamepad.deadzone(code_z_left).unwrap_or(0.1f32),
+                                        data: None,
+                                    },
+                                    right_z: GamepadButton {
+                                        code: code_z_right,
+                                        deadzone: gamepad.deadzone(code_z_right).unwrap_or(0.1f32),
+                                        data: None,
+                                    },
+
                                     counter: gilrs.counter(),
                                 },
                             })
@@ -132,6 +158,7 @@ impl MainWindow {
                     gamepad_input_state.as_mut().map(|in_st| {
                         in_st.gamepad.counter = gilrs.counter();
                         let gamepad = gilrs.gamepad(in_st.gamepad.id);
+
                         in_st.gamepad.right_stick_x.axis_data = gamepad
                             .state()
                             .axis_data(in_st.gamepad.right_stick_x.code)
@@ -140,6 +167,15 @@ impl MainWindow {
                             .state()
                             .axis_data(in_st.gamepad.right_stick_y.code)
                             .copied();
+                        in_st.gamepad.left_z.data = gamepad
+                            .state()
+                            .button_data(in_st.gamepad.left_z.code)
+                            .copied();
+                        in_st.gamepad.right_z.data = gamepad
+                            .state()
+                            .button_data(in_st.gamepad.right_z.code)
+                            .copied();
+
                         game_main.gamepad_input(in_st);
                     });
 

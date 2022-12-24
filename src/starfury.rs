@@ -126,6 +126,7 @@ struct FlightModel {
     mass: f32,
     linear_damping: f32,
     angular_damping: f32,
+    throttle_sensitivity: f32,
     thruster_force_primary: f32,
     thruster_force_secondary: f32,
     thruster_force_vectors: [glm::Vec3; 16],
@@ -167,6 +168,7 @@ impl std::default::Default for FlightModel {
             angular_damping: 1f32,
             thruster_force_primary: 10_000f32,
             thruster_force_secondary: 2500f32,
+            throttle_sensitivity: 0.5f32,
             thruster_force_vectors: [
                 //
                 //upper left
@@ -370,62 +372,75 @@ impl Starfury {
     pub fn gamepad_input(&self, input_state: &InputState) {
         use gilrs::{Axis, Gamepad};
 
-        let queued_phys_op = input_state
-            .gamepad
-            .right_stick_x
-            .axis_data
-            .and_then(|axis_data| {
-                // log::info!("RightX {}, deadzone {}", a.value(), dz);
+        let roll_pitch = [
+            (
+                &input_state.gamepad.right_stick_x,
+                self.flight_model.maneuver.roll.left[0],
+                self.flight_model.maneuver.roll.right[0],
+            ),
+            (
+                &input_state.gamepad.right_stick_y,
+                self.flight_model.maneuver.pitch.up[0],
+                self.flight_model.maneuver.pitch.down[0],
+            ),
+        ];
 
-                if axis_data.value().abs() <= input_state.gamepad.right_stick_x.deadzone {
-                    return None;
-                }
+        roll_pitch
+            .iter()
+            .for_each(|&(gamepad_stick, thruster_id_pos, thruster_id_neg)| {
+                gamepad_stick.axis_data.map(|axis_data| {
+                    if axis_data.value().abs() <= gamepad_stick.deadzone {
+                        return;
+                    }
 
-                if axis_data.value() > 0f32 {
-                    Some(PhysicsOp::ApplyTorque(
-                        self.flight_model.thruster_force_secondary
-                            * self.flight_model.thruster_force_vectors
-                                [self.flight_model.maneuver.roll.left[0] as usize],
-                    ))
-                } else {
-                    Some(PhysicsOp::ApplyTorque(
-                        self.flight_model.thruster_force_secondary
-                            * self.flight_model.thruster_force_vectors
-                                [self.flight_model.maneuver.roll.right[0] as usize],
-                    ))
-                }
+                    let throttle = axis_data.value() * self.flight_model.throttle_sensitivity;
+                    // log::info!("Throttle: {}", throttle);
+
+                    let phys_op = if throttle > 0f32 {
+                        PhysicsOp::ApplyTorque(
+                            throttle.abs()
+                                * self.flight_model.thruster_force_secondary
+                                * self.flight_model.thruster_force_vector(thruster_id_pos),
+                        )
+                    } else {
+                        PhysicsOp::ApplyTorque(
+                            throttle.abs()
+                                * self.flight_model.thruster_force_secondary
+                                * self.flight_model.thruster_force_vector(thruster_id_neg),
+                        )
+                    };
+
+                    self.physics_ops_queue.borrow_mut().push(phys_op);
+                });
             });
 
-        queued_phys_op.map(|i| {
-            self.physics_ops_queue.borrow_mut().push(i);
-        });
+        let yaws = [
+            (
+                &input_state.gamepad.right_z,
+                self.flight_model.maneuver.yaw.right[0],
+            ),
+            (
+                &input_state.gamepad.left_z,
+                self.flight_model.maneuver.yaw.left[0],
+            ),
+        ];
 
-        let queued_phys_op = input_state
-            .gamepad
-            .right_stick_y
-            .axis_data
-            .and_then(|axis_data| {
-                if axis_data.value().abs() <= input_state.gamepad.right_stick_y.deadzone {
-                    return None;
+        yaws.iter().for_each(|&(gamepad_btn, thruster_id)| {
+            gamepad_btn.data.map(|button_data| {
+                if button_data.value().abs() <= gamepad_btn.deadzone {
+                    return;
                 }
 
-                if axis_data.value() > 0f32 {
-                    Some(PhysicsOp::ApplyTorque(
-                        self.flight_model.thruster_force_secondary
-                            * self.flight_model.thruster_force_vectors
-                                [self.flight_model.maneuver.pitch.up[0] as usize],
-                    ))
-                } else {
-                    Some(PhysicsOp::ApplyTorque(
-                        self.flight_model.thruster_force_secondary
-                            * self.flight_model.thruster_force_vectors
-                                [self.flight_model.maneuver.pitch.down[0] as usize],
-                    ))
-                }
+                let throttle_factor = button_data.value() * self.flight_model.throttle_sensitivity;
+
+                self.physics_ops_queue
+                    .borrow_mut()
+                    .push(PhysicsOp::ApplyTorque(
+                        throttle_factor
+                            * self.flight_model.thruster_force_secondary
+                            * self.flight_model.thruster_force_vector(thruster_id),
+                    ));
             });
-
-        queued_phys_op.map(|i| {
-            self.physics_ops_queue.borrow_mut().push(i);
         });
     }
 }
