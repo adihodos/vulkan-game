@@ -6,6 +6,7 @@ use crate::{
     math::AABB3,
     physics_engine::PhysicsEngine,
     resource_cache::{GeometryRenderInfo, PbrRenderable, PbrRenderableHandle},
+    window::InputState,
 };
 
 use glm::Vec3;
@@ -364,5 +365,67 @@ impl Starfury {
             });
 
         self.physics_ops_queue.borrow_mut().clear();
+    }
+
+    pub fn gamepad_input(&self, input_state: &InputState) {
+        use gilrs::{Axis, Gamepad};
+
+        let queued_phys_op = input_state
+            .gamepad
+            .right_stick_x
+            .axis_data
+            .and_then(|axis_data| {
+                // log::info!("RightX {}, deadzone {}", a.value(), dz);
+
+                if axis_data.value().abs() <= input_state.gamepad.right_stick_x.deadzone {
+                    return None;
+                }
+
+                if axis_data.value() > 0f32 {
+                    Some(PhysicsOp::ApplyTorque(
+                        self.flight_model.thruster_force_secondary
+                            * self.flight_model.thruster_force_vectors
+                                [self.flight_model.maneuver.roll.left[0] as usize],
+                    ))
+                } else {
+                    Some(PhysicsOp::ApplyTorque(
+                        self.flight_model.thruster_force_secondary
+                            * self.flight_model.thruster_force_vectors
+                                [self.flight_model.maneuver.roll.right[0] as usize],
+                    ))
+                }
+            });
+
+        queued_phys_op.map(|i| {
+            self.physics_ops_queue.borrow_mut().push(i);
+        });
+
+        let queued_phys_op = input_state
+            .gamepad
+            .right_stick_y
+            .axis_data
+            .and_then(|axis_data| {
+                if axis_data.value().abs() <= input_state.gamepad.right_stick_y.deadzone {
+                    return None;
+                }
+
+                if axis_data.value() > 0f32 {
+                    Some(PhysicsOp::ApplyTorque(
+                        self.flight_model.thruster_force_secondary
+                            * self.flight_model.thruster_force_vectors
+                                [self.flight_model.maneuver.pitch.up[0] as usize],
+                    ))
+                } else {
+                    Some(PhysicsOp::ApplyTorque(
+                        self.flight_model.thruster_force_secondary
+                            * self.flight_model.thruster_force_vectors
+                                [self.flight_model.maneuver.pitch.down[0] as usize],
+                    ))
+                }
+            });
+
+        queued_phys_op.map(|i| {
+            self.physics_ops_queue.borrow_mut().push(i);
+        });
     }
 }

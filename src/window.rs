@@ -25,13 +25,33 @@ use crate::{
 
 use nalgebra_glm as glm;
 
+#[derive(Clone, Copy, Debug)]
+pub struct GamepadStick {
+    pub code: gilrs::ev::Code,
+    pub deadzone: f32,
+    pub axis_data: Option<gilrs::ev::state::AxisData>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GamepadInputState {
+    pub id: gilrs::GamepadId,
+    pub right_stick_x: GamepadStick,
+    pub right_stick_y: GamepadStick,
+    pub counter: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct InputState {
+    pub gamepad: GamepadInputState,
+}
+
 pub struct MainWindow {}
 
 impl MainWindow {
     pub fn run() {
         let logger = flexi_logger::Logger::with(
             flexi_logger::LogSpecification::builder()
-                .default(flexi_logger::LevelFilter::Trace)
+                .default(flexi_logger::LevelFilter::Debug)
                 .build(),
         )
         .adaptive_format_for_stderr(flexi_logger::AdaptiveFormat::Detailed)
@@ -64,6 +84,8 @@ impl MainWindow {
         window.set_fullscreen(Some(Fullscreen::Exclusive(vidmode)));
 
         let mut game_main = GameMain::new(&window);
+        let mut gilrs = gilrs::Gilrs::new().expect("Failed to initialize input library");
+        let mut gamepad_input_state = None;
 
         event_loop.run(move |event, _, control_flow| {
             control_flow.set_poll();
@@ -82,11 +104,47 @@ impl MainWindow {
                 }
 
                 Event::MainEventsCleared => {
-                    game_main.main();
-                }
+                    while let Some(event) = gilrs.next_event() {
+                        if gamepad_input_state.is_none() {
+                            let gamepad = gilrs.gamepad(event.id);
+                            let code_right_x = gamepad.axis_code(gilrs::Axis::RightStickX).unwrap();
+                            let code_right_y = gamepad.axis_code(gilrs::Axis::RightStickY).unwrap();
 
-                Event::DeviceEvent { device_id, event } => {
-                    log::info!("Device event {:?}", event);
+                            gamepad_input_state = Some(InputState {
+                                gamepad: GamepadInputState {
+                                    id: event.id,
+                                    right_stick_x: GamepadStick {
+                                        code: code_right_x,
+                                        deadzone: gamepad.deadzone(code_right_x).unwrap_or(0.1f32),
+                                        axis_data: None,
+                                    },
+                                    right_stick_y: GamepadStick {
+                                        code: code_right_y,
+                                        deadzone: gamepad.deadzone(code_right_y).unwrap_or(0.1f32),
+                                        axis_data: None,
+                                    },
+                                    counter: gilrs.counter(),
+                                },
+                            })
+                        }
+                    }
+
+                    gamepad_input_state.as_mut().map(|in_st| {
+                        in_st.gamepad.counter = gilrs.counter();
+                        let gamepad = gilrs.gamepad(in_st.gamepad.id);
+                        in_st.gamepad.right_stick_x.axis_data = gamepad
+                            .state()
+                            .axis_data(in_st.gamepad.right_stick_x.code)
+                            .copied();
+                        in_st.gamepad.right_stick_y.axis_data = gamepad
+                            .state()
+                            .axis_data(in_st.gamepad.right_stick_y.code)
+                            .copied();
+                        game_main.gamepad_input(in_st);
+                    });
+
+                    gilrs.inc();
+                    game_main.main();
                 }
 
                 _ => (),
@@ -151,14 +209,16 @@ impl GameMain {
                 self.framebuffer_size = IVec2::new(new_size.width as i32, new_size.height as i32);
             }
 
-            _ => {
-                log::info!("event {:?}", *event);
-            }
+            _ => {}
         }
 
         self.game_world.borrow().input_event(event);
         self.camera.input_event(event);
         self.ui.input_event(event);
+    }
+
+    fn gamepad_input(&mut self, input_state: &InputState) {
+        self.game_world.borrow().gamepad_input(input_state);
     }
 
     fn do_ui(&self) {

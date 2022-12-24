@@ -27,6 +27,7 @@ use crate::{
     skybox::Skybox,
     starfury::Starfury,
     vk_renderer::{ScopedBufferMapping, UniqueBuffer, UniqueImage, UniqueSampler, VulkanRenderer},
+    window::InputState,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -643,5 +644,9 @@ impl GameWorld {
             }
             _ => {}
         }
+    }
+
+    pub fn gamepad_input(&self, input_state: &InputState) {
+        self.starfury.gamepad_input(input_state);
     }
 }
