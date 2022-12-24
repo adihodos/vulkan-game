@@ -114,7 +114,7 @@
         ),
         movement: (
             forward: UpperRightBack,
-            backward: UpperLeftFront,
+            backward: UpperLeftUp,
             left: UpperRightRight,
             right: UpperLeftLeft,
         ),

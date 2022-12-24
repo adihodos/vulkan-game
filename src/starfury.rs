@@ -114,11 +114,31 @@ impl std::default::Default for Yaw {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct Movement {
+    forward: EngineThrusterId,
+    backward: EngineThrusterId,
+    left: EngineThrusterId,
+    right: EngineThrusterId,
+}
+
+impl std::default::Default for Movement {
+    fn default() -> Self {
+        Movement {
+            forward: EngineThrusterId::UpperRightBack,
+            backward: EngineThrusterId::UpperLeftUp,
+            left: EngineThrusterId::UpperRightRight,
+            right: EngineThrusterId::UpperLeftLeft,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Default)]
 struct Maneuver {
     roll: Roll,
     pitch: Pitch,
     yaw: Yaw,
+    movement: Movement,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -148,7 +168,7 @@ impl FlightModel {
             .separate_tuple_members(true);
 
         to_writer_pretty(
-            std::fs::File::create("config/starfury.flightmodel.cfg.ron").expect("cykaaaaa"),
+            std::fs::File::create("config/starfury.flightmodel.default.cfg.ron").expect("cykaaaaa"),
             &FlightModel::default(),
             cfg_opts.clone(),
         )
@@ -371,6 +391,47 @@ impl Starfury {
 
     pub fn gamepad_input(&self, input_state: &InputState) {
         use gilrs::{Axis, Gamepad};
+
+        let movement = [
+            (
+                &input_state.gamepad.left_stick_x,
+                self.flight_model.maneuver.movement.right,
+                self.flight_model.maneuver.movement.left,
+            ),
+            (
+                &input_state.gamepad.left_stick_y,
+                self.flight_model.maneuver.movement.forward,
+                self.flight_model.maneuver.movement.backward,
+            ),
+        ];
+
+        movement
+            .iter()
+            .for_each(|&(gamepad_stick, thruster_id_pos, thruster_id_neg)| {
+                gamepad_stick.axis_data.map(|axis_data| {
+                    if axis_data.value().abs() <= gamepad_stick.deadzone {
+                        return;
+                    }
+
+                    let throttle = axis_data.value() * self.flight_model.throttle_sensitivity;
+
+                    let phys_op = if throttle > 0f32 {
+                        PhysicsOp::ApplyForce(
+                            throttle.abs()
+                                * self.flight_model.thruster_force_primary
+                                * self.flight_model.thruster_force_vector(thruster_id_pos),
+                        )
+                    } else {
+                        PhysicsOp::ApplyForce(
+                            throttle.abs()
+                                * self.flight_model.thruster_force_primary
+                                * self.flight_model.thruster_force_vector(thruster_id_neg),
+                        )
+                    };
+
+                    self.physics_ops_queue.borrow_mut().push(phys_op);
+                });
+            });
 
         let roll_pitch = [
             (
