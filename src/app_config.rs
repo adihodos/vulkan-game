@@ -48,6 +48,12 @@ pub struct EngineConfig {
     pub shaders: PathBuf,
 }
 
+impl EngineConfig {
+    pub fn shader_path<P: AsRef<std::path::Path>>(&self, shader_file: P) -> PathBuf {
+        self.shaders.clone().join(shader_file)
+    }
+}
+
 // fn write_config() {
 //     use ron::ser::{to_writer_pretty, PrettyConfig};
 //

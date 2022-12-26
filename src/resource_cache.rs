@@ -65,6 +65,7 @@ pub struct ResourceHolder {
     pbr_data_buffer: UniqueBuffer,
     sampler: UniqueSampler,
     pipeline: UniqueGraphicsPipeline,
+    pipeline_instanced: UniqueGraphicsPipeline,
     handles: HashMap<String, PbrRenderableHandle>,
     geometries: Vec<PbrRenderable>,
 }
@@ -76,6 +77,10 @@ impl ResourceHolder {
 
     pub fn get_geometry_handle(&self, name: &str) -> PbrRenderableHandle {
         *self.handles.get(name).unwrap()
+    }
+
+    pub fn get_geometry_info(&self, handle: PbrRenderableHandle) -> &GeometryRenderInfo {
+        &self.geometries[handle.0 as usize].geometry
     }
 
     pub fn get_pbr_renderable(&self, handle: PbrRenderableHandle) -> &PbrRenderable {
@@ -109,7 +114,8 @@ impl ResourceHolder {
 
         let e = Duration::from_std(s.elapsed()).unwrap();
         log::info!(
-            "Loaded geometries in {}m {}s {}ms",
+            "Loaded {} geometries in {}m {}s {}ms",
+            imported_geometries.len(),
             e.num_minutes(),
             e.num_seconds(),
             e.num_milliseconds()
@@ -141,7 +147,8 @@ impl ResourceHolder {
             renderer.push_work_package(texture_cpu2gpu_copy_work_package);
 
             let geometry_handle = PbrRenderableHandle(geometry.len() as u32);
-            let pbr_data_offset = (pbr_data_aligned_size * (pbr_data.len() as DeviceSize)) as u32;
+            let pbr_data_offset =
+                (size_of::<PbrMaterial>() as DeviceSize * (pbr_data.len() as DeviceSize)) as u32;
 
             pbr_textures.push(pbr_mtl_tex);
             geometry.push(GeometryRenderInfo {
@@ -161,8 +168,6 @@ impl ResourceHolder {
             handles.insert((*tag).clone(), geometry_handle);
         });
 
-        // log::info!("PBR data: {:?}", pbr_data);
-
         let vertex_bytes = vertex_offset as DeviceSize * size_of::<GeometryVertex>() as DeviceSize;
         let vertex_data: SmallVec<[&[GeometryVertex]; 8]> = imported_geometries
             .iter()
@@ -174,6 +179,7 @@ impl ResourceHolder {
             BufferUsageFlags::VERTEX_BUFFER | BufferUsageFlags::TRANSFER_DST,
             MemoryPropertyFlags::DEVICE_LOCAL,
             &vertex_data,
+            None,
         )?;
 
         let index_bytes = index_offset as DeviceSize * size_of::<u32>() as DeviceSize;
@@ -187,6 +193,7 @@ impl ResourceHolder {
             BufferUsageFlags::INDEX_BUFFER | BufferUsageFlags::TRANSFER_DST,
             MemoryPropertyFlags::DEVICE_LOCAL,
             &indices_data,
+            None,
         )?;
 
         let pbr_bytes = pbr_data_aligned_size * pbr_data.len() as DeviceSize;
@@ -195,155 +202,10 @@ impl ResourceHolder {
             BufferUsageFlags::STORAGE_BUFFER | BufferUsageFlags::TRANSFER_DST,
             MemoryPropertyFlags::DEVICE_LOCAL,
             &[&pbr_data],
+            Some(renderer.device_properties().limits.non_coherent_atom_size),
         )?;
 
-        let pipeline = GraphicsPipelineBuilder::new()
-            .add_vertex_input_attribute_description(VertexInputAttributeDescription {
-                location: 0,
-                binding: 0,
-                format: Format::R32G32B32_SFLOAT,
-                offset: offset_of!(GeometryVertex, pos) as u32,
-            })
-            .add_vertex_input_attribute_description(VertexInputAttributeDescription {
-                location: 1,
-                binding: 0,
-                format: Format::R32G32B32_SFLOAT,
-                offset: offset_of!(GeometryVertex, normal) as u32,
-            })
-            .add_vertex_input_attribute_description(VertexInputAttributeDescription {
-                location: 2,
-                binding: 0,
-                format: Format::R32G32_SFLOAT,
-                offset: offset_of!(GeometryVertex, uv) as u32,
-            })
-            .add_vertex_input_attribute_description(VertexInputAttributeDescription {
-                location: 3,
-                binding: 0,
-                format: Format::R32G32B32A32_SFLOAT,
-                offset: offset_of!(GeometryVertex, color) as u32,
-            })
-            .add_vertex_input_attribute_description(VertexInputAttributeDescription {
-                location: 4,
-                binding: 0,
-                format: Format::R32G32B32A32_SFLOAT,
-                offset: offset_of!(GeometryVertex, tangent) as u32,
-            })
-            .add_vertex_input_attribute_description(VertexInputAttributeDescription {
-                location: 5,
-                binding: 0,
-                format: Format::R32_UINT,
-                offset: offset_of!(GeometryVertex, pbr_buf_id) as u32,
-            })
-            .add_vertex_input_attribute_binding(
-                VertexInputBindingDescription::builder()
-                    .binding(0)
-                    .stride(size_of::<GeometryVertex>() as u32)
-                    .input_rate(VertexInputRate::VERTEX)
-                    .build(),
-            )
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::VERTEX,
-                source: ShaderModuleSource::File(Path::new("data/shaders/pbr.vert.spv")),
-                entry_point: "main",
-            })
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::FRAGMENT,
-                source: ShaderModuleSource::File(Path::new("data/shaders/pbr.frag.spv")),
-                entry_point: "main",
-            })
-            .add_dynamic_state(DynamicState::VIEWPORT)
-            .add_dynamic_state(DynamicState::SCISSOR)
-            .build(
-                renderer.graphics_device(),
-                renderer.pipeline_cache(),
-                GraphicsPipelineLayoutBuilder::new()
-                    //
-                    // set 0
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::VERTEX)
-                            .build(),
-                    )
-                    //
-                    //set 1
-                    .next_set()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(1)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(2)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(3)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    //
-                    //set 2
-                    .next_set()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    //
-                    //set 3
-                    .next_set()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(1)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(2)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .build(renderer.graphics_device())?,
-                renderer.renderpass(),
-                0,
-            )?;
+        let pipeline = Self::create_rendering_pipeline(renderer, app_config)?;
 
         let sampler = UniqueSampler::new(
             renderer.graphics_device(),
@@ -440,8 +302,6 @@ impl ResourceHolder {
                     renderer.graphics_device().update_descriptor_sets(&wds, &[]);
                 }
 
-                // log::info!("PBR mat ")
-
                 PbrRenderable {
                     geometry: rend_geom,
                     materials: pbr_mtl,
@@ -456,8 +316,333 @@ impl ResourceHolder {
             pbr_data_buffer,
             sampler,
             pipeline,
+            pipeline_instanced: Self::create_instanced_rendering_pipeline(renderer, app_config)?,
             handles,
             geometries,
         })
+    }
+
+    fn create_rendering_pipeline(
+        renderer: &VulkanRenderer,
+        app_config: &AppConfig,
+    ) -> Option<UniqueGraphicsPipeline> {
+        GraphicsPipelineBuilder::new()
+            .add_vertex_input_attribute_descriptions(&[
+                VertexInputAttributeDescription {
+                    location: 0,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, pos) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 1,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, normal) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 2,
+                    binding: 0,
+                    format: Format::R32G32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, uv) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 3,
+                    binding: 0,
+                    format: Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, color) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 4,
+                    binding: 0,
+                    format: Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, tangent) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 5,
+                    binding: 0,
+                    format: Format::R32_UINT,
+                    offset: offset_of!(GeometryVertex, pbr_buf_id) as u32,
+                },
+            ])
+            .add_vertex_input_attribute_binding(
+                VertexInputBindingDescription::builder()
+                    .binding(0)
+                    .stride(size_of::<GeometryVertex>() as u32)
+                    .input_rate(VertexInputRate::VERTEX)
+                    .build(),
+            )
+            .add_shader_stage(ShaderModuleDescription {
+                stage: ShaderStageFlags::VERTEX,
+                source: ShaderModuleSource::File(&app_config.engine.shader_path("pbr.vert.spv")),
+                entry_point: "main",
+            })
+            .add_shader_stage(ShaderModuleDescription {
+                stage: ShaderStageFlags::FRAGMENT,
+                source: ShaderModuleSource::File(&app_config.engine.shader_path("pbr.frag.spv")),
+                entry_point: "main",
+            })
+            .add_dynamic_state(DynamicState::VIEWPORT)
+            .add_dynamic_state(DynamicState::SCISSOR)
+            .build(
+                renderer.graphics_device(),
+                renderer.pipeline_cache(),
+                GraphicsPipelineLayoutBuilder::new()
+                    //
+                    // set 0
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::VERTEX)
+                            .build(),
+                    )
+                    //
+                    //set 1
+                    .next_set()
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(1)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(2)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(3)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    //
+                    //set 2
+                    .next_set()
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    //
+                    //set 3
+                    .next_set()
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(1)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(2)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .build(renderer.graphics_device())?,
+                renderer.renderpass(),
+                0,
+            )
+    }
+
+    fn create_instanced_rendering_pipeline(
+        renderer: &VulkanRenderer,
+        app_config: &AppConfig,
+    ) -> Option<UniqueGraphicsPipeline> {
+        GraphicsPipelineBuilder::new()
+            .add_vertex_input_attribute_descriptions(&[
+                VertexInputAttributeDescription {
+                    location: 0,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, pos) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 1,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, normal) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 2,
+                    binding: 0,
+                    format: Format::R32G32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, uv) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 3,
+                    binding: 0,
+                    format: Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, color) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 4,
+                    binding: 0,
+                    format: Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, tangent) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 5,
+                    binding: 0,
+                    format: Format::R32_UINT,
+                    offset: offset_of!(GeometryVertex, pbr_buf_id) as u32,
+                },
+            ])
+            .add_vertex_input_attribute_binding(
+                VertexInputBindingDescription::builder()
+                    .binding(0)
+                    .stride(size_of::<GeometryVertex>() as u32)
+                    .input_rate(VertexInputRate::VERTEX)
+                    .build(),
+            )
+            .add_shader_stage(ShaderModuleDescription {
+                stage: ShaderStageFlags::VERTEX,
+                source: ShaderModuleSource::File(
+                    &app_config.engine.shader_path("pbr.instanced.vert.spv"),
+                ),
+                entry_point: "main",
+            })
+            .add_shader_stage(ShaderModuleDescription {
+                stage: ShaderStageFlags::FRAGMENT,
+                source: ShaderModuleSource::File(&app_config.engine.shader_path("pbr.frag.spv")),
+                entry_point: "main",
+            })
+            .add_dynamic_state(DynamicState::VIEWPORT)
+            .add_dynamic_state(DynamicState::SCISSOR)
+            .build(
+                renderer.graphics_device(),
+                renderer.pipeline_cache(),
+                GraphicsPipelineLayoutBuilder::new()
+                    //
+                    // set 0
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::VERTEX)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(1)
+                            .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::VERTEX)
+                            .build(),
+                    )
+                    //
+                    //set 1
+                    .next_set()
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(1)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(2)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(3)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    //
+                    //set 2
+                    .next_set()
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    //
+                    //set 3
+                    .next_set()
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(1)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .add_binding(
+                        DescriptorSetLayoutBinding::builder()
+                            .binding(2)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)
+                            .build(),
+                    )
+                    .build(renderer.graphics_device())?,
+                renderer.renderpass(),
+                0,
+            )
+    }
+
+    pub fn pbr_pipeline_instanced(&self) -> &UniqueGraphicsPipeline {
+        &self.pipeline_instanced
     }
 }

@@ -1121,11 +1121,15 @@ impl UniqueBuffer {
         usage: BufferUsageFlags,
         memory_type: MemoryPropertyFlags,
         data: &[&[T]],
+        alignment: Option<u64>,
     ) -> Option<UniqueBuffer> {
-        let bytes_size = (data
+        let items_count = data
             .iter()
-            .fold(0, |size, data_chunk| size + data_chunk.len())
-            * size_of::<T>()) as DeviceSize;
+            .fold(0u64, |count, data_chunk| count + data_chunk.len() as u64);
+
+        let bytes_size = alignment
+            .map(|align| VulkanRenderer::aligned_size_of_type::<T>(align) * items_count)
+            .unwrap_or_else(|| items_count * size_of::<T>() as u64);
 
         let gpu_buffer = Self::new(
             renderer,
@@ -1172,6 +1176,53 @@ impl UniqueBuffer {
 
         renderer.res_loader.add_staging_buffer(staging_buffer);
         Some(gpu_buffer)
+    }
+}
+
+pub struct Cpu2GpuBuffer<T: Sized> {
+    pub buffer: UniqueBuffer,
+    pub align: DeviceSize,
+    pub bytes_one_frame: DeviceSize,
+    _phantom: std::marker::PhantomData<*const T>,
+}
+
+impl<T: Sized> Cpu2GpuBuffer<T> {
+    pub fn create(
+        renderer: &VulkanRenderer,
+        usage: BufferUsageFlags,
+        align: DeviceSize,
+        items: DeviceSize,
+        max_frames: DeviceSize,
+    ) -> Option<Self> {
+        let align = VulkanRenderer::aligned_size_of_type::<T>(align);
+        Some(Self {
+            buffer: UniqueBuffer::new(
+                renderer,
+                usage,
+                MemoryPropertyFlags::HOST_VISIBLE,
+                align * items * max_frames,
+            )?,
+            align,
+            bytes_one_frame: align * items,
+            _phantom: std::marker::PhantomData,
+        })
+    }
+
+    pub fn map_for_frame(
+        &self,
+        renderer: &VulkanRenderer,
+        frame_id: DeviceSize,
+    ) -> Option<ScopedBufferMapping> {
+        ScopedBufferMapping::create(
+            renderer,
+            &self.buffer,
+            self.bytes_one_frame,
+            self.bytes_one_frame * frame_id,
+        )
+    }
+
+    pub fn offset_for_frame(&self, frame_id: DeviceSize) -> DeviceSize {
+        self.bytes_one_frame * frame_id
     }
 }
 
@@ -1485,11 +1536,11 @@ impl<'a> GraphicsPipelineBuilder<'a> {
         self
     }
 
-    pub fn add_vertex_input_attribute_description(
+    pub fn add_vertex_input_attribute_descriptions(
         mut self,
-        attribute: VertexInputAttributeDescription,
+        attributes: &[VertexInputAttributeDescription],
     ) -> Self {
-        self.vertex_input_attrib_desc.push(attribute);
+        self.vertex_input_attrib_desc.extend_from_slice(attributes);
         self
     }
 
@@ -1601,12 +1652,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             .layout(pipeline_layout)
             .render_pass(renderpass)
             .subpass(subpass)
-            .viewport_state(
-                &vsb.build(), // &PipelineViewportStateCreateInfo::builder()
-                              //     .viewports(&self.viewports)
-                              //     .scissors(&self.scissors)
-                              //     .build(),
-            )
+            .viewport_state(&vsb.build())
             .color_blend_state(
                 &PipelineColorBlendStateCreateInfo::builder()
                     .attachments(&self.colorblend_state)

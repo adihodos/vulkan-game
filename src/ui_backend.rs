@@ -205,30 +205,26 @@ impl UiBackend {
         info!("Creating ui graphics pipeline");
 
         let pipeline = GraphicsPipelineBuilder::new()
-            .add_vertex_input_attribute_description(
+            .add_vertex_input_attribute_descriptions(&[
                 VertexInputAttributeDescription::builder()
                     .location(0)
                     .binding(0)
                     .format(Format::R32G32_SFLOAT)
                     .offset(offset_of!(UiVertex, pos) as u32)
                     .build(),
-            )
-            .add_vertex_input_attribute_description(
                 VertexInputAttributeDescription::builder()
                     .location(1)
                     .binding(0)
                     .format(Format::R32G32_SFLOAT)
                     .offset(offset_of!(UiVertex, uv) as u32)
                     .build(),
-            )
-            .add_vertex_input_attribute_description(
                 VertexInputAttributeDescription::builder()
                     .location(2)
                     .binding(0)
                     .format(Format::R8G8B8A8_UNORM)
                     .offset(offset_of!(UiVertex, col) as u32)
                     .build(),
-            )
+            ])
             .set_input_assembly_state(PrimitiveTopology::TRIANGLE_LIST, false)
             .add_vertex_input_attribute_binding(
                 VertexInputBindingDescription::builder()

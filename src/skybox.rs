@@ -105,6 +105,7 @@ impl Skybox {
             BufferUsageFlags::INDEX_BUFFER,
             MemoryPropertyFlags::DEVICE_LOCAL,
             &[&indices],
+            None,
         )?;
 
         let pipeline = GraphicsPipelineBuilder::new()

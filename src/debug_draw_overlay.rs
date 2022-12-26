@@ -69,38 +69,32 @@ impl DebugDrawOverlay {
 
         let pipeline = GraphicsPipelineBuilder::new()
             .set_input_assembly_state(PrimitiveTopology::POINT_LIST, false)
-            .add_vertex_input_attribute_description(
+            .add_vertex_input_attribute_descriptions(&[
                 VertexInputAttributeDescription::builder()
                     .location(0)
                     .binding(0)
                     .format(Format::R32G32B32_SFLOAT)
                     .offset(offset_of!(Line, start_pos) as u32)
                     .build(),
-            )
-            .add_vertex_input_attribute_description(
                 VertexInputAttributeDescription::builder()
                     .location(1)
                     .binding(0)
                     .format(Format::R32G32B32_SFLOAT)
                     .offset(offset_of!(Line, end_pos) as u32)
                     .build(),
-            )
-            .add_vertex_input_attribute_description(
                 VertexInputAttributeDescription::builder()
                     .location(2)
                     .binding(0)
                     .format(Format::R8G8B8A8_UNORM)
                     .offset(offset_of!(Line, start_color) as u32)
                     .build(),
-            )
-            .add_vertex_input_attribute_description(
                 VertexInputAttributeDescription::builder()
                     .location(3)
                     .binding(0)
                     .format(Format::R8G8B8A8_UNORM)
                     .offset(offset_of!(Line, end_color) as u32)
                     .build(),
-            )
+            ])
             .add_vertex_input_attribute_binding(
                 VertexInputBindingDescription::builder()
                     .binding(0)

@@ -5,7 +5,7 @@ use crate::{
     game_world::GameObjectHandle,
     math::AABB3,
     physics_engine::PhysicsEngine,
-    resource_cache::{GeometryRenderInfo, PbrRenderable, PbrRenderableHandle},
+    resource_cache::{GeometryRenderInfo, PbrRenderable, PbrRenderableHandle, ResourceHolder},
     window::InputState,
 };
 
@@ -239,10 +239,9 @@ pub struct Starfury {
 
 impl Starfury {
     pub fn new(
-        renderable: PbrRenderableHandle,
         object_handle: GameObjectHandle,
         physics_engine: &mut PhysicsEngine,
-        geometry: &GeometryRenderInfo,
+        resource_cache: &ResourceHolder,
     ) -> Starfury {
         FlightModel::write_default_config();
 
@@ -251,6 +250,9 @@ impl Starfury {
                 .expect("Failed to read Starfury flight model configuration file."),
         )
         .expect("Invalid configuration file");
+
+        let geometry_handle = resource_cache.get_geometry_handle(&"sa23");
+        let geometry = resource_cache.get_geometry_info(geometry_handle);
 
         use strum::{EnumProperty, IntoEnumIterator};
         let thrusters = EngineThrusterId::iter()
@@ -292,7 +294,7 @@ impl Starfury {
         );
 
         Starfury {
-            renderable,
+            renderable: geometry_handle,
             object_handle,
             rigid_body_handle: body_handle,
             collider_handle,

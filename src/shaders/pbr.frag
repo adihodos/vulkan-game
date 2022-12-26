@@ -134,9 +134,9 @@ void main() {
 
 	vec3 base_color = pbr.base_color_factor.rgb * texture(s_colormap, vec3(fs_in.uv, pbr.colormap_id)).rgb;
 	vec3 albedo     = pow(base_color, vec3(2.2));
-	vec2 mr = texture(s_metal_roughness_map, vec3(fs_in.uv, pbr.metallic_roughness_id)).rg;
-    float metallic  = pbr.metallic_factor * mr.r;
-    float roughness = pbr.roughness_factor * mr.g;
+	vec3 metallic_roughness = texture(s_metal_roughness_map, vec3(fs_in.uv, pbr.metallic_roughness_id)).rgb;
+    float metallic  = pbr.metallic_factor * metallic_roughness.b;
+    float roughness = pbr.roughness_factor * metallic_roughness.g;
     float ao        = 1.0;
 
     vec3 N = 
