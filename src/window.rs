@@ -282,6 +282,7 @@ impl GameMain {
     }
 
     fn gamepad_input(&mut self, input_state: &InputState) {
+        log::info!("gamepad x[][][][]");
         self.game_world.borrow().gamepad_input(input_state);
     }
 

@@ -1,6 +1,5 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::VecDeque,
     mem::size_of,
 };
 
@@ -22,13 +21,26 @@ use crate::{
     app_config::AppConfig,
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::DrawContext,
+    game_object::GameObjectRenderState,
     physics_engine::PhysicsEngine,
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
+    shadow_swarm::ShadowFighterSwarm,
     skybox::Skybox,
     starfury::Starfury,
-    vk_renderer::{ScopedBufferMapping, UniqueBuffer, UniqueImage, UniqueSampler, VulkanRenderer},
+    vk_renderer::{
+        Cpu2GpuBuffer, ScopedBufferMapping, UniqueBuffer, UniqueImage, UniqueSampler,
+        VulkanRenderer,
+    },
     window::InputState,
 };
+
+#[derive(Copy, Clone, Debug)]
+pub struct GameObjectCommonData {
+    pub renderable: PbrRenderableHandle,
+    pub object_handle: GameObjectHandle,
+    pub phys_rigid_body_handle: rapier3d::prelude::RigidBodyHandle,
+    pub phys_collider_handle: rapier3d::prelude::ColliderHandle,
+}
 
 #[derive(Copy, Clone, Debug)]
 struct DebugDrawOptions {
@@ -63,16 +75,110 @@ pub struct PbrLightingData {
 }
 
 #[repr(C)]
-pub struct PbrTransformDataUBO {
+pub struct PbrTransformDataSingleInstanceUBO {
     pub projection: glm::Mat4,
     pub view: glm::Mat4,
     pub world: glm::Mat4,
 }
 
-#[derive(Copy, Clone, Debug)]
-struct GameObjectRenderState {
-    physics_pos: Isometry3<f32>,
-    render_pos: Isometry3<f32>,
+#[repr(C, align(16))]
+struct PbrTransformDataMultiInstanceUBO {
+    projection: glm::Mat4,
+    view: glm::Mat4,
+}
+
+#[repr(C)]
+struct PbrTransformDataInstanceEntry {
+    model: glm::Mat4,
+}
+
+struct InstancedRenderingData {
+    ubo_vtx_transforms: Cpu2GpuBuffer<PbrTransformDataMultiInstanceUBO>,
+    stb_instances: Cpu2GpuBuffer<PbrTransformDataInstanceEntry>,
+    descriptor_sets: Vec<DescriptorSet>,
+}
+
+impl InstancedRenderingData {
+    fn create(
+        renderer: &VulkanRenderer,
+        resource_cache: &ResourceHolder,
+        instances: u32,
+    ) -> Option<InstancedRenderingData> {
+        let ubo_vtx_transforms = Cpu2GpuBuffer::create(
+            renderer,
+            BufferUsageFlags::UNIFORM_BUFFER,
+            renderer
+                .device_properties()
+                .limits
+                .min_uniform_buffer_offset_alignment,
+            1,
+            renderer.max_inflight_frames() as DeviceSize,
+        )?;
+
+        let stb_instances = Cpu2GpuBuffer::create(
+            renderer,
+            BufferUsageFlags::STORAGE_BUFFER,
+            renderer.device_properties().limits.non_coherent_atom_size,
+            instances as DeviceSize,
+            renderer.max_inflight_frames() as DeviceSize,
+        )?;
+
+        let descriptor_sets = unsafe {
+            let descriptor_set_layouts =
+                [resource_cache.pbr_pipeline_instanced().descriptor_layouts()[0]];
+
+            renderer.graphics_device().allocate_descriptor_sets(
+                &DescriptorSetAllocateInfo::builder()
+                    .set_layouts(&descriptor_set_layouts)
+                    .descriptor_pool(renderer.descriptor_pool())
+                    .build(),
+            )
+        }
+        .map_err(|e| log::error!("Failed to allocate descriptor sets: {}", e))
+        .ok()?;
+
+        let descriptor_buffers_info = [
+            DescriptorBufferInfo::builder()
+                .buffer(ubo_vtx_transforms.buffer.buffer)
+                .offset(0)
+                .range(ubo_vtx_transforms.bytes_one_frame)
+                .build(),
+            DescriptorBufferInfo::builder()
+                .buffer(stb_instances.buffer.buffer)
+                .offset(0)
+                .range(stb_instances.bytes_one_frame)
+                .build(),
+        ];
+
+        let write_descriptor_set = [
+            WriteDescriptorSet::builder()
+                .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                .dst_set(descriptor_sets[0])
+                .dst_binding(0)
+                .buffer_info(&descriptor_buffers_info[..1])
+                .dst_array_element(0)
+                .build(),
+            WriteDescriptorSet::builder()
+                .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                .dst_set(descriptor_sets[0])
+                .dst_binding(1)
+                .dst_array_element(0)
+                .buffer_info(&descriptor_buffers_info[1..])
+                .build(),
+        ];
+
+        unsafe {
+            renderer
+                .graphics_device()
+                .update_descriptor_sets(&write_descriptor_set, &[]);
+        }
+
+        Some(InstancedRenderingData {
+            ubo_vtx_transforms,
+            stb_instances,
+            descriptor_sets,
+        })
+    }
 }
 
 struct PbrCpu2GpuData {
@@ -102,6 +208,8 @@ pub struct GameWorld {
     pbr_cpu_2_gpu: PbrCpu2GpuData,
     objects: Vec<GameObjectData>,
     starfury: Starfury,
+    shadows_swarm: ShadowFighterSwarm,
+    shadows_swarm_inst_render_data: InstancedRenderingData,
     accumulator: Cell<f64>,
     frame_times: RefCell<Vec<f32>>,
     physics_engine: RefCell<PhysicsEngine>,
@@ -134,17 +242,20 @@ impl GameWorld {
     }
 
     pub fn new(renderer: &VulkanRenderer, app_cfg: &AppConfig) -> Option<GameWorld> {
+        ShadowFighterSwarm::write_default_config();
+
         let debug_draw_overlay = DebugDrawOverlay::create(renderer)?;
         let skybox = Skybox::create(renderer, &app_cfg.scene, &app_cfg.engine)?;
 
         let resource_cache = ResourceHolder::create(renderer, app_cfg)?;
-        let aligned_ubo_transforms_size = VulkanRenderer::aligned_size_of_type::<PbrTransformDataUBO>(
-            renderer
-                .device_properties()
-                .limits
-                .min_uniform_buffer_offset_alignment,
-        );
-        let size_ubo_transforms_one_frame = aligned_ubo_transforms_size * 1; // 1 object for now
+        let aligned_ubo_transforms_size =
+            VulkanRenderer::aligned_size_of_type::<PbrTransformDataSingleInstanceUBO>(
+                renderer
+                    .device_properties()
+                    .limits
+                    .min_uniform_buffer_offset_alignment,
+            );
+        let size_ubo_transforms_one_frame = aligned_ubo_transforms_size * 2; // 1 object for now
         let pbr_ubo_transforms = UniqueBuffer::new(
             renderer,
             BufferUsageFlags::UNIFORM_BUFFER,
@@ -187,7 +298,7 @@ impl GameWorld {
             DescriptorBufferInfo::builder()
                 .buffer(pbr_ubo_transforms.buffer)
                 .offset(0)
-                .range(size_of::<PbrTransformDataUBO>() as DeviceSize)
+                .range(size_of::<PbrTransformDataSingleInstanceUBO>() as DeviceSize)
                 .build(),
             DescriptorBufferInfo::builder()
                 .buffer(pbr_ubo_lighting.buffer)
@@ -333,14 +444,15 @@ impl GameWorld {
 
         let mut physics_engine = PhysicsEngine::new();
 
-        let starfury = Starfury::new(
-            objects[0].renderable,
-            objects[0].handle,
-            &mut physics_engine,
-            &resource_cache
-                .get_pbr_renderable(objects[0].renderable)
-                .geometry,
-        );
+        let starfury = Starfury::new(objects[0].handle, &mut physics_engine, &resource_cache);
+
+        let shadows_swarm = ShadowFighterSwarm::new(&mut physics_engine, &resource_cache);
+
+        let shadows_swarm_inst_render_data = InstancedRenderingData::create(
+            renderer,
+            &resource_cache,
+            shadows_swarm.params.instance_count,
+        )?;
 
         let render_state = vec![GameObjectRenderState {
             render_pos: Isometry3::identity(),
@@ -364,6 +476,8 @@ impl GameWorld {
             },
             objects,
             starfury,
+            shadows_swarm,
+            shadows_swarm_inst_render_data,
             accumulator: Cell::new(0f64),
             frame_times: RefCell::new(Vec::with_capacity(Self::MAX_HISTOGRAM_VALUES)),
             physics_engine: RefCell::new(physics_engine),
@@ -388,33 +502,34 @@ impl GameWorld {
         let viewports = [draw_context.viewport];
         let scisssors = [draw_context.scissor];
 
-        let view_matrix = draw_context.camera.view_transform();
-
-        let perspective = draw_context.projection;
-
-        let starfury_transform = self
-            .get_object_state(self.starfury.object_handle)
-            .render_pos
-            .to_homogeneous();
-
-        let transforms = PbrTransformDataUBO {
-            world: starfury_transform,
-            view: draw_context.camera.view_transform(),
-            projection: perspective,
-        };
-
         ScopedBufferMapping::create(
             draw_context.renderer,
             &self.pbr_cpu_2_gpu.ubo_transforms,
             self.pbr_cpu_2_gpu.size_ubo_transforms_one_frame,
             self.pbr_cpu_2_gpu.size_ubo_transforms_one_frame * draw_context.frame_id as u64,
         )
-        .map(|mapping| unsafe {
-            std::ptr::copy_nonoverlapping(
-                &transforms as *const _,
-                mapping.memptr() as *mut PbrTransformDataUBO,
-                1,
-            );
+        .map(|mapping| {
+            let render_state = self.render_state.borrow();
+            render_state
+                .iter()
+                .enumerate()
+                .for_each(|(idx, render_state)| {
+                    let transforms = PbrTransformDataSingleInstanceUBO {
+                        world: render_state.render_pos.to_homogeneous(),
+                        view: draw_context.camera.view_transform(),
+                        projection: draw_context.projection,
+                    };
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            &transforms as *const _,
+                            (mapping.memptr() as *mut u8).offset(
+                                (idx as u64 * self.pbr_cpu_2_gpu.aligned_ubo_transforms_size)
+                                    as isize,
+                            ) as *mut PbrTransformDataSingleInstanceUBO,
+                            1,
+                        );
+                    }
+                });
         });
 
         let pbr_light_data = PbrLightingData {
@@ -441,33 +556,8 @@ impl GameWorld {
                 PipelineBindPoint::GRAPHICS,
                 self.resource_cache.pbr_pipeline().pipeline,
             );
-            device.cmd_set_viewport(draw_context.cmd_buff, 0, &viewports);
-            device.cmd_set_scissor(draw_context.cmd_buff, 0, &scisssors);
-
-            let sa23_renderable = self
-                .resource_cache
-                .get_pbr_renderable(self.starfury.renderable);
-
-            if self.draw_options().debug_draw_mesh {
-                let aabb = starfury_transform * sa23_renderable.geometry.aabb;
-
-                draw_context
-                    .debug_draw
-                    .borrow_mut()
-                    .add_aabb(&aabb.min, &aabb.max, 0xFF_00_00_FF);
-            }
-
-            if self.draw_options().debug_draw_nodes_bounding {
-                sa23_renderable.geometry.nodes.iter().for_each(|node| {
-                    let transformed_aabb = starfury_transform * node.aabb;
-
-                    draw_context.debug_draw.borrow_mut().add_aabb(
-                        &transformed_aabb.min,
-                        &transformed_aabb.max,
-                        0xFF_00_FF_00,
-                    );
-                });
-            }
+            device.cmd_set_viewport(draw_context.cmd_buff, 0, &[draw_context.viewport]);
+            device.cmd_set_scissor(draw_context.cmd_buff, 0, &[draw_context.scissor]);
 
             let vertex_buffers = [self.resource_cache.vertex_buffer()];
             let vertex_offsets = [0u64];
@@ -484,42 +574,189 @@ impl GameWorld {
                 IndexType::UINT32,
             );
 
-            let bound_descriptor_sets = [
-                self.pbr_cpu_2_gpu.object_descriptor_sets[0],
-                sa23_renderable.descriptor_sets[0],
-                self.pbr_cpu_2_gpu.object_descriptor_sets[1],
-                self.pbr_cpu_2_gpu.ibl_descriptor_sets[self.skybox.active_skybox as usize],
-            ];
+            self.objects.iter().for_each(|game_object| {
+                let object_renderable = self
+                    .resource_cache
+                    .get_pbr_renderable(game_object.renderable);
 
-            let descriptor_set_offsets = [
-                self.pbr_cpu_2_gpu.size_ubo_transforms_one_frame as u32 * draw_context.frame_id,
-                0,
-                self.pbr_cpu_2_gpu.size_ubo_lighting_one_frame as u32 * draw_context.frame_id,
-            ];
+                let bound_descriptor_sets = [
+                    self.pbr_cpu_2_gpu.object_descriptor_sets[0],
+                    object_renderable.descriptor_sets[0],
+                    self.pbr_cpu_2_gpu.object_descriptor_sets[1],
+                    self.pbr_cpu_2_gpu.ibl_descriptor_sets[self.skybox.active_skybox as usize],
+                ];
 
-            device.cmd_bind_descriptor_sets(
-                draw_context.cmd_buff,
-                PipelineBindPoint::GRAPHICS,
-                self.resource_cache.pbr_pipeline().layout,
-                0,
-                &bound_descriptor_sets,
-                &descriptor_set_offsets,
-            );
+                let descriptor_set_offsets = [
+                    self.pbr_cpu_2_gpu.size_ubo_transforms_one_frame as u32 * draw_context.frame_id
+                        + self.pbr_cpu_2_gpu.aligned_ubo_transforms_size as u32
+                            * game_object.handle.0,
+                    0,
+                    self.pbr_cpu_2_gpu.size_ubo_lighting_one_frame as u32 * draw_context.frame_id,
+                ];
 
-            device.cmd_draw_indexed(
-                draw_context.cmd_buff,
-                sa23_renderable.geometry.index_count,
-                1,
-                sa23_renderable.geometry.index_offset,
-                sa23_renderable.geometry.vertex_offset as i32,
-                0,
-            );
+                device.cmd_bind_descriptor_sets(
+                    draw_context.cmd_buff,
+                    PipelineBindPoint::GRAPHICS,
+                    self.resource_cache.pbr_pipeline().layout,
+                    0,
+                    &bound_descriptor_sets,
+                    &descriptor_set_offsets,
+                );
+
+                device.cmd_draw_indexed(
+                    draw_context.cmd_buff,
+                    object_renderable.geometry.index_count,
+                    1,
+                    object_renderable.geometry.index_offset,
+                    object_renderable.geometry.vertex_offset as i32,
+                    0,
+                );
+
+                if self.draw_options().debug_draw_mesh {
+                    let aabb = self.render_state.borrow()[game_object.handle.0 as usize]
+                        .render_pos
+                        .to_homogeneous()
+                        * object_renderable.geometry.aabb;
+
+                    draw_context.debug_draw.borrow_mut().add_aabb(
+                        &aabb.min,
+                        &aabb.max,
+                        0xFF_00_00_FF,
+                    );
+                }
+
+                if self.draw_options().debug_draw_nodes_bounding {
+                    let object_transform = self.render_state.borrow()
+                        [game_object.handle.0 as usize]
+                        .render_pos
+                        .to_homogeneous();
+
+                    object_renderable.geometry.nodes.iter().for_each(|node| {
+                        let transformed_aabb = object_transform * node.aabb;
+
+                        draw_context.debug_draw.borrow_mut().add_aabb(
+                            &transformed_aabb.min,
+                            &transformed_aabb.max,
+                            0xFF_00_FF_00,
+                        );
+                    });
+                }
+            });
         }
+
+        self.draw_instanced_objects(draw_context);
 
         if self.draw_options().debug_draw_physics {
             self.physics_engine
                 .borrow_mut()
                 .debug_draw(&mut draw_context.debug_draw.borrow_mut());
+        }
+    }
+
+    fn draw_instanced_objects(&self, draw_context: &DrawContext) {
+        let device = draw_context.renderer.graphics_device();
+
+        let global_uniforms = PbrTransformDataMultiInstanceUBO {
+            view: draw_context.camera.view_transform(),
+            projection: draw_context.projection,
+        };
+
+        self.shadows_swarm_inst_render_data
+            .ubo_vtx_transforms
+            .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
+            .map(|mapping_ubo| unsafe {
+                std::ptr::copy_nonoverlapping(
+                    &global_uniforms as *const _,
+                    mapping_ubo.memptr() as *mut PbrTransformDataMultiInstanceUBO,
+                    1,
+                );
+            });
+
+        self.shadows_swarm_inst_render_data
+            .stb_instances
+            .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
+            .map(|instances_storage_buffer| {
+                let instance_model_transforms = self
+                    .shadows_swarm
+                    .instances_render_data
+                    .borrow()
+                    .iter()
+                    .map(|inst_render_data| PbrTransformDataInstanceEntry {
+                        model: inst_render_data.render_pos.to_homogeneous(),
+                    })
+                    .collect::<SmallVec<[PbrTransformDataInstanceEntry; 16]>>();
+
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        instance_model_transforms.as_ptr(),
+                        instances_storage_buffer.memptr() as *mut PbrTransformDataInstanceEntry,
+                        instance_model_transforms.len(),
+                    );
+                }
+            });
+
+        unsafe {
+            let graphics_device = draw_context.renderer.graphics_device();
+
+            graphics_device.cmd_bind_pipeline(
+                draw_context.cmd_buff,
+                PipelineBindPoint::GRAPHICS,
+                self.resource_cache.pbr_pipeline_instanced().pipeline,
+            );
+
+            graphics_device.cmd_set_viewport(draw_context.cmd_buff, 0, &[draw_context.viewport]);
+            graphics_device.cmd_set_scissor(draw_context.cmd_buff, 0, &[draw_context.scissor]);
+
+            graphics_device.cmd_bind_vertex_buffers(
+                draw_context.cmd_buff,
+                0,
+                &[self.resource_cache.vertex_buffer()],
+                &[0],
+            );
+            graphics_device.cmd_bind_index_buffer(
+                draw_context.cmd_buff,
+                self.resource_cache.index_buffer(),
+                0,
+                IndexType::UINT32,
+            );
+
+            let renderable = self
+                .resource_cache
+                .get_pbr_renderable(self.shadows_swarm.renderable);
+
+            graphics_device.cmd_bind_descriptor_sets(
+                draw_context.cmd_buff,
+                PipelineBindPoint::GRAPHICS,
+                self.resource_cache.pbr_pipeline_instanced().layout,
+                0,
+                &[
+                    self.shadows_swarm_inst_render_data.descriptor_sets[0],
+                    renderable.descriptor_sets[0],
+                    self.pbr_cpu_2_gpu.object_descriptor_sets[1],
+                    self.pbr_cpu_2_gpu.ibl_descriptor_sets[self.skybox.active_skybox as usize],
+                ],
+                &[
+                    self.shadows_swarm_inst_render_data
+                        .ubo_vtx_transforms
+                        .offset_for_frame(draw_context.frame_id as DeviceSize)
+                        as u32,
+                    self.shadows_swarm_inst_render_data
+                        .stb_instances
+                        .offset_for_frame(draw_context.frame_id as DeviceSize)
+                        as u32,
+                    0u32,
+                    self.pbr_cpu_2_gpu.size_ubo_lighting_one_frame as u32 * draw_context.frame_id,
+                ],
+            );
+
+            graphics_device.cmd_draw_indexed(
+                draw_context.cmd_buff,
+                renderable.geometry.index_count,
+                self.shadows_swarm.instances_render_data.borrow().len() as u32,
+                renderable.geometry.index_offset,
+                renderable.geometry.vertex_offset as i32,
+                0,
+            );
         }
     }
 
@@ -615,11 +852,12 @@ impl GameWorld {
         // interpolate transforms
         let physics_time_factor = self.accumulator.get() / Self::PHYSICS_TIME_STEP;
         let phys_engine = self.physics_engine.borrow();
-        phys_engine
-            .rigid_body_set
-            .get(self.starfury.rigid_body_handle)
-            .map(|rbody| {
-                let previous_object_state = *self.get_object_state(self.starfury.object_handle);
+
+        let objects = [(self.starfury.rigid_body_handle, self.starfury.object_handle)];
+
+        objects.iter().for_each(|&(body_handle, object_handle)| {
+            phys_engine.rigid_body_set.get(body_handle).map(|rbody| {
+                let previous_object_state = *self.get_object_state(object_handle);
 
                 let new_object_state = GameObjectRenderState {
                     physics_pos: *rbody.position(),
@@ -628,7 +866,28 @@ impl GameWorld {
                         .lerp_slerp(rbody.position(), physics_time_factor as f32),
                 };
 
-                *self.get_object_state_mut(self.starfury.object_handle) = new_object_state;
+                *self.get_object_state_mut(object_handle) = new_object_state;
+            });
+        });
+
+        let mut instances_render_data = self.shadows_swarm.instances_render_data.borrow_mut();
+        instances_render_data
+            .iter_mut()
+            .zip(self.shadows_swarm.instances_physics_data.iter())
+            .for_each(|(mut render_data, phys_data)| {
+                phys_engine
+                    .rigid_body_set
+                    .get(phys_data.rigid_body_handle)
+                    .map(|instance_rigid_body| {
+                        let prev_instance_state = *render_data;
+                        *render_data = GameObjectRenderState {
+                            physics_pos: *instance_rigid_body.position(),
+                            render_pos: prev_instance_state.physics_pos.lerp_slerp(
+                                instance_rigid_body.position(),
+                                physics_time_factor as f32,
+                            ),
+                        };
+                    });
             });
     }
 
@@ -647,6 +906,7 @@ impl GameWorld {
     }
 
     pub fn gamepad_input(&self, input_state: &InputState) {
+        // log::info!("==========>>>>><<<<<<<<<<<<<<=============");
         self.starfury.gamepad_input(input_state);
     }
 }

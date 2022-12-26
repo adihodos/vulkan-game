@@ -11,7 +11,13 @@
 			tag: "sa23",
 			path: "sa23/ivanova_fury.glb",
 		),
-/*
+		(
+			tag: "shadow.fighter",
+			path: "shadows/shadow.fighter.glb",
+
+		),
+
+		/*
 		(
 			tag: "eas_omega",
 			path: "omega/eas_omega.glb",
