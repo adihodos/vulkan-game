@@ -1,7 +1,15 @@
-
 use ash::vk::{CommandBuffer, Extent2D, Offset2D, Rect2D, Viewport};
 
 use crate::{camera::Camera, debug_draw_overlay::DebugDrawOverlay, vk_renderer::VulkanRenderer};
+
+pub struct FrameRenderContext<'a> {
+    pub renderer: &'a VulkanRenderer,
+    pub cmd_buff: CommandBuffer,
+    pub frame_id: u32,
+    pub viewport: Viewport,
+    pub scissor: Rect2D,
+    pub framebuffer_size: nalgebra_glm::IVec2,
+}
 
 pub struct DrawContext<'a> {
     pub renderer: &'a VulkanRenderer,
@@ -11,7 +19,7 @@ pub struct DrawContext<'a> {
     pub scissor: Rect2D,
     pub camera: &'a dyn Camera,
     pub projection: nalgebra_glm::Mat4,
-    pub debug_draw: std::rc::Rc<std::cell::RefCell<DebugDrawOverlay>>
+    pub debug_draw: std::rc::Rc<std::cell::RefCell<DebugDrawOverlay>>,
 }
 
 impl<'a> DrawContext<'a> {
@@ -21,7 +29,7 @@ impl<'a> DrawContext<'a> {
         height: i32,
         camera: &'a dyn Camera,
         projection: nalgebra_glm::Mat4,
-        debug_draw: std::rc::Rc<std::cell::RefCell<DebugDrawOverlay>>
+        debug_draw: std::rc::Rc<std::cell::RefCell<DebugDrawOverlay>>,
     ) -> Self {
         Self {
             renderer,

@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     mem::size_of,
+    rc::Rc,
 };
 
 use ash::vk::{
@@ -19,9 +20,12 @@ use smallvec::SmallVec;
 
 use crate::{
     app_config::AppConfig,
+    camera::Camera,
     debug_draw_overlay::DebugDrawOverlay,
-    draw_context::DrawContext,
+    draw_context::{DrawContext, FrameRenderContext},
+    flight_cam::FlightCamera,
     game_object::GameObjectRenderState,
+    math,
     physics_engine::PhysicsEngine,
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     shadow_swarm::ShadowFighterSwarm,
@@ -214,6 +218,8 @@ pub struct GameWorld {
     frame_times: RefCell<Vec<f32>>,
     physics_engine: RefCell<PhysicsEngine>,
     render_state: RefCell<Vec<GameObjectRenderState>>,
+    camera: RefCell<FlightCamera>,
+    debug_draw_overlay: Rc<RefCell<DebugDrawOverlay>>,
 }
 
 impl GameWorld {
@@ -482,12 +488,54 @@ impl GameWorld {
             frame_times: RefCell::new(Vec::with_capacity(Self::MAX_HISTOGRAM_VALUES)),
             physics_engine: RefCell::new(physics_engine),
             render_state: RefCell::new(render_state),
+            camera: RefCell::new(FlightCamera::new()),
+            debug_draw_overlay: std::rc::Rc::new(RefCell::new(
+                DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
+            )),
         })
     }
 
-    pub fn draw(&self, draw_context: &DrawContext) {
+    pub fn draw(&self, frame_context: &FrameRenderContext) {
+        self.debug_draw_overlay.borrow_mut().clear();
+
+        let projection = math::perspective(
+            75f32,
+            frame_context.framebuffer_size.x as f32 / frame_context.framebuffer_size.y as f32,
+            0.1f32,
+            5000f32,
+        );
+
+        {
+            let cam_ref = self.camera.borrow();
+            let draw_context = DrawContext {
+                renderer: frame_context.renderer,
+                cmd_buff: frame_context.cmd_buff,
+                frame_id: frame_context.frame_id,
+                viewport: frame_context.viewport,
+                scissor: frame_context.scissor,
+                camera: &*cam_ref,
+                projection,
+                debug_draw: self.debug_draw_overlay.clone(),
+            };
+
+            self.draw_objects(&draw_context);
+        }
+
+        if self.draw_options().debug_draw_physics {
+            self.physics_engine
+                .borrow_mut()
+                .debug_draw(&mut self.debug_draw_overlay.borrow_mut());
+        }
+
+        self.debug_draw_overlay.borrow_mut().draw(
+            frame_context.renderer,
+            &(projection * self.camera.borrow().view_transform()),
+        );
+    }
+
+    fn draw_objects(&self, draw_context: &DrawContext) {
         if self.draw_options().debug_draw_world_axis {
-            draw_context.debug_draw.borrow_mut().add_axes(
+            self.debug_draw_overlay.borrow_mut().add_axes(
                 Vec3::zeros(),
                 self.draw_opts.borrow().world_axis_length,
                 &glm::Mat3::identity(),
@@ -495,12 +543,9 @@ impl GameWorld {
             );
         }
 
-        self.skybox.draw(draw_context);
+        self.skybox.draw(&draw_context);
 
         let device = draw_context.renderer.graphics_device();
-
-        let viewports = [draw_context.viewport];
-        let scisssors = [draw_context.scissor];
 
         ScopedBufferMapping::create(
             draw_context.renderer,
@@ -645,12 +690,6 @@ impl GameWorld {
         }
 
         self.draw_instanced_objects(draw_context);
-
-        if self.draw_options().debug_draw_physics {
-            self.physics_engine
-                .borrow_mut()
-                .debug_draw(&mut draw_context.debug_draw.borrow_mut());
-        }
     }
 
     fn draw_instanced_objects(&self, draw_context: &DrawContext) {
@@ -889,6 +928,12 @@ impl GameWorld {
                         };
                     });
             });
+
+        self.camera.borrow_mut().update(
+            &self
+                .get_object_state(self.starfury.object_handle)
+                .render_pos,
+        );
     }
 
     pub fn input_event(&self, event: &winit::event::WindowEvent) {
@@ -906,7 +951,6 @@ impl GameWorld {
     }
 
     pub fn gamepad_input(&self, input_state: &InputState) {
-        // log::info!("==========>>>>><<<<<<<<<<<<<<=============");
         self.starfury.gamepad_input(input_state);
     }
 }

@@ -3,6 +3,7 @@ mod arcball_camera;
 mod camera;
 mod debug_draw_overlay;
 mod draw_context;
+mod flight_cam;
 mod game_object;
 mod game_world;
 mod imported_geometry;

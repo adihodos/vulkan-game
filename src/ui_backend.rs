@@ -18,7 +18,7 @@ use nalgebra_glm::{I32Vec2, Vec2};
 use winit::event::{ElementState, MouseScrollDelta};
 
 use crate::{
-    draw_context::DrawContext,
+    draw_context::{DrawContext, FrameRenderContext},
     vk_renderer::{
         self, FrameRenderData, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
         ImageCopySource, ScopedBufferMapping, ShaderModuleDescription, ShaderModuleSource,
@@ -361,7 +361,7 @@ impl UiBackend {
         })
     }
 
-    pub fn draw_frame(&self, draw_context: &DrawContext) {
+    pub fn draw_frame(&self, frame_context: &FrameRenderContext) {
         let mut ui_context = self.imgui.borrow_mut();
 
         let draw_data = ui_context.render();
@@ -382,18 +382,18 @@ impl UiBackend {
         // Push vertices + indices 2 GPU
         {
             let vertex_buffer_mapping = ScopedBufferMapping::create(
-                draw_context.renderer,
+                frame_context.renderer,
                 &self.vertex_buffer,
                 self.vertex_bytes_one_frame,
-                self.vertex_bytes_one_frame * draw_context.frame_id as u64,
+                self.vertex_bytes_one_frame * frame_context.frame_id as u64,
             )
             .expect("Failed to map UI vertex buffer");
 
             let index_buffer_mapping = ScopedBufferMapping::create(
-                draw_context.renderer,
+                frame_context.renderer,
                 &self.index_buffer,
                 self.index_bytes_one_frame,
-                self.index_bytes_one_frame * draw_context.frame_id as u64,
+                self.index_bytes_one_frame * frame_context.frame_id as u64,
             )
             .expect("Failed to map UI index buffer");
 
@@ -422,38 +422,38 @@ impl UiBackend {
             );
         }
 
-        let graphics_device = draw_context.renderer.graphics_device();
+        let graphics_device = frame_context.renderer.graphics_device();
 
         unsafe {
             graphics_device.cmd_bind_pipeline(
-                draw_context.cmd_buff,
+                frame_context.cmd_buff,
                 PipelineBindPoint::GRAPHICS,
                 self.pipeline.pipeline,
             );
 
             let vertex_buffers = [self.vertex_buffer.buffer];
             let vertex_buffer_offsets =
-                [(self.vertex_bytes_one_frame * draw_context.frame_id as u64) as DeviceSize];
+                [(self.vertex_bytes_one_frame * frame_context.frame_id as u64) as DeviceSize];
 
             graphics_device.cmd_bind_vertex_buffers(
-                draw_context.cmd_buff,
+                frame_context.cmd_buff,
                 0,
                 &vertex_buffers,
                 &vertex_buffer_offsets,
             );
 
             graphics_device.cmd_bind_index_buffer(
-                draw_context.cmd_buff,
+                frame_context.cmd_buff,
                 self.index_buffer.buffer,
-                (self.index_bytes_one_frame * draw_context.frame_id as u64) as DeviceSize,
+                (self.index_bytes_one_frame * frame_context.frame_id as u64) as DeviceSize,
                 IndexType::UINT16,
             );
 
-            let viewports = [draw_context.viewport];
+            let viewports = [frame_context.viewport];
 
-            graphics_device.cmd_set_viewport(draw_context.cmd_buff, 0, &viewports);
+            graphics_device.cmd_set_viewport(frame_context.cmd_buff, 0, &viewports);
 
-            let scissors = [draw_context.scissor];
+            let scissors = [frame_context.scissor];
 
             let scale = [
                 2f32 / draw_data.display_size[0],
@@ -493,10 +493,10 @@ impl UiBackend {
             // push transform
             {
                 ScopedBufferMapping::create(
-                    draw_context.renderer,
+                    frame_context.renderer,
                     &self.uniform_buffer,
                     size_of::<Uniform>() as DeviceSize,
-                    self.ubo_bytes_one_frame * draw_context.frame_id as DeviceSize,
+                    self.ubo_bytes_one_frame * frame_context.frame_id as DeviceSize,
                 )
                 .map(|mapping| {
                     std::ptr::copy_nonoverlapping(
@@ -508,10 +508,10 @@ impl UiBackend {
             }
 
             let descriptor_sets = [self.descriptor_set];
-            let dynamic_offsets = [self.ubo_bytes_one_frame as u32 * draw_context.frame_id];
+            let dynamic_offsets = [self.ubo_bytes_one_frame as u32 * frame_context.frame_id];
 
             graphics_device.cmd_bind_descriptor_sets(
-                draw_context.cmd_buff,
+                frame_context.cmd_buff,
                 PipelineBindPoint::GRAPHICS,
                 self.pipeline.layout,
                 0,
@@ -571,9 +571,13 @@ impl UiBackend {
                                     },
                                 }];
 
-                                graphics_device.cmd_set_scissor(draw_context.cmd_buff, 0, &scissor);
+                                graphics_device.cmd_set_scissor(
+                                    frame_context.cmd_buff,
+                                    0,
+                                    &scissor,
+                                );
                                 graphics_device.cmd_draw_indexed(
-                                    draw_context.cmd_buff,
+                                    frame_context.cmd_buff,
                                     count as u32,
                                     1,
                                     vertex_offset + cmd_params.idx_offset as u32,

@@ -13,12 +13,8 @@ use winit::{
 
 use crate::{
     app_config::{self, AppConfig},
-    arcball_camera::ArcballCamera,
-    camera::Camera,
-    debug_draw_overlay::DebugDrawOverlay,
-    draw_context::DrawContext,
+    draw_context::FrameRenderContext,
     game_world::GameWorld,
-    math,
     ui_backend::UiBackend,
     vk_renderer::{UniqueImage, VulkanRenderer},
 };
@@ -219,12 +215,10 @@ impl MainWindow {
 
 struct GameMain {
     ui: UiBackend,
-    debug_draw_overlay: std::rc::Rc<RefCell<DebugDrawOverlay>>,
     game_world: RefCell<GameWorld>,
     timestamp: Cell<Instant>,
     app_config: AppConfig,
     renderer: VulkanRenderer,
-    camera: ArcballCamera,
     framebuffer_size: IVec2,
 }
 
@@ -255,14 +249,10 @@ impl GameMain {
 
         GameMain {
             ui,
-            debug_draw_overlay: std::rc::Rc::new(RefCell::new(
-                DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
-            )),
             game_world: RefCell::new(game_world),
             timestamp: Cell::new(Instant::now()),
             app_config,
             renderer,
-            camera: ArcballCamera::new(Vec3::new(0f32, 0f32, 0f32), 0.1f32, framebuffer_size),
             framebuffer_size,
         }
     }
@@ -277,12 +267,10 @@ impl GameMain {
         }
 
         self.game_world.borrow().input_event(event);
-        self.camera.input_event(event);
         self.ui.input_event(event);
     }
 
     fn gamepad_input(&mut self, input_state: &InputState) {
-        log::info!("gamepad x[][][][]");
         self.game_world.borrow().gamepad_input(input_state);
     }
 
@@ -294,32 +282,17 @@ impl GameMain {
     fn draw_frame(&self) {
         self.renderer.begin_frame();
 
-        let projection = math::perspective(
-            75f32,
-            self.framebuffer_size.x as f32 / self.framebuffer_size.y as f32,
-            0.1f32,
-            5000f32,
-        );
+        let frame_context = FrameRenderContext {
+            renderer: &self.renderer,
+            cmd_buff: self.renderer.current_command_buffer(),
+            frame_id: self.renderer.current_frame_id(),
+            viewport: self.renderer.viewport(),
+            scissor: self.renderer.scissor(),
+            framebuffer_size: self.framebuffer_size,
+        };
 
-        {
-            self.debug_draw_overlay.borrow_mut().clear();
-
-            let draw_context = DrawContext::create(
-                &self.renderer,
-                self.framebuffer_size.x,
-                self.framebuffer_size.y,
-                &self.camera,
-                projection,
-                self.debug_draw_overlay.clone(),
-            );
-
-            self.game_world.borrow().draw(&draw_context);
-            self.ui.draw_frame(&draw_context);
-        }
-
-        self.debug_draw_overlay
-            .borrow_mut()
-            .draw(&self.renderer, &(projection * self.camera.view_transform()));
+        self.game_world.borrow().draw(&frame_context);
+        self.ui.draw_frame(&frame_context);
 
         self.renderer.end_frame();
     }
