@@ -5,5 +5,5 @@
         -2.5,
     ],
     follow_bias: 0.10,
-    lookahead_factor: 5.0,
+    lookahead_factor: 15.0,
 )
