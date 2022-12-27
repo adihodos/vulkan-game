@@ -185,13 +185,9 @@ impl InstancedRenderingData {
     }
 }
 
-struct PbrCpu2GpuData {
-    aligned_ubo_transforms_size: DeviceSize,
-    aligned_ubo_lighting_size: DeviceSize,
-    size_ubo_transforms_one_frame: DeviceSize,
-    size_ubo_lighting_one_frame: DeviceSize,
-    ubo_transforms: UniqueBuffer,
-    ubo_lighting: UniqueBuffer,
+struct SingleInstanceRenderingData {
+    vs_ubo_transforms: Cpu2GpuBuffer<PbrTransformDataSingleInstanceUBO>,
+    fs_ubo_lights: Cpu2GpuBuffer<PbrLightingData>,
     object_descriptor_sets: Vec<DescriptorSet>,
     ibl_descriptor_sets: Vec<DescriptorSet>,
     samplers: Vec<UniqueSampler>,
@@ -209,7 +205,7 @@ pub struct GameWorld {
     draw_opts: RefCell<DebugDrawOptions>,
     resource_cache: ResourceHolder,
     skybox: Skybox,
-    pbr_cpu_2_gpu: PbrCpu2GpuData,
+    single_inst_renderdata: SingleInstanceRenderingData,
     objects: Vec<GameObjectData>,
     starfury: Starfury,
     shadows_swarm: ShadowFighterSwarm,
@@ -240,33 +236,31 @@ impl GameWorld {
         let skybox = Skybox::create(renderer, &app_cfg.scene, &app_cfg.engine)?;
 
         let resource_cache = ResourceHolder::create(renderer, app_cfg)?;
-        let aligned_ubo_transforms_size =
+
+        let vs_ubo_transforms = Cpu2GpuBuffer::<PbrTransformDataSingleInstanceUBO>::create(
+            renderer,
+            BufferUsageFlags::UNIFORM_BUFFER,
             VulkanRenderer::aligned_size_of_type::<PbrTransformDataSingleInstanceUBO>(
                 renderer
                     .device_properties()
                     .limits
                     .min_uniform_buffer_offset_alignment,
-            );
-        let size_ubo_transforms_one_frame = aligned_ubo_transforms_size * 2; // 1 object for now
-        let pbr_ubo_transforms = UniqueBuffer::new(
-            renderer,
-            BufferUsageFlags::UNIFORM_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE,
-            size_ubo_transforms_one_frame * renderer.max_inflight_frames() as DeviceSize,
+            ),
+            1,
+            renderer.max_inflight_frames() as DeviceSize,
         )?;
 
-        let aligned_ubo_lighting_size = VulkanRenderer::aligned_size_of_type::<PbrLightingData>(
-            renderer
-                .device_properties()
-                .limits
-                .min_uniform_buffer_offset_alignment,
-        );
-        let size_ubo_lighting_one_frame = aligned_ubo_lighting_size * 1; // 1 object for now
-        let pbr_ubo_lighting = UniqueBuffer::new(
+        let fs_ubo_lights = Cpu2GpuBuffer::<PbrLightingData>::create(
             renderer,
             BufferUsageFlags::UNIFORM_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE,
-            size_ubo_lighting_one_frame * renderer.max_inflight_frames() as DeviceSize,
+            VulkanRenderer::aligned_size_of_type::<PbrLightingData>(
+                renderer
+                    .device_properties()
+                    .limits
+                    .min_uniform_buffer_offset_alignment,
+            ),
+            1,
+            renderer.max_inflight_frames() as DeviceSize,
         )?;
 
         let pbr_descriptor_layouts = resource_cache.pbr_pipeline().descriptor_layouts();
@@ -288,14 +282,14 @@ impl GameWorld {
 
         let desc_buff_info = [
             DescriptorBufferInfo::builder()
-                .buffer(pbr_ubo_transforms.buffer)
+                .buffer(vs_ubo_transforms.buffer.buffer)
                 .offset(0)
-                .range(size_of::<PbrTransformDataSingleInstanceUBO>() as DeviceSize)
+                .range(vs_ubo_transforms.bytes_one_frame)
                 .build(),
             DescriptorBufferInfo::builder()
-                .buffer(pbr_ubo_lighting.buffer)
+                .buffer(fs_ubo_lights.buffer.buffer)
                 .offset(0)
-                .range(size_of::<PbrLightingData>() as DeviceSize)
+                .range(fs_ubo_lights.bytes_one_frame)
                 .build(),
         ];
 
@@ -450,13 +444,9 @@ impl GameWorld {
             draw_opts: RefCell::new(DebugDrawOptions::default()),
             resource_cache,
             skybox,
-            pbr_cpu_2_gpu: PbrCpu2GpuData {
-                aligned_ubo_transforms_size,
-                aligned_ubo_lighting_size,
-                size_ubo_transforms_one_frame,
-                size_ubo_lighting_one_frame,
-                ubo_transforms: pbr_ubo_transforms,
-                ubo_lighting: pbr_ubo_lighting,
+            single_inst_renderdata: SingleInstanceRenderingData {
+                vs_ubo_transforms,
+                fs_ubo_lights,
                 object_descriptor_sets: object_pbr_descriptor_sets,
                 ibl_descriptor_sets: ibl_descriptor_sets.into_vec(),
                 samplers: samplers_ibl.into_vec(),
@@ -527,53 +517,47 @@ impl GameWorld {
 
         let device = draw_context.renderer.graphics_device();
 
-        ScopedBufferMapping::create(
-            draw_context.renderer,
-            &self.pbr_cpu_2_gpu.ubo_transforms,
-            self.pbr_cpu_2_gpu.size_ubo_transforms_one_frame,
-            self.pbr_cpu_2_gpu.size_ubo_transforms_one_frame * draw_context.frame_id as u64,
-        )
-        .map(|mapping| {
-            self.physics_engine
-                .borrow()
-                .rigid_body_set
-                .get(self.starfury.rigid_body_handle)
-                .map(|rigid_body| {
-                    let transforms = PbrTransformDataSingleInstanceUBO {
-                        world: rigid_body.position().to_homogeneous(),
-                        view: draw_context.camera.view_transform(),
-                        projection: draw_context.projection,
-                    };
+        self.single_inst_renderdata
+            .vs_ubo_transforms
+            .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
+            .map(|mapping| {
+                self.physics_engine
+                    .borrow()
+                    .rigid_body_set
+                    .get(self.starfury.rigid_body_handle)
+                    .map(|rigid_body| {
+                        let transforms = PbrTransformDataSingleInstanceUBO {
+                            world: rigid_body.position().to_homogeneous(),
+                            view: draw_context.camera.view_transform(),
+                            projection: draw_context.projection,
+                        };
 
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            &transforms as *const _,
-                            (mapping.memptr() as *mut u8)
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                &transforms as *const _,
+                                (mapping.memptr() as *mut u8)
                                 // .offset((self.pbr_cpu_2_gpu.aligned_ubo_transforms_size) as isize)
                                 as *mut PbrTransformDataSingleInstanceUBO,
-                            1,
-                        );
-                    }
-                });
-        });
+                                1,
+                            );
+                        }
+                    });
+            });
 
         let pbr_light_data = PbrLightingData {
             eye_pos: draw_context.camera.position(),
         };
 
-        ScopedBufferMapping::create(
-            draw_context.renderer,
-            &self.pbr_cpu_2_gpu.ubo_lighting,
-            self.pbr_cpu_2_gpu.size_ubo_lighting_one_frame,
-            self.pbr_cpu_2_gpu.size_ubo_lighting_one_frame * draw_context.frame_id as u64,
-        )
-        .map(|mapping| unsafe {
-            std::ptr::copy_nonoverlapping(
-                &pbr_light_data as *const _,
-                mapping.memptr() as *mut PbrLightingData,
-                1,
-            );
-        });
+        self.single_inst_renderdata
+            .fs_ubo_lights
+            .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
+            .map(|mapping| unsafe {
+                std::ptr::copy_nonoverlapping(
+                    &pbr_light_data as *const _,
+                    mapping.memptr() as *mut PbrLightingData,
+                    1,
+                );
+            });
 
         unsafe {
             device.cmd_bind_pipeline(
@@ -605,18 +589,25 @@ impl GameWorld {
                     .get_pbr_renderable(game_object.renderable);
 
                 let bound_descriptor_sets = [
-                    self.pbr_cpu_2_gpu.object_descriptor_sets[0],
+                    self.single_inst_renderdata.object_descriptor_sets[0],
                     object_renderable.descriptor_sets[0],
-                    self.pbr_cpu_2_gpu.object_descriptor_sets[1],
-                    self.pbr_cpu_2_gpu.ibl_descriptor_sets[self.skybox.active_skybox as usize],
+                    self.single_inst_renderdata.object_descriptor_sets[1],
+                    self.single_inst_renderdata.ibl_descriptor_sets
+                        [self.skybox.active_skybox as usize],
                 ];
 
                 let descriptor_set_offsets = [
-                    self.pbr_cpu_2_gpu.size_ubo_transforms_one_frame as u32 * draw_context.frame_id
-                        + self.pbr_cpu_2_gpu.aligned_ubo_transforms_size as u32
+                    self.single_inst_renderdata
+                        .vs_ubo_transforms
+                        .offset_for_frame(draw_context.frame_id as DeviceSize)
+                        as u32
+                        + self.single_inst_renderdata.vs_ubo_transforms.align as u32
                             * game_object.handle.0,
                     0,
-                    self.pbr_cpu_2_gpu.size_ubo_lighting_one_frame as u32 * draw_context.frame_id,
+                    self.single_inst_renderdata
+                        .fs_ubo_lights
+                        .offset_for_frame(draw_context.frame_id as DeviceSize)
+                        as u32,
                 ];
 
                 device.cmd_bind_descriptor_sets(
@@ -757,8 +748,9 @@ impl GameWorld {
                 &[
                     self.shadows_swarm_inst_render_data.descriptor_sets[0],
                     renderable.descriptor_sets[0],
-                    self.pbr_cpu_2_gpu.object_descriptor_sets[1],
-                    self.pbr_cpu_2_gpu.ibl_descriptor_sets[self.skybox.active_skybox as usize],
+                    self.single_inst_renderdata.object_descriptor_sets[1],
+                    self.single_inst_renderdata.ibl_descriptor_sets
+                        [self.skybox.active_skybox as usize],
                 ],
                 &[
                     self.shadows_swarm_inst_render_data
@@ -770,7 +762,10 @@ impl GameWorld {
                         .offset_for_frame(draw_context.frame_id as DeviceSize)
                         as u32,
                     0u32,
-                    self.pbr_cpu_2_gpu.size_ubo_lighting_one_frame as u32 * draw_context.frame_id,
+                    self.single_inst_renderdata
+                        .fs_ubo_lights
+                        .offset_for_frame(draw_context.frame_id as DeviceSize)
+                        as u32,
                 ],
             );
 
