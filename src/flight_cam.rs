@@ -58,18 +58,29 @@ impl FlightCamera {
         }
     }
 
-    pub fn update(&self, object_pos: &nalgebra::Isometry3<f32>) {
+    pub fn update(&self, object_pos: &nalgebra::Isometry3<f32>, delta_tm: f32) {
         let ideal_cam_pos =
             object_pos.rotation * self.position_relative_to_object + object_pos.translation.vector;
-        let cam_velocity = (ideal_cam_pos - *self.position.borrow()) * self.follow_bias;
-        *self.position.borrow_mut() += cam_velocity;
 
-        let up_vector = object_pos.rotation * glm::Vec3::y_axis();
+        let velocity_vector = ideal_cam_pos - *self.position.borrow();
+
+        // let position = glm::lerp(
+        //     &self.position.borrow(),
+        //     &ideal_cam_pos,
+        //     delta_tm * self.follow_bias,
+        // );
+
+        let cam_velocity = velocity_vector * self.follow_bias;
+
+        *self.position.borrow_mut() += cam_velocity;
+        // *self.position.borrow_mut() = position;
+
+        let up_vec = object_pos.rotation * glm::Vec3::y_axis();
 
         *self.view_matrix.borrow_mut() = glm::look_at(
             &self.position.borrow(),
             &object_pos.translation.vector,
-            &up_vector,
+            &up_vec,
         );
     }
 }

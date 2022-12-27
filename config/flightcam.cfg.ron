@@ -1,8 +1,8 @@
 (
     position_relative_to_object: [
         0.0,
-        1.0,
+        0.5,
         -2.0,
     ],
-    follow_bias: 0.05,
+    follow_bias: 0.25,
 )

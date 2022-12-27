@@ -3,8 +3,8 @@
     linear_damping: 1.0,
     angular_damping: 1.0,
     throttle_sensitivity: 0.5,
-    thruster_force_primary: 10000.0,
-    thruster_force_secondary: 2500.0,
+    thruster_force_primary: 5750.0,
+    thruster_force_secondary: 1500.0,
     thruster_force_vectors: (
         [
             0.0,

@@ -933,6 +933,7 @@ impl GameWorld {
             &self
                 .get_object_state(self.starfury.object_handle)
                 .render_pos,
+            frame_time as f32,
         );
     }
 
