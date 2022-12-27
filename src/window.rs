@@ -298,12 +298,11 @@ impl GameMain {
     }
 
     fn main(&mut self) {
-        let current_time = Instant::now();
+        let elapsed = self.timestamp.get().elapsed();
+        self.timestamp.set(Instant::now());
 
-        let frame_time = (current_time - self.timestamp.get())
-            .as_secs_f64()
-            .clamp(0f64, 0.25f64);
-        self.timestamp.set(current_time);
+
+        let frame_time = elapsed.as_secs_f64().clamp(0f64, 0.25f64);
 
         self.game_world.borrow().update(frame_time);
         self.do_ui();

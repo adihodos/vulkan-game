@@ -217,7 +217,6 @@ pub struct GameWorld {
     accumulator: Cell<f64>,
     frame_times: RefCell<Vec<f32>>,
     physics_engine: RefCell<PhysicsEngine>,
-    render_state: RefCell<Vec<GameObjectRenderState>>,
     camera: RefCell<FlightCamera>,
     debug_draw_overlay: Rc<RefCell<DebugDrawOverlay>>,
 }
@@ -225,19 +224,6 @@ pub struct GameWorld {
 impl GameWorld {
     const PHYSICS_TIME_STEP: f64 = 1f64 / 60f64;
     const MAX_HISTOGRAM_VALUES: usize = 32;
-
-    fn get_object_state(&self, handle: GameObjectHandle) -> std::cell::Ref<GameObjectRenderState> {
-        let b = self.render_state.borrow();
-        std::cell::Ref::map(b, |game_objs| &game_objs[handle.0 as usize])
-    }
-
-    fn get_object_state_mut(
-        &self,
-        handle: GameObjectHandle,
-    ) -> std::cell::RefMut<GameObjectRenderState> {
-        let b = self.render_state.borrow_mut();
-        std::cell::RefMut::map(b, |game_objs| &mut game_objs[handle.0 as usize])
-    }
 
     fn draw_options(&self) -> std::cell::Ref<DebugDrawOptions> {
         self.draw_opts.borrow()
@@ -460,11 +446,6 @@ impl GameWorld {
             shadows_swarm.params.instance_count,
         )?;
 
-        let render_state = vec![GameObjectRenderState {
-            render_pos: Isometry3::identity(),
-            physics_pos: Isometry3::identity(),
-        }];
-
         Some(GameWorld {
             draw_opts: RefCell::new(DebugDrawOptions::default()),
             resource_cache,
@@ -487,7 +468,6 @@ impl GameWorld {
             accumulator: Cell::new(0f64),
             frame_times: RefCell::new(Vec::with_capacity(Self::MAX_HISTOGRAM_VALUES)),
             physics_engine: RefCell::new(physics_engine),
-            render_state: RefCell::new(render_state),
             camera: RefCell::new(FlightCamera::new()),
             debug_draw_overlay: std::rc::Rc::new(RefCell::new(
                 DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
@@ -554,23 +534,23 @@ impl GameWorld {
             self.pbr_cpu_2_gpu.size_ubo_transforms_one_frame * draw_context.frame_id as u64,
         )
         .map(|mapping| {
-            let render_state = self.render_state.borrow();
-            render_state
-                .iter()
-                .enumerate()
-                .for_each(|(idx, render_state)| {
+            self.physics_engine
+                .borrow()
+                .rigid_body_set
+                .get(self.starfury.rigid_body_handle)
+                .map(|rigid_body| {
                     let transforms = PbrTransformDataSingleInstanceUBO {
-                        world: render_state.render_pos.to_homogeneous(),
+                        world: rigid_body.position().to_homogeneous(),
                         view: draw_context.camera.view_transform(),
                         projection: draw_context.projection,
                     };
+
                     unsafe {
                         std::ptr::copy_nonoverlapping(
                             &transforms as *const _,
-                            (mapping.memptr() as *mut u8).offset(
-                                (idx as u64 * self.pbr_cpu_2_gpu.aligned_ubo_transforms_size)
-                                    as isize,
-                            ) as *mut PbrTransformDataSingleInstanceUBO,
+                            (mapping.memptr() as *mut u8)
+                                // .offset((self.pbr_cpu_2_gpu.aligned_ubo_transforms_size) as isize)
+                                as *mut PbrTransformDataSingleInstanceUBO,
                             1,
                         );
                     }
@@ -658,33 +638,33 @@ impl GameWorld {
                 );
 
                 if self.draw_options().debug_draw_mesh {
-                    let aabb = self.render_state.borrow()[game_object.handle.0 as usize]
-                        .render_pos
-                        .to_homogeneous()
-                        * object_renderable.geometry.aabb;
-
-                    draw_context.debug_draw.borrow_mut().add_aabb(
-                        &aabb.min,
-                        &aabb.max,
-                        0xFF_00_00_FF,
-                    );
+                    // let aabb = self.render_state.borrow()[game_object.handle.0 as usize]
+                    //     .render_pos
+                    //     .to_homogeneous()
+                    //     * object_renderable.geometry.aabb;
+                    //
+                    // draw_context.debug_draw.borrow_mut().add_aabb(
+                    //     &aabb.min,
+                    //     &aabb.max,
+                    //     0xFF_00_00_FF,
+                    // );
                 }
 
                 if self.draw_options().debug_draw_nodes_bounding {
-                    let object_transform = self.render_state.borrow()
-                        [game_object.handle.0 as usize]
-                        .render_pos
-                        .to_homogeneous();
-
-                    object_renderable.geometry.nodes.iter().for_each(|node| {
-                        let transformed_aabb = object_transform * node.aabb;
-
-                        draw_context.debug_draw.borrow_mut().add_aabb(
-                            &transformed_aabb.min,
-                            &transformed_aabb.max,
-                            0xFF_00_FF_00,
-                        );
-                    });
+                    // let object_transform = self.render_state.borrow()
+                    //     [game_object.handle.0 as usize]
+                    //     .render_pos
+                    //     .to_homogeneous();
+                    //
+                    // object_renderable.geometry.nodes.iter().for_each(|node| {
+                    //     let transformed_aabb = object_transform * node.aabb;
+                    //
+                    //     draw_context.debug_draw.borrow_mut().add_aabb(
+                    //         &transformed_aabb.min,
+                    //         &transformed_aabb.max,
+                    //         0xFF_00_FF_00,
+                    //     );
+                    // });
                 }
             });
         }
@@ -711,17 +691,23 @@ impl GameWorld {
                 );
             });
 
+        let phys_engine = self.physics_engine.borrow();
+
         self.shadows_swarm_inst_render_data
             .stb_instances
             .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
             .map(|instances_storage_buffer| {
                 let instance_model_transforms = self
                     .shadows_swarm
-                    .instances_render_data
-                    .borrow()
+                    .instances_physics_data
                     .iter()
-                    .map(|inst_render_data| PbrTransformDataInstanceEntry {
-                        model: inst_render_data.render_pos.to_homogeneous(),
+                    .filter_map(|inst_render_data| {
+                        phys_engine
+                            .rigid_body_set
+                            .get(inst_render_data.rigid_body_handle)
+                            .map(|rigid_body| PbrTransformDataInstanceEntry {
+                                model: rigid_body.position().to_homogeneous(),
+                            })
                     })
                     .collect::<SmallVec<[PbrTransformDataInstanceEntry; 16]>>();
 
@@ -858,6 +844,10 @@ impl GameWorld {
                                 [1f32, 0f32, 0f32, 1f32],
                                 format!("Angular velocity: {}", b.angvel()),
                             );
+                            ui.text_colored(
+                                [0f32, 1f32, 0f32, 1f32],
+                                format!("Position: {}", b.position().translation.vector),
+                            );
                         });
                 }
             });
@@ -877,64 +867,18 @@ impl GameWorld {
                 frame_times.push(frame_time as f32);
             }
         }
-        self.accumulator.set(self.accumulator.get() + frame_time);
-
-        while self.accumulator.get() >= Self::PHYSICS_TIME_STEP {
-            //
-            // do physics step
-            self.physics_engine.borrow_mut().update();
-            self.accumulator
-                .set(self.accumulator.get() - Self::PHYSICS_TIME_STEP);
-        }
 
         //
-        // interpolate transforms
-        let physics_time_factor = self.accumulator.get() / Self::PHYSICS_TIME_STEP;
-        let phys_engine = self.physics_engine.borrow();
+        // do physics step
+        self.physics_engine.borrow_mut().update();
 
-        let objects = [(self.starfury.rigid_body_handle, self.starfury.object_handle)];
-
-        objects.iter().for_each(|&(body_handle, object_handle)| {
-            phys_engine.rigid_body_set.get(body_handle).map(|rbody| {
-                let previous_object_state = *self.get_object_state(object_handle);
-
-                let new_object_state = GameObjectRenderState {
-                    physics_pos: *rbody.position(),
-                    render_pos: previous_object_state
-                        .physics_pos
-                        .lerp_slerp(rbody.position(), physics_time_factor as f32),
-                };
-
-                *self.get_object_state_mut(object_handle) = new_object_state;
-            });
-        });
-
-        let mut instances_render_data = self.shadows_swarm.instances_render_data.borrow_mut();
-        instances_render_data
-            .iter_mut()
-            .zip(self.shadows_swarm.instances_physics_data.iter())
-            .for_each(|(mut render_data, phys_data)| {
-                phys_engine
-                    .rigid_body_set
-                    .get(phys_data.rigid_body_handle)
-                    .map(|instance_rigid_body| {
-                        let prev_instance_state = *render_data;
-                        *render_data = GameObjectRenderState {
-                            physics_pos: *instance_rigid_body.position(),
-                            render_pos: prev_instance_state.physics_pos.lerp_slerp(
-                                instance_rigid_body.position(),
-                                physics_time_factor as f32,
-                            ),
-                        };
-                    });
-            });
-
-        self.camera.borrow_mut().update(
-            &self
-                .get_object_state(self.starfury.object_handle)
-                .render_pos,
-            frame_time as f32,
-        );
+        //
+        // update flight camera
+        self.physics_engine
+            .borrow()
+            .rigid_body_set
+            .get(self.starfury.rigid_body_handle)
+            .map(|starfury_phys_obj| self.camera.borrow_mut().update(starfury_phys_obj));
     }
 
     pub fn input_event(&self, event: &winit::event::WindowEvent) {
