@@ -701,10 +701,10 @@ impl GameWorld {
                     .shadows_swarm
                     .instances_physics_data
                     .iter()
-                    .filter_map(|inst_render_data| {
+                    .filter_map(|instance_physics_data| {
                         phys_engine
                             .rigid_body_set
-                            .get(inst_render_data.rigid_body_handle)
+                            .get(instance_physics_data.rigid_body_handle)
                             .map(|rigid_body| PbrTransformDataInstanceEntry {
                                 model: rigid_body.position().to_homogeneous(),
                             })
@@ -777,7 +777,7 @@ impl GameWorld {
             graphics_device.cmd_draw_indexed(
                 draw_context.cmd_buff,
                 renderable.geometry.index_count,
-                self.shadows_swarm.instances_render_data.borrow().len() as u32,
+                self.shadows_swarm.instances_physics_data.len() as u32,
                 renderable.geometry.index_offset,
                 renderable.geometry.vertex_offset as i32,
                 0,

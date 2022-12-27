@@ -33,7 +33,6 @@ pub struct ShadowFighterSwarm {
     pub renderable: PbrRenderableHandle,
     pub params: ShadowFighterSwarmParams,
     pub instances_physics_data: Vec<GameObjectPhysicsData>,
-    pub instances_render_data: std::cell::RefCell<Vec<GameObjectRenderState>>,
 }
 
 impl ShadowFighterSwarm {
@@ -89,28 +88,10 @@ impl ShadowFighterSwarm {
             })
             .collect::<Vec<_>>();
 
-        let instances_render_data = std::cell::RefCell::new(
-            instances_physics_data
-                .iter()
-                .map(|phys_instance| {
-                    let instance_body = physics_engine
-                        .rigid_body_set
-                        .get(phys_instance.rigid_body_handle)
-                        .unwrap();
-
-                    GameObjectRenderState {
-                        physics_pos: *instance_body.position(),
-                        render_pos: *instance_body.position(),
-                    }
-                })
-                .collect::<Vec<_>>(),
-        );
-
         ShadowFighterSwarm {
             renderable: geometry_handle,
             params: swarm_params,
             instances_physics_data,
-            instances_render_data,
         }
     }
 
