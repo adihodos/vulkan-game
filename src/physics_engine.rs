@@ -22,9 +22,12 @@ pub struct PhysicsEngine {
 
 impl PhysicsEngine {
     pub fn new() -> PhysicsEngine {
+        let mut integration_params = IntegrationParameters::default();
+        integration_params.set_dt(1f32 / 240f32);
+
         PhysicsEngine {
             gravity: glm::vec3(0f32, 0f32, 0f32),
-            integration_params: IntegrationParameters::default(),
+            integration_params,
             debug_render_pipeline: DebugRenderPipeline::new(
                 DebugRenderStyle::default(),
                 DebugRenderMode::COLLIDER_SHAPES | DebugRenderMode::RIGID_BODY_AXES,
