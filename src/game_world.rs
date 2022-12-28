@@ -218,7 +218,7 @@ pub struct GameWorld {
 }
 
 impl GameWorld {
-    const PHYSICS_TIME_STEP: f64 = 1f64 / 60f64;
+    const PHYSICS_TIME_STEP: f64 = 1f64 / 240f64;
     const MAX_HISTOGRAM_VALUES: usize = 32;
 
     fn draw_options(&self) -> std::cell::Ref<DebugDrawOptions> {
@@ -848,6 +848,32 @@ impl GameWorld {
             });
     }
 
+    fn num_physics_steps_240hz(elapsed: f64) -> i32 {
+        //
+        // from https://www.gamedeveloper.com/programming/fixing-your-time-step-the-easy-way-with-the-golden-4-8537-ms-
+
+        //
+        // Our simulation frequency is 240Hz, a 4⅙  (four one sixth) ms period.
+        // We will pretend our display sync rate is one of these:
+        if elapsed > 7.5f64 * Self::PHYSICS_TIME_STEP {
+            return 8; // 30 Hz        ( .. to 32 Hz )
+        } else if elapsed > 6.5f64 * Self::PHYSICS_TIME_STEP {
+            return 7; // 34.29 Hz     ( 32 Hz to 36.92 Hz )
+        } else if elapsed > 5.5f64 * Self::PHYSICS_TIME_STEP {
+            return 6; // 40 Hz        ( 36.92 Hz to 43.64 Hz )
+        } else if elapsed > 4.5f64 * Self::PHYSICS_TIME_STEP {
+            return 5; // 48 Hz        ( 43.64 Hz to 53.33 Hz )
+        } else if elapsed > 3.5f64 * Self::PHYSICS_TIME_STEP {
+            return 4; // 60 Hz        ( 53.33 Hz to 68.57 Hz )
+        } else if elapsed > 2.5f64 * Self::PHYSICS_TIME_STEP {
+            return 3; // 90 Hz        ( 68.57 Hz to 96 Hz )
+        } else if elapsed > 1.5f64 * Self::PHYSICS_TIME_STEP {
+            return 2; // 120 Hz       ( 96 Hz to 160 Hz )
+        } else {
+            return 1; // 240 Hz       ( 160 Hz to .. )
+        }
+    }
+
     pub fn update(&self, frame_time: f64) {
         // log::info!("Frame time: {}", frame_time);
         self.starfury
@@ -863,17 +889,18 @@ impl GameWorld {
             }
         }
 
-        //
-        // do physics step
-        self.physics_engine.borrow_mut().update();
-
-        //
-        // update flight camera
-        self.physics_engine
-            .borrow()
-            .rigid_body_set
-            .get(self.starfury.rigid_body_handle)
-            .map(|starfury_phys_obj| self.camera.borrow_mut().update(starfury_phys_obj));
+        (0..Self::num_physics_steps_240hz(frame_time)).for_each(|_| {
+            //
+            // do physics step
+            self.physics_engine.borrow_mut().update();
+            //
+            // update flight camera
+            self.physics_engine
+                .borrow()
+                .rigid_body_set
+                .get(self.starfury.rigid_body_handle)
+                .map(|starfury_phys_obj| self.camera.borrow_mut().update(starfury_phys_obj));
+        });
     }
 
     pub fn input_event(&self, event: &winit::event::WindowEvent) {
