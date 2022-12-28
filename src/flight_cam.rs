@@ -37,8 +37,8 @@ impl FlightCameraParams {
 
 pub struct FlightCamera {
     params: FlightCameraParams,
-    position: std::cell::RefCell<glm::Vec3>,
-    view_matrix: std::cell::RefCell<glm::Mat4>,
+    position: glm::Vec3,
+    view_matrix: glm::Mat4,
 }
 
 impl FlightCamera {
@@ -51,34 +51,34 @@ impl FlightCamera {
                     .expect("Failed to read flightcam config"),
             )
             .expect("Invalid flightcam config file."),
-            position: std::cell::RefCell::new(glm::Vec3::zeros()),
-            view_matrix: std::cell::RefCell::new(glm::Mat4::identity()),
+            position: glm::Vec3::zeros(),
+            view_matrix: glm::Mat4::identity(),
         }
     }
 
-    pub fn update(&self, object: &rapier3d::prelude::RigidBody) {
+    pub fn update(&mut self, object: &rapier3d::prelude::RigidBody) {
         let ideal_cam_pos = object.position().rotation * self.params.position_relative_to_object
             + object.position().translation.vector;
 
-        let cam_velocity = (ideal_cam_pos - *self.position.borrow()) * self.params.follow_bias;
+        let cam_velocity = (ideal_cam_pos - self.position) * self.params.follow_bias;
 
-        *self.position.borrow_mut() += cam_velocity;
+        self.position += cam_velocity;
 
         let up_vec = object.position().rotation * glm::Vec3::y_axis();
         let look_at = (object.position().rotation * glm::Vec3::z_axis()).xyz()
             * self.params.lookahead_factor
             + object.position().translation.vector.xyz();
 
-        *self.view_matrix.borrow_mut() = glm::look_at(&self.position.borrow(), &look_at, &up_vec);
+        self.view_matrix = glm::look_at(&self.position, &look_at, &up_vec);
     }
 }
 
 impl Camera for FlightCamera {
     fn position(&self) -> glm::Vec3 {
-        *self.position.borrow()
+        self.position
     }
 
     fn view_transform(&self) -> glm::Mat4 {
-        *self.view_matrix.borrow()
+        self.view_matrix
     }
 }

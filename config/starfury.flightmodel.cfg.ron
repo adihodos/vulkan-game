@@ -97,26 +97,26 @@
             ],
         ),
         pitch: (
-            up: [
+            down: [
                 LowerRightRight,
             ],
-            down: [
+            up: [
                 UpperLeftLeft,
             ],
         ),
         yaw: (
-            left: [
+            right: [
                 LowerRightDown,
             ],
-            right: [
+            left: [
                 UpperLeftUp,
             ],
         ),
         movement: (
             forward: UpperRightBack,
             backward: UpperLeftFront,
-            left: UpperRightRight,
-            right: UpperLeftLeft,
+            right: UpperRightRight,
+            left: UpperLeftLeft,
         ),
     ),
 )
