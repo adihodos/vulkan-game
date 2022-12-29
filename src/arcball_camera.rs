@@ -1,7 +1,6 @@
 use crate::camera::Camera;
-use glm::{clamp, cross, dot, inverse, length, normalize, Mat3, Quat, Vec4};
-use log::info;
-use nalgebra::{DualQuaternion, Isometry, UnitQuaternion};
+use glm::{dot, inverse, normalize, Quat, Vec4};
+use nalgebra::UnitQuaternion;
 use nalgebra_glm::{IVec2, Mat4, Vec2, Vec3};
 
 use nalgebra_glm as glm;

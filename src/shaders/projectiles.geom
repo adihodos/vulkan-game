@@ -32,8 +32,33 @@ struct VertexPC {
 	vec3 color;
 };
 
+const VertexPC VERTICES_YZ[] = VertexPC[] (
+	VertexPC(vec3(0.0, 0.5, 0.0), ORANGE_LIGHT),
+	VertexPC(vec3(0.0, 0.5, 0.5), ORANGE),
+	VertexPC(vec3(0.0, -0.5, 0.5), ORANGE),
+	VertexPC(vec3(0.0, -0.5, 0.0), ORANGE_LIGHT),
+
+	VertexPC(vec3(0.0, 0.5, 0.0), ORANGE_LIGHT),
+	VertexPC(vec3(0.0, 0.5, -0.5), ORANGE),
+	VertexPC(vec3(0.0, -0.5, -0.5), ORANGE),
+	VertexPC(vec3(0.0, -0.5, 0.0), ORANGE_LIGHT)
+);
+
+const VertexPC VERTICES_XZ[] = VertexPC[] (
+	VertexPC(vec3(-0.5, 0.0, 0.0), ORANGE_LIGHT),
+	VertexPC(vec3(-0.5, 0.0, 0.5), ORANGE),
+	VertexPC(vec3(0.5, 0.0, 0.5), ORANGE),
+	VertexPC(vec3(0.5, 0.0, 0.0), ORANGE_LIGHT),
+
+	VertexPC(vec3(-0.5, 0.0, 0.0), ORANGE_LIGHT),
+	VertexPC(vec3(-0.5, 0.0, -0.5), ORANGE),
+	VertexPC(vec3(0.5, 0.0, -0.5), ORANGE),
+	VertexPC(vec3(0.5, 0.0, 0.0), ORANGE_LIGHT)
+);
+
+const uint indices[] = uint[](0, 1, 2, 0, 2, 3);
+
 void gen_quads(in VertexPC src_vertices[8]) {
-	const uint indices[] = uint[](0, 1, 2, 0, 2, 3);
 	//
 	//
 	for (uint i = 0; i < 2; ++i) {
@@ -62,52 +87,6 @@ void gen_quads(in VertexPC src_vertices[8]) {
 }
 
 void main() {
-	const VertexPC VERTICES_YZ[] = VertexPC[] (
-		VertexPC(vec3(0.0, 0.5, 0.0), ORANGE_LIGHT),
-		VertexPC(vec3(0.0, 0.5, 0.5), ORANGE),
-		VertexPC(vec3(0.0, -0.5, 0.5), ORANGE),
-		VertexPC(vec3(0.0, -0.5, 0.0), ORANGE_LIGHT),
-
-		VertexPC(vec3(0.0, 0.5, 0.0), ORANGE_LIGHT),
-		VertexPC(vec3(0.0, 0.5, -0.5), ORANGE),
-		VertexPC(vec3(0.0, -0.5, -0.5), ORANGE),
-		VertexPC(vec3(0.0, -0.5, 0.0), ORANGE_LIGHT)
-	);
-
-	const VertexPC VERTICES_XZ[] = VertexPC[] (
-		VertexPC(vec3(-0.5, 0.0, 0.0), ORANGE_LIGHT),
-		VertexPC(vec3(-0.5, 0.0, 0.5), ORANGE),
-		VertexPC(vec3(0.5, 0.0, 0.5), ORANGE),
-		VertexPC(vec3(0.5, 0.0, 0.0), ORANGE_LIGHT),
-
-		VertexPC(vec3(-0.5, 0.0, 0.0), ORANGE_LIGHT),
-		VertexPC(vec3(-0.5, 0.0, -0.5), ORANGE),
-		VertexPC(vec3(0.5, 0.0, -0.5), ORANGE),
-		VertexPC(vec3(0.5, 0.0, 0.0), ORANGE_LIGHT)
-	);
-
 	gen_quads(VERTICES_YZ);
 	gen_quads(VERTICES_XZ);
-
-	// const uint indices[] = uint[](0, 1, 2, 0, 2, 3);
-	// //
-	// //
-	// for (uint i = 0; i < 2; ++i) {
-	// 	for (uint j = 0; j < 2; ++j) {
-	// 		vec3 v0 = VERTICES_Z[i * 4 + indices[j * 3 + 0]] * transforms.half_extent;
-	// 		gl_Position = transforms.view_projection * instances[gs_in[0].vertex_index].model * vec4(v0, 1.0);
-	// 		EmitVertex();
-	//
-	// 		vec3 v1 = VERTICES_Z[i * 4 + indices[j * 3 + 1]] * transforms.half_extent;
-	// 		gl_Position = transforms.view_projection * instances[gs_in[0].vertex_index].model * vec4(v1, 1.0);
-	// 		EmitVertex();
-	//
-	// 		vec3 v2 = VERTICES_Z[i * 4 + indices[j * 3 + 2]] * transforms.half_extent;			
-	// 		gl_Position = transforms.view_projection * instances[gs_in[0].vertex_index].model * vec4(v2, 1.0);
-	// 		EmitVertex();
-	//
-	// 		EndPrimitive();
-	// 	}
-	// }
-
 }

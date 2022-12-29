@@ -10,6 +10,7 @@ mod imported_geometry;
 mod math;
 mod pbr;
 mod physics_engine;
+mod projectile_system;
 mod resource_cache;
 mod shadow_swarm;
 mod skybox;

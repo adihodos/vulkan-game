@@ -2,9 +2,10 @@ use std::cell::{Cell, RefCell};
 
 use crate::{
     draw_context::{DrawContext, UpdateContext},
-    game_world::{GameObjectHandle, ProjectileData, QueuedCommand},
-    math::{self, AABB3},
+    game_world::{GameObjectHandle, QueuedCommand},
+    math::AABB3,
     physics_engine::PhysicsEngine,
+    projectile_system::ProjectileSpawnData,
     resource_cache::{GeometryRenderInfo, PbrRenderable, PbrRenderableHandle, ResourceHolder},
     window::InputState,
 };
@@ -277,8 +278,8 @@ impl StarfuryParameters {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-enum PhysicsOp {
+#[derive(Clone, Copy, Debug)]
+enum QueuedOp {
     ApplyForce(glm::Vec3),
     ApplyTorque(glm::Vec3),
     FireGuns,
@@ -292,13 +293,11 @@ pub struct Starfury {
     pub collider_handle: rapier3d::prelude::ColliderHandle,
     params: StarfuryParameters,
     thrusters: Vec<EngineThruster>,
-    physics_ops_queue: RefCell<Vec<PhysicsOp>>,
+    queued_ops: RefCell<Vec<QueuedOp>>,
     guns_cooldown: Cell<f32>,
 }
 
 impl Starfury {
-    const GUNS_COOLDOWN: f32 = 60f32 / 480f32;
-
     pub fn new(
         object_handle: GameObjectHandle,
         physics_engine: &mut PhysicsEngine,
@@ -361,7 +360,7 @@ impl Starfury {
             collider_handle,
             params,
             thrusters,
-            physics_ops_queue: RefCell::new(Vec::new()),
+            queued_ops: RefCell::new(Vec::new()),
             guns_cooldown: Cell::new(0f32),
         }
     }
@@ -370,33 +369,33 @@ impl Starfury {
         use winit::event::VirtualKeyCode;
 
         let physics_op = event.virtual_keycode.and_then(|key_code| match key_code {
-            VirtualKeyCode::F10 => Some(PhysicsOp::Reset),
+            VirtualKeyCode::F10 => Some(QueuedOp::Reset),
 
-            VirtualKeyCode::Q => Some(PhysicsOp::ApplyTorque(
+            VirtualKeyCode::Q => Some(QueuedOp::ApplyTorque(
                 self.params.fm.thruster_force_secondary
                     * self.params.fm.thruster_force_vectors
                         [self.params.fm.maneuver.roll.left[0] as usize],
             )),
 
-            VirtualKeyCode::E => Some(PhysicsOp::ApplyTorque(
+            VirtualKeyCode::E => Some(QueuedOp::ApplyTorque(
                 self.params.fm.thruster_force_secondary
                     * self.params.fm.thruster_force_vectors
                         [self.params.fm.maneuver.roll.right[0] as usize],
             )),
 
-            VirtualKeyCode::W => Some(PhysicsOp::ApplyTorque(
+            VirtualKeyCode::W => Some(QueuedOp::ApplyTorque(
                 self.params.fm.thruster_force_secondary
                     * self.params.fm.thruster_force_vectors
                         [self.params.fm.maneuver.pitch.down[0] as usize],
             )),
 
-            VirtualKeyCode::S => Some(PhysicsOp::ApplyTorque(
+            VirtualKeyCode::S => Some(QueuedOp::ApplyTorque(
                 self.params.fm.thruster_force_secondary
                     * self.params.fm.thruster_force_vectors
                         [self.params.fm.maneuver.pitch.up[0] as usize],
             )),
 
-            VirtualKeyCode::A => Some(PhysicsOp::ApplyTorque(
+            VirtualKeyCode::A => Some(QueuedOp::ApplyTorque(
                 self.params.fm.thruster_force_secondary
                     * self
                         .params
@@ -404,7 +403,7 @@ impl Starfury {
                         .thruster_force_vector(self.params.fm.maneuver.yaw.left[0]),
             )),
 
-            VirtualKeyCode::D => Some(PhysicsOp::ApplyTorque(
+            VirtualKeyCode::D => Some(QueuedOp::ApplyTorque(
                 self.params.fm.thruster_force_secondary
                     * self
                         .params
@@ -415,7 +414,7 @@ impl Starfury {
         });
 
         physics_op.map(|i| {
-            self.physics_ops_queue.borrow_mut().push(i);
+            self.queued_ops.borrow_mut().push(i);
         });
     }
 
@@ -430,41 +429,38 @@ impl Starfury {
                 .get_mut(self.rigid_body_handle)
                 .unwrap();
 
-            self.physics_ops_queue
-                .borrow()
-                .iter()
-                .for_each(|op| match op {
-                    PhysicsOp::FireGuns => {
-                        update_context.queued_commands.extend(
-                            [
-                                QueuedCommand::CmdAddProjectile(ProjectileData {
-                                    origin: self.params.weapons.gun_ports.lower_left,
-                                    speed: self.params.weapons.laser.speed,
-                                    mass: self.params.weapons.laser.mass,
-                                    emitter: self.rigid_body_handle,
-                                    life: self.params.weapons.laser.lifetime,
-                                }),
-                                QueuedCommand::CmdAddProjectile(ProjectileData {
-                                    origin: self.params.weapons.gun_ports.lower_right,
-                                    speed: self.params.weapons.laser.speed,
-                                    mass: self.params.weapons.laser.mass,
-                                    emitter: self.rigid_body_handle,
-                                    life: self.params.weapons.laser.lifetime,
-                                }),
-                            ]
-                            .iter(),
-                        );
-                        // }
-                    }
-                    _ => {}
-                });
+            self.queued_ops.borrow().iter().for_each(|op| match op {
+                QueuedOp::FireGuns => {
+                    update_context.queued_commands.extend(
+                        [
+                            QueuedCommand::SpawnProjectile(ProjectileSpawnData {
+                                origin: self.params.weapons.gun_ports.lower_left,
+                                speed: self.params.weapons.laser.speed,
+                                mass: self.params.weapons.laser.mass,
+                                emitter: self.rigid_body_handle,
+                                life: self.params.weapons.laser.lifetime,
+                            }),
+                            QueuedCommand::SpawnProjectile(ProjectileSpawnData {
+                                origin: self.params.weapons.gun_ports.lower_right,
+                                speed: self.params.weapons.laser.speed,
+                                mass: self.params.weapons.laser.mass,
+                                emitter: self.rigid_body_handle,
+                                life: self.params.weapons.laser.lifetime,
+                            }),
+                        ]
+                        .iter(),
+                    );
+                    // }
+                }
+                _ => {}
+            });
         }
 
         self.physics_update(&mut update_context.physics_engine);
     }
 
     pub fn physics_update(&self, phys_engine: &mut PhysicsEngine) {
-        if self.physics_ops_queue.borrow().is_empty() {
+        if self.queued_ops.borrow().is_empty() {
             return;
         }
 
@@ -475,19 +471,19 @@ impl Starfury {
 
         let isometry = *rigid_body.position();
 
-        self.physics_ops_queue
+        self.queued_ops
             .borrow()
             .iter()
             .for_each(|&impulse| match impulse {
-                PhysicsOp::ApplyForce(f) => {
+                QueuedOp::ApplyForce(f) => {
                     rigid_body.apply_impulse(isometry * f, true);
                 }
 
-                PhysicsOp::ApplyTorque(t) => {
+                QueuedOp::ApplyTorque(t) => {
                     rigid_body.apply_torque_impulse(isometry * t, true);
                 }
 
-                PhysicsOp::Reset => {
+                QueuedOp::Reset => {
                     rigid_body.reset_forces(true);
                     rigid_body.reset_torques(true);
                     rigid_body.set_linvel(Vec3::zeros(), true);
@@ -498,7 +494,7 @@ impl Starfury {
                 _ => (),
             });
 
-        self.physics_ops_queue.borrow_mut().clear();
+        self.queued_ops.borrow_mut().clear();
     }
 
     pub fn gamepad_input(&self, input_state: &InputState) {
@@ -508,9 +504,7 @@ impl Starfury {
             // log::info!("Ltrigger pressed, cooldown: {}", self.guns_cooldown.get());
 
             if btn.is_pressed() && !(self.guns_cooldown.get() > 0f32) {
-                self.physics_ops_queue
-                    .borrow_mut()
-                    .push(PhysicsOp::FireGuns);
+                self.queued_ops.borrow_mut().push(QueuedOp::FireGuns);
                 self.guns_cooldown.set(self.params.weapons.guns_cooldown);
             }
         });
@@ -539,20 +533,20 @@ impl Starfury {
                     let throttle = axis_data.value() * self.params.fm.throttle_sensitivity;
 
                     let phys_op = if throttle > 0f32 {
-                        PhysicsOp::ApplyForce(
+                        QueuedOp::ApplyForce(
                             throttle.abs()
                                 * self.params.fm.thruster_force_primary
                                 * self.params.fm.thruster_force_vector(thruster_id_pos),
                         )
                     } else {
-                        PhysicsOp::ApplyForce(
+                        QueuedOp::ApplyForce(
                             throttle.abs()
                                 * self.params.fm.thruster_force_primary
                                 * self.params.fm.thruster_force_vector(thruster_id_neg),
                         )
                     };
 
-                    self.physics_ops_queue.borrow_mut().push(phys_op);
+                    self.queued_ops.borrow_mut().push(phys_op);
                 });
             });
 
@@ -581,20 +575,20 @@ impl Starfury {
                     // log::info!("Throttle: {}", throttle);
 
                     let phys_op = if throttle > 0f32 {
-                        PhysicsOp::ApplyTorque(
+                        QueuedOp::ApplyTorque(
                             throttle.abs()
                                 * self.params.fm.thruster_force_secondary
                                 * self.params.fm.thruster_force_vector(thruster_id_pos),
                         )
                     } else {
-                        PhysicsOp::ApplyTorque(
+                        QueuedOp::ApplyTorque(
                             throttle.abs()
                                 * self.params.fm.thruster_force_secondary
                                 * self.params.fm.thruster_force_vector(thruster_id_neg),
                         )
                     };
 
-                    self.physics_ops_queue.borrow_mut().push(phys_op);
+                    self.queued_ops.borrow_mut().push(phys_op);
                 });
             });
 
@@ -617,13 +611,11 @@ impl Starfury {
 
                 let throttle_factor = button_data.value() * self.params.fm.throttle_sensitivity;
 
-                self.physics_ops_queue
-                    .borrow_mut()
-                    .push(PhysicsOp::ApplyTorque(
-                        throttle_factor
-                            * self.params.fm.thruster_force_secondary
-                            * self.params.fm.thruster_force_vector(thruster_id),
-                    ));
+                self.queued_ops.borrow_mut().push(QueuedOp::ApplyTorque(
+                    throttle_factor
+                        * self.params.fm.thruster_force_secondary
+                        * self.params.fm.thruster_force_vector(thruster_id),
+                ));
             });
         });
     }

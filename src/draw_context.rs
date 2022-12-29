@@ -22,6 +22,7 @@ pub struct DrawContext<'a> {
     pub scissor: Rect2D,
     pub camera: &'a dyn Camera,
     pub projection: nalgebra_glm::Mat4,
+    pub projection_view: nalgebra_glm::Mat4,
     pub debug_draw: std::rc::Rc<std::cell::RefCell<DebugDrawOverlay>>,
 }
 
@@ -61,6 +62,7 @@ impl<'a> DrawContext<'a> {
             },
             camera,
             projection,
+            projection_view: projection * camera.view_transform(),
             debug_draw,
         }
     }
