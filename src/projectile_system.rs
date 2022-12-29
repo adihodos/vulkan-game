@@ -38,6 +38,7 @@ impl Projectile {
             .rigid_body_set
             .get(projectile_data.emitter)
             .unwrap();
+
         let projectile_origin = *shooter.position() * projectile_data.origin;
 
         let projectile_isometry = nalgebra::Isometry3::from_parts(

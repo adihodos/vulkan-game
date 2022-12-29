@@ -58,7 +58,7 @@ impl std::default::Default for GeometryVertex {
             uv: Vec2::new(0f32, 0f32),
             color: Vec4::new(0f32, 0f32, 0f32, 1f32),
             tangent: Vec4::new(0f32, 0f32, 0f32, 0f32),
-            pbr_buf_id: 0u32, // ..Default::default()
+            pbr_buf_id: 0u32,
         }
     }
 }
@@ -210,16 +210,6 @@ impl ImportedGeometry {
             })
             .collect::<Vec<_>>();
 
-        // materials.iter().for_each(|m| {
-        //     log::info!(
-        //         "Mtl {}, base color {}, metal + rough {}, normals {}",
-        //         m.name,
-        //         m.base_color_src,
-        //         m.metallic_src,
-        //         m.normal_src
-        //     );
-        // });
-
         let mut base_color_images = materials
             .iter()
             .map(|mtl| mtl.base_color_src)
@@ -310,8 +300,6 @@ impl ImportedGeometry {
     }
 
     fn process_node(&mut self, node: &gltf::Node, gltf_doc: &gltf::Document, parent: Option<u32>) {
-        // log::info!("Node {}", node.name().unwrap_or("unnamed"));
-
         let node_matrix = match node.transform() {
             Transform::Matrix { matrix } => Mat4::from_column_slice(matrix.flat()),
             Transform::Decomposed {
@@ -351,7 +339,8 @@ impl ImportedGeometry {
 
             self.nodes[node_id as usize].transform = matrix;
 
-            let normals_matrix = glm::transpose(&glm::inverse(&matrix));
+            let normals_matrix = matrix;
+            //glm::transpose(&glm::inverse(&matrix));
 
             for primitive in mesh.primitives() {
                 let mut first_index = self.indices.len() as u32;
@@ -397,7 +386,9 @@ impl ImportedGeometry {
                 reader.read_normals().map(|normals| {
                     for (idx, normal) in normals.enumerate() {
                         let n = Vec3::from_column_slice(&normal);
-                        // let n = glm::normalize(&(matrix * Vec4::new(n.x, n.y, n.z, 0f32)).xyz());
+                        let n = glm::normalize(
+                            &(normals_matrix * Vec4::new(n.x, n.y, n.z, 0f32)).xyz(),
+                        );
                         self.vertices[vertex_start + idx].normal = n;
                     }
                 });

@@ -120,10 +120,10 @@ impl ArcballCamera {
 
         match event {
             WindowEvent::MouseInput {
-                device_id,
+                device_id: _,
                 state,
                 button,
-                modifiers,
+                modifiers: _,
             } => {
                 // info!("Mouse button down: {:?}", mouse_btn);
                 if button == &MouseButton::Middle {
@@ -150,9 +150,9 @@ impl ArcballCamera {
                 }
             }
             WindowEvent::CursorMoved {
-                device_id,
+                device_id: _,
                 position,
-                modifiers,
+                modifiers: _,
             } => {
                 let (x, y) = (position.x as f32, position.y as f32);
                 if self.is_rotating {
@@ -178,10 +178,10 @@ impl ArcballCamera {
                 self.update_screen(new_size.width as i32, new_size.height as i32)
             }
             WindowEvent::MouseWheel {
-                device_id,
+                device_id: _,
                 delta,
-                phase,
-                modifiers,
+                phase: _,
+                modifiers: _,
             } => match delta {
                 MouseScrollDelta::LineDelta(horizontal, vertical) => {
                     self.zoom(*vertical, 0f32);
