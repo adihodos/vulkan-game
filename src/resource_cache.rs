@@ -373,104 +373,104 @@ impl ResourceHolder {
                     .input_rate(VertexInputRate::VERTEX)
                     .build(),
             )
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::VERTEX,
-                source: ShaderModuleSource::File(&app_config.engine.shader_path("pbr.vert.spv")),
-                entry_point: "main",
-            })
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::FRAGMENT,
-                source: ShaderModuleSource::File(&app_config.engine.shader_path("pbr.frag.spv")),
-                entry_point: "main",
-            })
-            .add_dynamic_state(DynamicState::VIEWPORT)
-            .add_dynamic_state(DynamicState::SCISSOR)
+            .shader_stages(&[
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::VERTEX,
+                    source: ShaderModuleSource::File(
+                        &app_config.engine.shader_path("pbr.vert.spv"),
+                    ),
+                    entry_point: "main",
+                },
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::FRAGMENT,
+                    source: ShaderModuleSource::File(
+                        &app_config.engine.shader_path("pbr.frag.spv"),
+                    ),
+                    entry_point: "main",
+                },
+            ])
+            .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
             .build(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
                 GraphicsPipelineLayoutBuilder::new()
                     //
                     // set 0
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
+                    .set(
+                        0,
+                        &[DescriptorSetLayoutBinding::builder()
                             .binding(0)
                             .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                             .descriptor_count(1)
                             .stage_flags(ShaderStageFlags::VERTEX)
-                            .build(),
+                            .build()],
                     )
                     //
                     //set 1
-                    .next_set()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(1)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(2)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(3)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
+                    .set(
+                        1,
+                        &[
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(0)
+                                .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(1)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(2)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(3)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                        ],
                     )
                     //
                     //set 2
-                    .next_set()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
+                    .set(
+                        2,
+                        &[DescriptorSetLayoutBinding::builder()
                             .binding(0)
                             .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                             .descriptor_count(1)
                             .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
+                            .build()],
                     )
                     //
                     //set 3
-                    .next_set()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(1)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(2)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
+                    .set(
+                        3,
+                        &[
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(0)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(1)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(2)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                        ],
                     )
                     .build(renderer.graphics_device())?,
                 renderer.renderpass(),
@@ -528,114 +528,112 @@ impl ResourceHolder {
                     .input_rate(VertexInputRate::VERTEX)
                     .build(),
             )
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::VERTEX,
-                source: ShaderModuleSource::File(
-                    &app_config.engine.shader_path("pbr.instanced.vert.spv"),
-                ),
-                entry_point: "main",
-            })
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::FRAGMENT,
-                source: ShaderModuleSource::File(&app_config.engine.shader_path("pbr.frag.spv")),
-                entry_point: "main",
-            })
-            .add_dynamic_state(DynamicState::VIEWPORT)
-            .add_dynamic_state(DynamicState::SCISSOR)
+            .shader_stages(&[
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::VERTEX,
+                    source: ShaderModuleSource::File(
+                        &app_config.engine.shader_path("pbr.instanced.vert.spv"),
+                    ),
+                    entry_point: "main",
+                },
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::FRAGMENT,
+                    source: ShaderModuleSource::File(
+                        &app_config.engine.shader_path("pbr.frag.spv"),
+                    ),
+                    entry_point: "main",
+                },
+            ])
+            .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
             .build(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
                 GraphicsPipelineLayoutBuilder::new()
                     //
                     // set 0
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::VERTEX)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(1)
-                            .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::VERTEX)
-                            .build(),
+                    .set(
+                        0,
+                        &[
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(0)
+                                .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::VERTEX)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(1)
+                                .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::VERTEX)
+                                .build(),
+                        ],
                     )
                     //
                     //set 1
-                    .next_set()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(1)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(2)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(3)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
+                    .set(
+                        1,
+                        &[
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(0)
+                                .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(1)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(2)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(3)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                        ],
                     )
                     //
                     //set 2
-                    .next_set()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
+                    .set(
+                        2,
+                        &[DescriptorSetLayoutBinding::builder()
                             .binding(0)
                             .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                             .descriptor_count(1)
                             .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
+                            .build()],
                     )
                     //
                     //set 3
-                    .next_set()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(1)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(2)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .build(),
+                    .set(
+                        3,
+                        &[
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(0)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(1)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(2)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .build(),
+                        ],
                     )
                     .build(renderer.graphics_device())?,
                 renderer.renderpass(),

@@ -102,34 +102,37 @@ impl DebugDrawOverlay {
                     .input_rate(VertexInputRate::VERTEX)
                     .build(),
             )
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::VERTEX,
-                source: ShaderModuleSource::File(Path::new("data/shaders/dbg.draw.vert.spv")),
-                entry_point: "main",
-            })
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::GEOMETRY,
-                source: ShaderModuleSource::File(Path::new("data/shaders/dbg.draw.geom.spv")),
-                entry_point: "main",
-            })
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::FRAGMENT,
-                source: ShaderModuleSource::File(Path::new("data/shaders/dbg.draw.frag.spv")),
-                entry_point: "main",
-            })
+            .shader_stages(&[
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::VERTEX,
+                    source: ShaderModuleSource::File(Path::new("data/shaders/dbg.draw.vert.spv")),
+                    entry_point: "main",
+                },
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::GEOMETRY,
+                    source: ShaderModuleSource::File(Path::new("data/shaders/dbg.draw.geom.spv")),
+                    entry_point: "main",
+                },
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::FRAGMENT,
+                    source: ShaderModuleSource::File(Path::new("data/shaders/dbg.draw.frag.spv")),
+                    entry_point: "main",
+                },
+            ])
             .add_dynamic_state(DynamicState::SCISSOR)
             .add_dynamic_state(DynamicState::VIEWPORT)
             .build(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
                 GraphicsPipelineLayoutBuilder::new()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
+                    .set(
+                        0,
+                        &[DescriptorSetLayoutBinding::builder()
                             .stage_flags(ShaderStageFlags::GEOMETRY)
                             .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                             .descriptor_count(1)
                             .binding(0)
-                            .build(),
+                            .build()],
                     )
                     .build(renderer.graphics_device())?,
                 renderer.renderpass(),

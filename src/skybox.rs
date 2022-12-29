@@ -97,22 +97,19 @@ impl Skybox {
         )?;
 
         let pipeline = GraphicsPipelineBuilder::new()
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::VERTEX,
-                source: ShaderModuleSource::File(
-                    &Path::new(&engine_cfg.shaders).join("skybox.vert.spv"),
-                ),
-                entry_point: "main",
-            })
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::FRAGMENT,
-                source: ShaderModuleSource::File(
-                    &Path::new(&engine_cfg.shaders).join("skybox.frag.spv"),
-                ),
-                entry_point: "main",
-            })
-            .add_dynamic_state(DynamicState::VIEWPORT)
-            .add_dynamic_state(DynamicState::SCISSOR)
+            .shader_stages(&[
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::VERTEX,
+                    source: ShaderModuleSource::File(&engine_cfg.shader_path("skybox.vert.spv")),
+                    entry_point: "main",
+                },
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::FRAGMENT,
+                    source: ShaderModuleSource::File(&engine_cfg.shader_path("skybox.frag.spv")),
+                    entry_point: "main",
+                },
+            ])
+            .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
             .set_depth_compare_op(CompareOp::LESS_OR_EQUAL)
             .build(
                 renderer.graphics_device(),
@@ -125,13 +122,14 @@ impl Skybox {
                             .offset(0)
                             .build(),
                     )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
+                    .set(
+                        0,
+                        &[DescriptorSetLayoutBinding::builder()
                             .stage_flags(ShaderStageFlags::FRAGMENT)
                             .binding(0)
                             .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
                             .descriptor_count(1)
-                            .build(),
+                            .build()],
                     )
                     .build(renderer.graphics_device())?,
                 renderer.renderpass(),

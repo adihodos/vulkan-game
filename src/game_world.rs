@@ -548,8 +548,7 @@ impl GameWorld {
                             std::ptr::copy_nonoverlapping(
                                 &transforms as *const _,
                                 (mapping.memptr() as *mut u8)
-                                // .offset((self.pbr_cpu_2_gpu.aligned_ubo_transforms_size) as isize)
-                                as *mut PbrTransformDataSingleInstanceUBO,
+                                    as *mut PbrTransformDataSingleInstanceUBO,
                                 1,
                             );
                         }

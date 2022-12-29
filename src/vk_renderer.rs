@@ -1343,15 +1343,6 @@ impl GraphicsPipelineLayoutBuilder {
         }
     }
 
-    pub fn add_binding(mut self, binding: DescriptorSetLayoutBinding) -> Self {
-        self.layout_bindings
-            .entry(self.current_set)
-            .and_modify(|set_entry| set_entry.push(binding))
-            .or_insert(vec![binding]);
-
-        self
-    }
-
     pub fn set(mut self, set_id: u32, bindings: &[DescriptorSetLayoutBinding]) -> Self {
         self.layout_bindings
             .entry(set_id)
@@ -1363,11 +1354,6 @@ impl GraphicsPipelineLayoutBuilder {
 
     pub fn add_push_constant(mut self, pushc: PushConstantRange) -> Self {
         self.push_constants.push(pushc);
-        self
-    }
-
-    pub fn next_set(mut self) -> Self {
-        self.current_set += 1;
         self
     }
 
@@ -1556,11 +1542,6 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 
     pub fn shader_stages(mut self, shader_modules: &'a [ShaderModuleDescription]) -> Self {
         self.shader_stages.extend_from_slice(shader_modules);
-        self
-    }
-
-    pub fn add_shader_stage(mut self, shader_module: ShaderModuleDescription<'a>) -> Self {
-        self.shader_stages.push(shader_module);
         self
     }
 

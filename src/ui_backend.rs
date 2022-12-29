@@ -233,16 +233,18 @@ impl UiBackend {
                     .input_rate(VertexInputRate::VERTEX)
                     .build(),
             )
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::VERTEX,
-                source: ShaderModuleSource::File(Path::new("data/shaders/ui.vert.spv")),
-                entry_point: "main",
-            })
-            .add_shader_stage(ShaderModuleDescription {
-                stage: ShaderStageFlags::FRAGMENT,
-                source: ShaderModuleSource::File(Path::new("data/shaders/ui.frag.spv")),
-                entry_point: "main",
-            })
+            .shader_stages(&[
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::VERTEX,
+                    source: ShaderModuleSource::File(Path::new("data/shaders/ui.vert.spv")),
+                    entry_point: "main",
+                },
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::FRAGMENT,
+                    source: ShaderModuleSource::File(Path::new("data/shaders/ui.frag.spv")),
+                    entry_point: "main",
+                },
+            ])
             .set_rasterization_state(
                 PipelineRasterizationStateCreateInfo::builder()
                     .cull_mode(CullModeFlags::NONE)
@@ -265,27 +267,27 @@ impl UiBackend {
                     .color_write_mask(ColorComponentFlags::RGBA)
                     .build(),
             )
-            .add_dynamic_state(DynamicState::VIEWPORT)
-            .add_dynamic_state(DynamicState::SCISSOR)
+            .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
             .build(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
                 GraphicsPipelineLayoutBuilder::new()
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(0)
-                            .stage_flags(ShaderStageFlags::VERTEX)
-                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                            .descriptor_count(1)
-                            .build(),
-                    )
-                    .add_binding(
-                        DescriptorSetLayoutBinding::builder()
-                            .binding(1)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1)
-                            .build(),
+                    .set(
+                        0,
+                        &[
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(0)
+                                .stage_flags(ShaderStageFlags::VERTEX)
+                                .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                                .descriptor_count(1)
+                                .build(),
+                            DescriptorSetLayoutBinding::builder()
+                                .binding(1)
+                                .stage_flags(ShaderStageFlags::FRAGMENT)
+                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .descriptor_count(1)
+                                .build(),
+                        ],
                     )
                     .build(renderer.graphics_device())?,
                 renderer.renderpass(),
