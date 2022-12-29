@@ -22,9 +22,8 @@ use crate::{
 };
 
 pub struct SkyboxIBL {
-    pub base_color: UniqueImageWithView,
-    pub irradiance: UniqueImageWithView,
     pub specular: UniqueImageWithView,
+    pub irradiance: UniqueImageWithView,
     pub brdf_lut: UniqueImageWithView,
 }
 
@@ -56,23 +55,13 @@ impl Skybox {
                 let base_color = UniqueImageWithView::from_ktx(
                     renderer,
                     &skybox_work_pkg,
-                    &skybox_texture_dir.clone().join("skybox.ktx2"),
+                    &skybox_texture_dir.clone().join("skybox.specular.ktx2"),
                 )?;
 
                 let irradiance = UniqueImageWithView::from_ktx(
                     renderer,
                     &skybox_work_pkg,
-                    &skybox_texture_dir
-                        .clone()
-                        .join("skybox.diffuse.irradiance.ktx2"),
-                )?;
-
-                let specular = UniqueImageWithView::from_ktx(
-                    renderer,
-                    &skybox_work_pkg,
-                    &skybox_texture_dir
-                        .clone()
-                        .join("skybox.prefiltered.specular.ktx2"),
+                    &skybox_texture_dir.clone().join("skybox.irradiance.ktx2"),
                 )?;
 
                 let brdf_lut = UniqueImageWithView::from_ktx(
@@ -82,9 +71,8 @@ impl Skybox {
                 )?;
 
                 Some(SkyboxIBL {
-                    base_color,
+                    specular: base_color,
                     irradiance,
-                    specular,
                     brdf_lut,
                 })
             })
@@ -97,7 +85,7 @@ impl Skybox {
             return None;
         }
 
-        let max_lod = ibl[0].base_color.0.info.num_levels as f32;
+        let max_lod = ibl[0].specular.info().num_levels as f32;
 
         let indices = [0, 3, 2, 0, 2, 1];
         let index_buffer = UniqueBuffer::gpu_only_buffer(
@@ -184,7 +172,7 @@ impl Skybox {
 
                 let dsi = [DescriptorImageInfo::builder()
                     .sampler(sampler.sampler)
-                    .image_view(skybox_ibl.base_color.1.view)
+                    .image_view(skybox_ibl.specular.image_view())
                     .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .build()];
                 let wds = [WriteDescriptorSet::builder()

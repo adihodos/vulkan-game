@@ -801,7 +801,7 @@ impl std::ops::Drop for UniqueImageView {
     }
 }
 
-pub struct UniqueImageWithView(pub UniqueImage, pub UniqueImageView);
+pub struct UniqueImageWithView(UniqueImage, UniqueImageView);
 
 impl UniqueImageWithView {
     pub fn from_ktx<P: AsRef<std::path::Path>>(
@@ -821,6 +821,18 @@ impl UniqueImageWithView {
         let image_view = UniqueImageView::from_image(renderer, &image)?;
 
         Some(UniqueImageWithView(image, image_view))
+    }
+
+    pub fn image(&self) -> Image {
+        self.0.image
+    }
+
+    pub fn image_view(&self) -> ImageView {
+        self.1.view
+    }
+
+    pub fn info(&self) -> &ImageInfo {
+        &self.0.info
     }
 }
 

@@ -347,7 +347,7 @@ impl GameWorld {
         )?;
 
         skybox.get_ibl_data().iter().for_each(|ibl_data| {
-            let levels_irradiance = ibl_data.irradiance.0.info.num_levels;
+            let levels_irradiance = ibl_data.irradiance.info().num_levels;
 
             let sampler_cubemaps = UniqueSampler::new(
                 renderer.graphics_device(),
@@ -368,17 +368,17 @@ impl GameWorld {
 
             let ibl_desc_img_info = [
                 DescriptorImageInfo::builder()
-                    .image_view(ibl_data.irradiance.1.view)
+                    .image_view(ibl_data.irradiance.image_view())
                     .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .sampler(sampler_cubemaps.sampler)
                     .build(),
                 DescriptorImageInfo::builder()
-                    .image_view(ibl_data.specular.1.view)
+                    .image_view(ibl_data.specular.image_view())
                     .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .sampler(sampler_cubemaps.sampler)
                     .build(),
                 DescriptorImageInfo::builder()
-                    .image_view(ibl_data.brdf_lut.1.view)
+                    .image_view(ibl_data.brdf_lut.image_view())
                     .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .sampler(sampler_brdf_lut.sampler)
                     .build(),
@@ -580,13 +580,11 @@ impl GameWorld {
             device.cmd_set_viewport(draw_context.cmd_buff, 0, &[draw_context.viewport]);
             device.cmd_set_scissor(draw_context.cmd_buff, 0, &[draw_context.scissor]);
 
-            let vertex_buffers = [self.resource_cache.vertex_buffer()];
-            let vertex_offsets = [0u64];
             device.cmd_bind_vertex_buffers(
                 draw_context.cmd_buff,
                 0,
-                &vertex_buffers,
-                &vertex_offsets,
+                &[self.resource_cache.vertex_buffer()],
+                &[0u64],
             );
             device.cmd_bind_index_buffer(
                 draw_context.cmd_buff,

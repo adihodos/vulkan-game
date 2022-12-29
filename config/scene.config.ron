@@ -2,7 +2,7 @@
     skyboxes: [
         (
             tag: "starfield1",
-            path: "skybox/skybox-ibl",
+            path: "skybox/skybox4",
         ),
     ],
 
