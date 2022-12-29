@@ -1340,6 +1340,15 @@ impl GraphicsPipelineLayoutBuilder {
         self
     }
 
+    pub fn set(mut self, set_id: u32, bindings: &[DescriptorSetLayoutBinding]) -> Self {
+        self.layout_bindings
+            .entry(set_id)
+            .and_modify(|set_entry| set_entry.extend_from_slice(bindings))
+            .or_insert(Vec::from(bindings));
+
+        self
+    }
+
     pub fn add_push_constant(mut self, pushc: PushConstantRange) -> Self {
         self.push_constants.push(pushc);
         self
@@ -1464,11 +1473,13 @@ impl UniqueShaderModule {
     }
 }
 
+#[derive(Clone)]
 pub enum ShaderModuleSource<'a> {
     Bytes(&'a [u8]),
     File(&'a std::path::Path),
 }
 
+#[derive(Clone)]
 pub struct ShaderModuleDescription<'a> {
     pub stage: ShaderStageFlags,
     pub source: ShaderModuleSource<'a>,
@@ -1529,6 +1540,11 @@ impl<'a> GraphicsPipelineBuilder<'a> {
                 .build()],
             dynamic_state: Vec::new(),
         }
+    }
+
+    pub fn shader_stages(mut self, shader_modules: &'a [ShaderModuleDescription]) -> Self {
+        self.shader_stages.extend_from_slice(shader_modules);
+        self
     }
 
     pub fn add_shader_stage(mut self, shader_module: ShaderModuleDescription<'a>) -> Self {
@@ -1714,6 +1730,11 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 
     pub fn add_dynamic_state(mut self, dynamic_state: DynamicState) -> Self {
         self.dynamic_state.push(dynamic_state);
+        self
+    }
+
+    pub fn dynamic_states(mut self, dyn_states: &[DynamicState]) -> Self {
+        self.dynamic_state.extend_from_slice(dyn_states);
         self
     }
 }

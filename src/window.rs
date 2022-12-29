@@ -44,6 +44,8 @@ pub struct GamepadInputState {
     pub right_stick_y: GamepadStick,
     pub right_z: GamepadButton,
     pub left_z: GamepadButton,
+    pub ltrigger: GamepadButton,
+    pub rtrigger: GamepadButton,
     pub counter: u64,
 }
 
@@ -126,6 +128,11 @@ impl MainWindow {
                             let code_left_x = gamepad.axis_code(gilrs::Axis::LeftStickX).unwrap();
                             let code_left_y = gamepad.axis_code(gilrs::Axis::LeftStickY).unwrap();
 
+                            let code_ltrigger =
+                                gamepad.button_code(gilrs::Button::LeftTrigger).unwrap();
+                            let code_rtrigger =
+                                gamepad.button_code(gilrs::Button::RightTrigger).unwrap();
+
                             gamepad_input_state = Some(InputState {
                                 gamepad: GamepadInputState {
                                     id: event.id,
@@ -157,6 +164,18 @@ impl MainWindow {
                                     right_z: GamepadButton {
                                         code: code_z_right,
                                         deadzone: gamepad.deadzone(code_z_right).unwrap_or(0.1f32),
+                                        data: None,
+                                    },
+
+                                    ltrigger: GamepadButton {
+                                        code: code_ltrigger,
+                                        deadzone: 0f32,
+                                        data: None,
+                                    },
+
+                                    rtrigger: GamepadButton {
+                                        code: code_rtrigger,
+                                        deadzone: 0f32,
                                         data: None,
                                     },
 
@@ -198,6 +217,15 @@ impl MainWindow {
                         in_st.gamepad.right_z.data = gamepad
                             .state()
                             .button_data(in_st.gamepad.right_z.code)
+                            .copied();
+
+                        in_st.gamepad.ltrigger.data = gamepad
+                            .state()
+                            .button_data(in_st.gamepad.ltrigger.code)
+                            .copied();
+                        in_st.gamepad.rtrigger.data = gamepad
+                            .state()
+                            .button_data(in_st.gamepad.rtrigger.code)
                             .copied();
 
                         game_main.gamepad_input(in_st);
@@ -300,7 +328,6 @@ impl GameMain {
     fn main(&mut self) {
         let elapsed = self.timestamp.get().elapsed();
         self.timestamp.set(Instant::now());
-
 
         let frame_time = elapsed.as_secs_f64().clamp(0f64, 0.25f64);
 

@@ -1,6 +1,9 @@
 use ash::vk::{CommandBuffer, Extent2D, Offset2D, Rect2D, Viewport};
 
-use crate::{camera::Camera, debug_draw_overlay::DebugDrawOverlay, vk_renderer::VulkanRenderer};
+use crate::{
+    camera::Camera, debug_draw_overlay::DebugDrawOverlay, game_world::QueuedCommand,
+    physics_engine::PhysicsEngine, vk_renderer::VulkanRenderer,
+};
 
 pub struct FrameRenderContext<'a> {
     pub renderer: &'a VulkanRenderer,
@@ -20,6 +23,12 @@ pub struct DrawContext<'a> {
     pub camera: &'a dyn Camera,
     pub projection: nalgebra_glm::Mat4,
     pub debug_draw: std::rc::Rc<std::cell::RefCell<DebugDrawOverlay>>,
+}
+
+pub struct UpdateContext<'a> {
+    pub frame_time: f64,
+    pub physics_engine: &'a mut PhysicsEngine,
+    pub queued_commands: Vec<QueuedCommand>,
 }
 
 impl<'a> DrawContext<'a> {

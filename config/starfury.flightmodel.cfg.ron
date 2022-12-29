@@ -1,122 +1,144 @@
 (
-    mass: 23000.0,
-    linear_damping: 1.0,
-    angular_damping: 1.0,
-    throttle_sensitivity: 0.5,
-    thruster_force_primary: 5750.0,
-    thruster_force_secondary: 500.0,
-    thruster_force_vectors: (
-        [
-            0.0,
-            0.0,
-            -1.0,
-        ],
-        [
-            0.0,
-            -1.0,
-            0.0,
-        ],
-        [
-            1.0,
-            0.0,
-            0.0,
-        ],
-        [
-            0.0,
-            0.0,
-            1.0,
-        ],
-        [
-            0.0,
-            0.0,
-            -1.0,
-        ],
-        [
-            0.0,
-            -1.0,
-            0.0,
-        ],
-        [
-            -1.0,
-            0.0,
-            0.0,
-        ],
-        [
-            0.0,
-            0.0,
-            1.0,
-        ],
-        [
-            0.0,
-            0.0,
-            -1.0,
-        ],
-        [
-            0.0,
-            1.0,
-            0.0,
-        ],
-        [
-            1.0,
-            0.0,
-            0.0,
-        ],
-        [
-            0.0,
-            0.0,
-            1.0,
-        ],
-        [
-            0.0,
-            0.0,
-            -1.0,
-        ],
-        [
-            0.0,
-            1.0,
-            0.0,
-        ],
-        [
-            -1.0,
-            0.0,
-            0.0,
-        ],
-        [
-            0.0,
-            0.0,
-            1.0,
-        ],
+    fm: (
+        mass: 23000.0,
+        linear_damping: 1.0,
+        angular_damping: 1.0,
+        throttle_sensitivity: 0.5,
+        thruster_force_primary: 5750.0,
+        thruster_force_secondary: 500.0,
+        thruster_force_vectors: (
+            [
+                0.0,
+                0.0,
+                -1.0,
+            ],
+            [
+                0.0,
+                -1.0,
+                0.0,
+            ],
+            [
+                1.0,
+                0.0,
+                0.0,
+            ],
+            [
+                0.0,
+                0.0,
+                1.0,
+            ],
+            [
+                0.0,
+                0.0,
+                -1.0,
+            ],
+            [
+                0.0,
+                -1.0,
+                0.0,
+            ],
+            [
+                -1.0,
+                0.0,
+                0.0,
+            ],
+            [
+                0.0,
+                0.0,
+                1.0,
+            ],
+            [
+                0.0,
+                0.0,
+                -1.0,
+            ],
+            [
+                0.0,
+                1.0,
+                0.0,
+            ],
+            [
+                1.0,
+                0.0,
+                0.0,
+            ],
+            [
+                0.0,
+                0.0,
+                1.0,
+            ],
+            [
+                0.0,
+                0.0,
+                -1.0,
+            ],
+            [
+                0.0,
+                1.0,
+                0.0,
+            ],
+            [
+                -1.0,
+                0.0,
+                0.0,
+            ],
+            [
+                0.0,
+                0.0,
+                1.0,
+            ],
+        ),
+        maneuver: (
+            roll: (
+                left: [
+                    UpperLeftFront,
+                ],
+                right: [
+                    LowerRightBack,
+                ],
+            ),
+            pitch: (
+                down: [
+                    LowerRightRight,
+                ],
+                up: [
+                    UpperLeftLeft,
+                ],
+            ),
+            yaw: (
+                right: [
+                    LowerRightDown,
+                ],
+                left: [
+                    UpperLeftUp,
+                ],
+            ),
+            movement: (
+                forward: UpperRightBack,
+                backward: UpperLeftFront,
+                right: UpperRightRight,
+                left: UpperLeftLeft,
+            ),
+        ),
     ),
-    maneuver: (
-        roll: (
-            left: [
-                UpperLeftFront,
+    weapons: (
+        guns_cooldown: 0.125,
+        gun_ports: (
+            lower_left: [
+                0.19122,
+                -0.3282,
+                1.111,
             ],
-            right: [
-                LowerRightBack,
-            ],
-        ),
-        pitch: (
-            down: [
-                LowerRightRight,
-            ],
-            up: [
-                UpperLeftLeft,
+            lower_right: [
+                -0.19122,
+                -0.3282,
+                1.111,
             ],
         ),
-        yaw: (
-            right: [
-                LowerRightDown,
-            ],
-            left: [
-                UpperLeftUp,
-            ],
-        ),
-        movement: (
-            forward: UpperRightBack,
-            backward: UpperLeftFront,
-            right: UpperRightRight,
-            left: UpperLeftLeft,
+       laser: (
+            speed: 0.25,
+            mass: 1.0,
+            lifetime: 4.0,
         ),
     ),
 )

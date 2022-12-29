@@ -1,9 +1,9 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use crate::{
-    draw_context::DrawContext,
-    game_world::GameObjectHandle,
-    math::AABB3,
+    draw_context::{DrawContext, UpdateContext},
+    game_world::{GameObjectHandle, ProjectileData, QueuedCommand},
+    math::{self, AABB3},
     physics_engine::PhysicsEngine,
     resource_cache::{GeometryRenderInfo, PbrRenderable, PbrRenderableHandle, ResourceHolder},
     window::InputState,
@@ -141,6 +141,21 @@ struct Maneuver {
     movement: Movement,
 }
 
+#[derive(Copy, Clone, Serialize, Deserialize)]
+struct GunPorts {
+    lower_left: nalgebra::Point3<f32>,
+    lower_right: nalgebra::Point3<f32>,
+}
+
+impl std::default::Default for GunPorts {
+    fn default() -> Self {
+        GunPorts {
+            lower_left: nalgebra::Point3::new(0.19122f32, -0.3282f32, 1.111f32),
+            lower_right: nalgebra::Point3::new(-0.19122f32, -0.3282f32, 1.111f32),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct FlightModel {
     mass: f32,
@@ -153,28 +168,7 @@ struct FlightModel {
     maneuver: Maneuver,
 }
 
-struct EngineThruster {
-    name: String,
-    transform: glm::Mat4,
-    aabb: AABB3,
-}
-
 impl FlightModel {
-    fn write_default_config() {
-        use ron::ser::{to_writer_pretty, PrettyConfig};
-
-        let cfg_opts = PrettyConfig::new()
-            .depth_limit(8)
-            .separate_tuple_members(true);
-
-        to_writer_pretty(
-            std::fs::File::create("config/starfury.flightmodel.default.cfg.ron").expect("cykaaaaa"),
-            &FlightModel::default(),
-            cfg_opts.clone(),
-        )
-        .expect("Failed to write default flight model config");
-    }
-
     fn thruster_force_vector(&self, thruster_id: EngineThrusterId) -> glm::Vec3 {
         self.thruster_force_vectors[thruster_id as usize]
     }
@@ -220,10 +214,74 @@ impl std::default::Default for FlightModel {
     }
 }
 
+struct EngineThruster {
+    name: String,
+    transform: glm::Mat4,
+    aabb: AABB3,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+struct LaserParams {
+    speed: f32,
+    mass: f32,
+    lifetime: f32,
+}
+
+impl std::default::Default for LaserParams {
+    fn default() -> Self {
+        Self {
+            speed: 0.1f32,
+            mass: 1f32,
+            lifetime: 5f32,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Weapons {
+    guns_cooldown: f32,
+    gun_ports: GunPorts,
+    laser: LaserParams,
+}
+
+impl std::default::Default for Weapons {
+    fn default() -> Self {
+        Self {
+            guns_cooldown: 1f32 / 8f32,
+            gun_ports: GunPorts::default(),
+            laser: LaserParams::default(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct StarfuryParameters {
+    fm: FlightModel,
+    weapons: Weapons,
+}
+
+impl StarfuryParameters {
+    fn write_default_config() {
+        use ron::ser::{to_writer_pretty, PrettyConfig};
+
+        let cfg_opts = PrettyConfig::new()
+            .depth_limit(8)
+            .separate_tuple_members(true);
+
+        to_writer_pretty(
+            std::fs::File::create("config/starfury.flightmodel.default.cfg.ron").expect("cykaaaaa"),
+            &StarfuryParameters::default(),
+            cfg_opts.clone(),
+        )
+        .expect("Failed to write default flight model config");
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 enum PhysicsOp {
     ApplyForce(glm::Vec3),
     ApplyTorque(glm::Vec3),
+    FireGuns,
     Reset,
 }
 
@@ -232,20 +290,23 @@ pub struct Starfury {
     pub object_handle: GameObjectHandle,
     pub rigid_body_handle: rapier3d::prelude::RigidBodyHandle,
     pub collider_handle: rapier3d::prelude::ColliderHandle,
-    flight_model: FlightModel,
+    params: StarfuryParameters,
     thrusters: Vec<EngineThruster>,
     physics_ops_queue: RefCell<Vec<PhysicsOp>>,
+    guns_cooldown: Cell<f32>,
 }
 
 impl Starfury {
+    const GUNS_COOLDOWN: f32 = 60f32 / 480f32;
+
     pub fn new(
         object_handle: GameObjectHandle,
         physics_engine: &mut PhysicsEngine,
         resource_cache: &ResourceHolder,
     ) -> Starfury {
-        FlightModel::write_default_config();
+        StarfuryParameters::write_default_config();
 
-        let flight_model: FlightModel = ron::de::from_reader(
+        let params: StarfuryParameters = ron::de::from_reader(
             std::fs::File::open("config/starfury.flightmodel.cfg.ron")
                 .expect("Failed to read Starfury flight model configuration file."),
         )
@@ -273,8 +334,8 @@ impl Starfury {
 
         let body = RigidBodyBuilder::new(RigidBodyType::Dynamic)
             .translation(glm::vec3(0f32, 0f32, 0f32))
-            .linear_damping(flight_model.linear_damping)
-            .angular_damping(flight_model.angular_damping)
+            .linear_damping(params.fm.linear_damping)
+            .angular_damping(params.fm.angular_damping)
             .build();
 
         let bbox_half_extents = geometry.aabb.extents() * 0.5f32;
@@ -283,7 +344,7 @@ impl Starfury {
             bbox_half_extents.y,
             bbox_half_extents.z,
         )
-        .mass(flight_model.mass)
+        .mass(params.fm.mass)
         .build();
 
         let body_handle = physics_engine.rigid_body_set.insert(body);
@@ -298,9 +359,10 @@ impl Starfury {
             object_handle,
             rigid_body_handle: body_handle,
             collider_handle,
-            flight_model,
+            params,
             thrusters,
             physics_ops_queue: RefCell::new(Vec::new()),
+            guns_cooldown: Cell::new(0f32),
         }
     }
 
@@ -311,41 +373,43 @@ impl Starfury {
             VirtualKeyCode::F10 => Some(PhysicsOp::Reset),
 
             VirtualKeyCode::Q => Some(PhysicsOp::ApplyTorque(
-                self.flight_model.thruster_force_secondary
-                    * self.flight_model.thruster_force_vectors
-                        [self.flight_model.maneuver.roll.left[0] as usize],
+                self.params.fm.thruster_force_secondary
+                    * self.params.fm.thruster_force_vectors
+                        [self.params.fm.maneuver.roll.left[0] as usize],
             )),
 
             VirtualKeyCode::E => Some(PhysicsOp::ApplyTorque(
-                self.flight_model.thruster_force_secondary
-                    * self.flight_model.thruster_force_vectors
-                        [self.flight_model.maneuver.roll.right[0] as usize],
+                self.params.fm.thruster_force_secondary
+                    * self.params.fm.thruster_force_vectors
+                        [self.params.fm.maneuver.roll.right[0] as usize],
             )),
 
             VirtualKeyCode::W => Some(PhysicsOp::ApplyTorque(
-                self.flight_model.thruster_force_secondary
-                    * self.flight_model.thruster_force_vectors
-                        [self.flight_model.maneuver.pitch.down[0] as usize],
+                self.params.fm.thruster_force_secondary
+                    * self.params.fm.thruster_force_vectors
+                        [self.params.fm.maneuver.pitch.down[0] as usize],
             )),
 
             VirtualKeyCode::S => Some(PhysicsOp::ApplyTorque(
-                self.flight_model.thruster_force_secondary
-                    * self.flight_model.thruster_force_vectors
-                        [self.flight_model.maneuver.pitch.up[0] as usize],
+                self.params.fm.thruster_force_secondary
+                    * self.params.fm.thruster_force_vectors
+                        [self.params.fm.maneuver.pitch.up[0] as usize],
             )),
 
             VirtualKeyCode::A => Some(PhysicsOp::ApplyTorque(
-                self.flight_model.thruster_force_secondary
+                self.params.fm.thruster_force_secondary
                     * self
-                        .flight_model
-                        .thruster_force_vector(self.flight_model.maneuver.yaw.left[0]),
+                        .params
+                        .fm
+                        .thruster_force_vector(self.params.fm.maneuver.yaw.left[0]),
             )),
 
             VirtualKeyCode::D => Some(PhysicsOp::ApplyTorque(
-                self.flight_model.thruster_force_secondary
+                self.params.fm.thruster_force_secondary
                     * self
-                        .flight_model
-                        .thruster_force_vector(self.flight_model.maneuver.yaw.right[0]),
+                        .params
+                        .fm
+                        .thruster_force_vector(self.params.fm.maneuver.yaw.right[0]),
             )),
             _ => None,
         });
@@ -353,6 +417,50 @@ impl Starfury {
         physics_op.map(|i| {
             self.physics_ops_queue.borrow_mut().push(i);
         });
+    }
+
+    pub fn update(&self, update_context: &mut UpdateContext) {
+        self.guns_cooldown
+            .set((self.guns_cooldown.get() - update_context.frame_time as f32).max(0f32));
+
+        {
+            let rigid_body = update_context
+                .physics_engine
+                .rigid_body_set
+                .get_mut(self.rigid_body_handle)
+                .unwrap();
+
+            self.physics_ops_queue
+                .borrow()
+                .iter()
+                .for_each(|op| match op {
+                    PhysicsOp::FireGuns => {
+                        update_context.queued_commands.extend(
+                            [
+                                QueuedCommand::CmdAddProjectile(ProjectileData {
+                                    origin: self.params.weapons.gun_ports.lower_left,
+                                    speed: self.params.weapons.laser.speed,
+                                    mass: self.params.weapons.laser.mass,
+                                    emitter: self.rigid_body_handle,
+                                    life: self.params.weapons.laser.lifetime,
+                                }),
+                                QueuedCommand::CmdAddProjectile(ProjectileData {
+                                    origin: self.params.weapons.gun_ports.lower_right,
+                                    speed: self.params.weapons.laser.speed,
+                                    mass: self.params.weapons.laser.mass,
+                                    emitter: self.rigid_body_handle,
+                                    life: self.params.weapons.laser.lifetime,
+                                }),
+                            ]
+                            .iter(),
+                        );
+                        // }
+                    }
+                    _ => {}
+                });
+        }
+
+        self.physics_update(&mut update_context.physics_engine);
     }
 
     pub fn physics_update(&self, phys_engine: &mut PhysicsEngine) {
@@ -386,6 +494,8 @@ impl Starfury {
                     rigid_body.set_angvel(Vec3::zeros(), true);
                     rigid_body.set_position(nalgebra::Isometry::identity(), true);
                 }
+
+                _ => (),
             });
 
         self.physics_ops_queue.borrow_mut().clear();
@@ -394,16 +504,27 @@ impl Starfury {
     pub fn gamepad_input(&self, input_state: &InputState) {
         use gilrs::{Axis, Gamepad};
 
+        input_state.gamepad.ltrigger.data.map(|btn| {
+            // log::info!("Ltrigger pressed, cooldown: {}", self.guns_cooldown.get());
+
+            if btn.is_pressed() && !(self.guns_cooldown.get() > 0f32) {
+                self.physics_ops_queue
+                    .borrow_mut()
+                    .push(PhysicsOp::FireGuns);
+                self.guns_cooldown.set(self.params.weapons.guns_cooldown);
+            }
+        });
+
         let movement = [
             (
                 &input_state.gamepad.left_stick_x,
-                self.flight_model.maneuver.movement.right,
-                self.flight_model.maneuver.movement.left,
+                self.params.fm.maneuver.movement.right,
+                self.params.fm.maneuver.movement.left,
             ),
             (
                 &input_state.gamepad.left_stick_y,
-                self.flight_model.maneuver.movement.forward,
-                self.flight_model.maneuver.movement.backward,
+                self.params.fm.maneuver.movement.forward,
+                self.params.fm.maneuver.movement.backward,
             ),
         ];
 
@@ -415,19 +536,19 @@ impl Starfury {
                         return;
                     }
 
-                    let throttle = axis_data.value() * self.flight_model.throttle_sensitivity;
+                    let throttle = axis_data.value() * self.params.fm.throttle_sensitivity;
 
                     let phys_op = if throttle > 0f32 {
                         PhysicsOp::ApplyForce(
                             throttle.abs()
-                                * self.flight_model.thruster_force_primary
-                                * self.flight_model.thruster_force_vector(thruster_id_pos),
+                                * self.params.fm.thruster_force_primary
+                                * self.params.fm.thruster_force_vector(thruster_id_pos),
                         )
                     } else {
                         PhysicsOp::ApplyForce(
                             throttle.abs()
-                                * self.flight_model.thruster_force_primary
-                                * self.flight_model.thruster_force_vector(thruster_id_neg),
+                                * self.params.fm.thruster_force_primary
+                                * self.params.fm.thruster_force_vector(thruster_id_neg),
                         )
                     };
 
@@ -438,13 +559,13 @@ impl Starfury {
         let roll_pitch = [
             (
                 &input_state.gamepad.right_stick_x,
-                self.flight_model.maneuver.roll.left[0],
-                self.flight_model.maneuver.roll.right[0],
+                self.params.fm.maneuver.roll.left[0],
+                self.params.fm.maneuver.roll.right[0],
             ),
             (
                 &input_state.gamepad.right_stick_y,
-                self.flight_model.maneuver.pitch.up[0],
-                self.flight_model.maneuver.pitch.down[0],
+                self.params.fm.maneuver.pitch.up[0],
+                self.params.fm.maneuver.pitch.down[0],
             ),
         ];
 
@@ -456,20 +577,20 @@ impl Starfury {
                         return;
                     }
 
-                    let throttle = axis_data.value() * self.flight_model.throttle_sensitivity;
+                    let throttle = axis_data.value() * self.params.fm.throttle_sensitivity;
                     // log::info!("Throttle: {}", throttle);
 
                     let phys_op = if throttle > 0f32 {
                         PhysicsOp::ApplyTorque(
                             throttle.abs()
-                                * self.flight_model.thruster_force_secondary
-                                * self.flight_model.thruster_force_vector(thruster_id_pos),
+                                * self.params.fm.thruster_force_secondary
+                                * self.params.fm.thruster_force_vector(thruster_id_pos),
                         )
                     } else {
                         PhysicsOp::ApplyTorque(
                             throttle.abs()
-                                * self.flight_model.thruster_force_secondary
-                                * self.flight_model.thruster_force_vector(thruster_id_neg),
+                                * self.params.fm.thruster_force_secondary
+                                * self.params.fm.thruster_force_vector(thruster_id_neg),
                         )
                     };
 
@@ -480,11 +601,11 @@ impl Starfury {
         let yaws = [
             (
                 &input_state.gamepad.right_z,
-                self.flight_model.maneuver.yaw.right[0],
+                self.params.fm.maneuver.yaw.right[0],
             ),
             (
                 &input_state.gamepad.left_z,
-                self.flight_model.maneuver.yaw.left[0],
+                self.params.fm.maneuver.yaw.left[0],
             ),
         ];
 
@@ -494,14 +615,14 @@ impl Starfury {
                     return;
                 }
 
-                let throttle_factor = button_data.value() * self.flight_model.throttle_sensitivity;
+                let throttle_factor = button_data.value() * self.params.fm.throttle_sensitivity;
 
                 self.physics_ops_queue
                     .borrow_mut()
                     .push(PhysicsOp::ApplyTorque(
                         throttle_factor
-                            * self.flight_model.thruster_force_secondary
-                            * self.flight_model.thruster_force_vector(thruster_id),
+                            * self.params.fm.thruster_force_secondary
+                            * self.params.fm.thruster_force_vector(thruster_id),
                     ));
             });
         });

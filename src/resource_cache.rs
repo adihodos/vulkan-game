@@ -131,6 +131,7 @@ impl ResourceHolder {
         );
 
         imported_geometries.iter().for_each(|(tag, geom)| {
+            log::info!("{} -> {}", tag, geom.aabb.extents());
             let texture_cpu2gpu_copy_work_package = renderer
                 .create_work_package()
                 .expect("Failed to create work package");
