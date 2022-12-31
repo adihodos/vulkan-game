@@ -13,7 +13,7 @@ use ash::vk::{
     ShaderStageFlags, WriteDescriptorSet, WriteDescriptorSetBuilder,
 };
 use glm::{Mat4, Vec3};
-use nalgebra::{Isometry3, Translation3};
+use nalgebra::{Isometry3, Point3, Translation3};
 use nalgebra_glm::Vec4;
 
 use nalgebra_glm as glm;
@@ -30,7 +30,8 @@ use crate::{
     flight_cam::FlightCamera,
     game_object::GameObjectRenderState,
     math,
-    physics_engine::PhysicsEngine,
+    particles::{ImpactSpark, SparksSystem},
+    physics_engine::{ColliderUserData, PhysicsEngine},
     projectile_system::{ProjectileSpawnData, ProjectileSystem},
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     shadow_swarm::ShadowFighterSwarm,
@@ -47,6 +48,7 @@ use crate::{
 #[derive(Copy, Clone, Debug)]
 pub enum QueuedCommand {
     SpawnProjectile(ProjectileSpawnData),
+    ProcessProjectileImpact(ColliderUserData),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -226,6 +228,7 @@ pub struct GameWorld {
     camera: RefCell<FlightCamera>,
     debug_draw_overlay: Rc<RefCell<DebugDrawOverlay>>,
     projectiles_sys: RefCell<ProjectileSystem>,
+    sparks_sys: RefCell<SparksSystem>,
 }
 
 impl GameWorld {
@@ -473,6 +476,7 @@ impl GameWorld {
                 DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
             )),
             projectiles_sys: RefCell::new(ProjectileSystem::create(renderer, app_cfg)?),
+            sparks_sys: RefCell::new(SparksSystem::create(renderer, app_cfg)?),
         })
     }
 
@@ -668,12 +672,13 @@ impl GameWorld {
                 }
             });
 
+            self.draw_instanced_objects(draw_context);
+
             self.projectiles_sys
                 .borrow()
                 .render(draw_context, &self.physics_engine.borrow());
+            self.sparks_sys.borrow().render(draw_context);
         }
-
-        self.draw_instanced_objects(draw_context);
     }
 
     fn draw_instanced_objects(&self, draw_context: &DrawContext) {
@@ -894,19 +899,15 @@ impl GameWorld {
             let queued_commands = {
                 let mut phys_engine = self.physics_engine.borrow_mut();
                 let mut update_ctx = UpdateContext {
-                    physics_engine: &mut &mut phys_engine,
+                    physics_engine: &mut phys_engine,
                     queued_commands: Vec::with_capacity(32),
                     frame_time,
                 };
 
                 self.projectiles_sys.borrow_mut().update(&mut update_ctx);
+                self.sparks_sys.borrow_mut().update(&mut update_ctx);
 
                 self.starfury.update(&mut update_ctx);
-                // log::info!(
-                //     "Queued commands for this frame: {}",
-                //     update_ctx.queued_commands.len()
-                // );
-
                 update_ctx.queued_commands
             };
 
@@ -918,7 +919,7 @@ impl GameWorld {
                         QueuedCommand::SpawnProjectile(data) => {
                             self.projectiles_sys
                                 .borrow_mut()
-                                .add_projectile(data, &mut phys_eng);
+                                .spawn_projectile(data, &mut phys_eng);
                         }
                         _ => {}
                     });
@@ -935,10 +936,19 @@ impl GameWorld {
             }
         }
 
+        let mut cmds = Vec::<QueuedCommand>::with_capacity(16);
         (0..Self::num_physics_steps_240hz(frame_time)).for_each(|_| {
             //
             // do physics step
-            self.physics_engine.borrow_mut().update();
+            cmds.clear();
+            self.physics_engine.borrow_mut().update(&mut cmds);
+
+            cmds.iter().for_each(|&cmd| match cmd {
+                QueuedCommand::ProcessProjectileImpact(cdata) => {
+                    self.projectile_impacted_event(cdata);
+                }
+                _ => {}
+            });
             //
             // update flight camera
             self.physics_engine
@@ -947,6 +957,40 @@ impl GameWorld {
                 .get(self.starfury.rigid_body_handle)
                 .map(|starfury_phys_obj| self.camera.borrow_mut().update(starfury_phys_obj));
         });
+    }
+
+    fn projectile_impacted_event(&self, proj_collider_data: ColliderUserData) {
+        // log::info!("Impact for {}", proj_collider_data);
+        let impacted_proj = self
+            .projectiles_sys
+            .borrow()
+            .get_projectile(proj_collider_data);
+
+        let projectile_isometry = *self
+            .physics_engine
+            .borrow()
+            .rigid_body_set
+            .get(impacted_proj.rigid_body_handle)
+            .unwrap()
+            .position();
+
+        self.sparks_sys.borrow_mut().spawn_sparks(
+            ImpactSpark {
+                pos: Point3::from_slice(projectile_isometry.translation.vector.as_slice()),
+                dir: -impacted_proj.direction,
+                color: glm::vec3(1f32, 0f32, 0f32),
+                speed: 2.0f32,
+                life: 2f32,
+            },
+            &projectile_isometry,
+        );
+
+        self.projectiles_sys
+            .borrow_mut()
+            .despawn_projectile(proj_collider_data);
+        self.physics_engine
+            .borrow_mut()
+            .remove_rigid_body(proj_collider_data.rigid_body());
     }
 
     pub fn input_event(&self, event: &winit::event::WindowEvent) {

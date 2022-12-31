@@ -576,7 +576,7 @@ impl UniqueImage {
         let image_info = ImageInfo::from(header);
         log::info!("Image info: {:?}", image_info);
 
-        let mut image_create_flags = if image_info.is_cubemap {
+        let image_create_flags = if image_info.is_cubemap {
             ImageCreateFlags::CUBE_COMPATIBLE
         } else {
             ImageCreateFlags::empty()

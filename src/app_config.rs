@@ -52,6 +52,10 @@ impl EngineConfig {
     pub fn shader_path<P: AsRef<std::path::Path>>(&self, shader_file: P) -> PathBuf {
         self.shaders.clone().join(shader_file)
     }
+
+    pub fn texture_path<P: AsRef<std::path::Path>>(&self, texture_file: P) -> PathBuf {
+        self.textures.clone().join(texture_file)
+    }
 }
 
 // fn write_config() {

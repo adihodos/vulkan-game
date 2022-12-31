@@ -1,7 +1,81 @@
+use crossbeam::channel::Receiver;
 use nalgebra_glm as glm;
 use rapier3d::prelude::*;
 
-use crate::{debug_draw_overlay::DebugDrawOverlay, draw_context::DrawContext};
+use crate::{
+    debug_draw_overlay::DebugDrawOverlay, draw_context::DrawContext, game_world::QueuedCommand,
+};
+
+#[derive(Copy, Clone, Debug)]
+pub struct ColliderUserData(u128);
+
+impl ColliderUserData {
+    pub fn new(body: RigidBodyHandle) -> ColliderUserData {
+        let (handle_low, handle_high) = body.into_raw_parts();
+
+        ColliderUserData(((handle_low as u64) | ((handle_high as u64) << 32)) as u128)
+    }
+
+    pub fn rigid_body(self) -> RigidBodyHandle {
+        let id = (self.0 & 0x00000000_00000000_00000000_FFFFFFFFu128) as u32;
+        let gen = ((self.0 & 0x00000000_00000000_FFFFFFFF_00000000u128) >> 32) as u32;
+        RigidBodyHandle::from_raw_parts(id, gen)
+    }
+}
+
+impl std::convert::From<ColliderUserData> for u128 {
+    fn from(c: ColliderUserData) -> Self {
+        c.0
+    }
+}
+
+impl std::fmt::Display for ColliderUserData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::write!(f, "[ColliderUseData -> {:#?}]", self.rigid_body())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ColliderUserData;
+    use rapier3d::prelude::RigidBodyHandle;
+
+    #[test]
+    fn collider_user_data() {
+        let rbody = RigidBodyHandle::from_raw_parts(70, 5);
+        let cd = ColliderUserData::new(rbody);
+        assert_eq!(rbody, cd.rigid_body());
+    }
+}
+
+pub struct PhysicsObjectGroups {}
+
+impl PhysicsObjectGroups {
+    pub const SHIPS: Group = Group::GROUP_1;
+    pub const PROJECTILES: Group = Group::GROUP_2;
+    pub const MISSILES: Group = Group::GROUP_3;
+}
+
+pub struct PhysicsObjectCollisionGroups {}
+
+impl PhysicsObjectCollisionGroups {
+    pub fn ships() -> InteractionGroups {
+        InteractionGroups::new(
+            PhysicsObjectGroups::SHIPS,
+            PhysicsObjectGroups::SHIPS
+                | PhysicsObjectGroups::MISSILES
+                | PhysicsObjectGroups::PROJECTILES,
+        )
+    }
+
+    pub fn projectiles() -> InteractionGroups {
+        InteractionGroups::new(PhysicsObjectGroups::PROJECTILES, PhysicsObjectGroups::SHIPS)
+    }
+
+    pub fn missiles() -> InteractionGroups {
+        InteractionGroups::new(PhysicsObjectGroups::MISSILES, PhysicsObjectGroups::SHIPS)
+    }
+}
 
 pub struct PhysicsEngine {
     gravity: glm::Vec3,
@@ -17,13 +91,19 @@ pub struct PhysicsEngine {
     multibody_joint_set: MultibodyJointSet,
     ccd_solver: CCDSolver,
     physics_hooks: (),
-    event_handler: (),
+    event_handler: ChannelEventCollector,
+    collision_recv: Receiver<CollisionEvent>,
+    contact_force_recv: Receiver<ContactForceEvent>,
 }
 
 impl PhysicsEngine {
     pub fn new() -> PhysicsEngine {
         let mut integration_params = IntegrationParameters::default();
         integration_params.dt = 1f32 / 240f32;
+
+        let (collision_send, collision_recv) = crossbeam::channel::unbounded();
+        let (contact_force_send, contact_force_recv) = crossbeam::channel::unbounded();
+        let event_handler = ChannelEventCollector::new(collision_send, contact_force_send);
 
         PhysicsEngine {
             gravity: glm::vec3(0f32, 0f32, 0f32),
@@ -42,11 +122,13 @@ impl PhysicsEngine {
             multibody_joint_set: MultibodyJointSet::new(),
             ccd_solver: CCDSolver::new(),
             physics_hooks: (),
-            event_handler: (),
+            event_handler,
+            collision_recv,
+            contact_force_recv,
         }
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self, cmds: &mut Vec<QueuedCommand>) {
         self.physics_pipeline.step(
             &self.gravity,
             &self.integration_params,
@@ -61,6 +143,29 @@ impl PhysicsEngine {
             &self.physics_hooks,
             &self.event_handler,
         );
+
+        while let Ok(collision_event) = self.collision_recv.try_recv() {
+            if !collision_event.sensor() || !collision_event.started() {
+                continue;
+            }
+
+            if let Some(true) = self
+                .narrow_phase
+                .intersection_pair(collision_event.collider1(), collision_event.collider2())
+            {
+                self.collider_set
+                    .iter()
+                    .find(|&(collider_handle, collider)| {
+                        (collider_handle == collision_event.collider1()
+                            || collider_handle == collision_event.collider2())
+                            && collider.is_sensor()
+                    })
+                    .map(|(collider_handle, collider)| {
+                        let collider_user_data = ColliderUserData(collider.user_data);
+                        cmds.push(QueuedCommand::ProcessProjectileImpact(collider_user_data));
+                    });
+            }
+        }
     }
 
     pub fn debug_draw(&mut self, backend: &mut DebugDrawOverlay) {

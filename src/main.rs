@@ -8,6 +8,7 @@ mod game_object;
 mod game_world;
 mod imported_geometry;
 mod math;
+mod particles;
 mod pbr;
 mod physics_engine;
 mod projectile_system;

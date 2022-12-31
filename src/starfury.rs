@@ -4,7 +4,7 @@ use crate::{
     draw_context::{DrawContext, UpdateContext},
     game_world::{GameObjectHandle, QueuedCommand},
     math::AABB3,
-    physics_engine::PhysicsEngine,
+    physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
     projectile_system::ProjectileSpawnData,
     resource_cache::{GeometryRenderInfo, PbrRenderable, PbrRenderableHandle, ResourceHolder},
     window::InputState,
@@ -352,6 +352,8 @@ impl Starfury {
             body_handle,
             &mut physics_engine.rigid_body_set,
         );
+
+        log::info!("Starfury collider {:?}", collider_handle);
 
         Starfury {
             renderable: geometry_handle,

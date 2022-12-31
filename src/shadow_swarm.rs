@@ -2,7 +2,7 @@ use nalgebra_glm as glm;
 
 use crate::{
     game_object::{GameObjectPhysicsData, GameObjectRenderState},
-    physics_engine::PhysicsEngine,
+    physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
     resource_cache::{PbrRenderableHandle, ResourceHolder},
 };
 

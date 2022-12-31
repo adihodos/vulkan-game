@@ -9,7 +9,7 @@ use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 use crate::{
     app_config::AppConfig,
     draw_context::{DrawContext, UpdateContext},
-    physics_engine::PhysicsEngine,
+    physics_engine::{ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups},
     vk_renderer::{
         Cpu2GpuBuffer, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
         ShaderModuleDescription, ShaderModuleSource, UniqueGraphicsPipeline, VulkanRenderer,
@@ -26,10 +26,11 @@ pub struct ProjectileSpawnData {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct Projectile {
-    data: ProjectileSpawnData,
-    rigid_body_handle: RigidBodyHandle,
-    collider_handle: ColliderHandle,
+pub struct Projectile {
+    pub data: ProjectileSpawnData,
+    pub direction: glm::Vec3,
+    pub rigid_body_handle: RigidBodyHandle,
+    pub collider_handle: ColliderHandle,
 }
 
 impl Projectile {
@@ -50,7 +51,8 @@ impl Projectile {
                 .rotation(),
         );
 
-        let velocity = (projectile_isometry * glm::Vec3::z_axis()).xyz() * projectile_data.speed;
+        let direction = (projectile_isometry * glm::Vec3::z_axis()).xyz();
+        let velocity = direction * projectile_data.speed;
 
         let mut rigid_body = rapier3d::prelude::RigidBodyBuilder::dynamic()
             .position(projectile_isometry)
@@ -58,19 +60,30 @@ impl Projectile {
             .build();
 
         rigid_body.add_force(velocity, true);
+        let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
 
         let collider = rapier3d::prelude::ColliderBuilder::cuboid(0.01f32, 0.01f32, 0.5f32)
+            .active_events(rapier3d::prelude::ActiveEvents::COLLISION_EVENTS)
+            .collision_groups(PhysicsObjectCollisionGroups::projectiles())
             .sensor(true)
+            .user_data(ColliderUserData::new(rigid_body_handle).into())
             .build();
-        let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
+
         let collider_handle = physics_engine.collider_set.insert_with_parent(
             collider,
             rigid_body_handle,
             &mut physics_engine.rigid_body_set,
         );
 
+        log::info!(
+            "spawned projectile {:#?}, {:#?}",
+            rigid_body_handle,
+            collider_handle,
+        );
+
         Projectile {
             data: projectile_data,
+            direction,
             rigid_body_handle,
             collider_handle,
         }
@@ -251,11 +264,30 @@ impl ProjectileSystem {
         });
     }
 
-    pub fn add_projectile(&mut self, data: ProjectileSpawnData, phys_engine: &mut PhysicsEngine) {
+    pub fn spawn_projectile(&mut self, data: ProjectileSpawnData, phys_engine: &mut PhysicsEngine) {
         if self.projectiles.len() > Self::MAX_PROJECTILES {
             log::info!("Discarding projectile, max limit reached");
         }
         self.projectiles.push(Projectile::new(data, phys_engine));
+    }
+
+    pub fn despawn_projectile(&mut self, data: ColliderUserData) {
+        let proj_body = data.rigid_body();
+        self.projectiles
+            .iter()
+            .position(|projectile| projectile.rigid_body_handle == proj_body)
+            .map(|proj_pos| {
+                // log::info!("Despawning projectile {} @ position {}", data, proj_pos);
+                self.projectiles.swap_remove(proj_pos);
+            });
+    }
+
+    pub fn get_projectile(&self, data: ColliderUserData) -> Projectile {
+        *self
+            .projectiles
+            .iter()
+            .find(|p| p.rigid_body_handle == data.rigid_body())
+            .unwrap()
     }
 
     pub fn render(&self, draw_context: &DrawContext, phys_engine: &PhysicsEngine) {
@@ -268,6 +300,8 @@ impl ProjectileSystem {
             .map(|ubo_mapping| {
                 let transforms = GpuProjectileTransformData {
                     projection_view: draw_context.projection * draw_context.camera.view_transform(),
+                    //
+                    // TODO: hardcoded value, move to config file
                     extents: glm::vec3(0.15f32, 0.15f32, 1f32),
                 };
 

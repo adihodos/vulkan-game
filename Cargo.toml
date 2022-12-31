@@ -31,6 +31,7 @@ ktx2 = "*"
 palette = "*"
 rapier3d = { version = "*", features = [ "simd-stable", "debug-render" ] }
 gilrs = "*"
+crossbeam = "*"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 	windows-sys = { version = "*", features = ["Win32_Foundation", "Win32_System_LibraryLoader"]}
