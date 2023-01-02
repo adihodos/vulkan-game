@@ -1,7 +1,7 @@
 mod app_config;
 mod arcball_camera;
 mod camera;
-mod crosshair;
+mod color_palettes;
 mod debug_draw_overlay;
 mod draw_context;
 mod flight_cam;

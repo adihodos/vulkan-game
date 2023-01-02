@@ -25,7 +25,7 @@ use smallvec::SmallVec;
 use crate::{
     app_config::AppConfig,
     camera::Camera,
-    crosshair::CrosshairSystem,
+    color_palettes::StdColors,
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, FrameRenderContext, UpdateContext},
     flight_cam::FlightCamera,
@@ -37,7 +37,7 @@ use crate::{
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     shadow_swarm::ShadowFighterSwarm,
     skybox::Skybox,
-    sprite_batch::SpriteBatch,
+    sprite_batch::{SpriteBatch, TextureRegion},
     starfury::Starfury,
     vk_renderer::{
         Cpu2GpuBuffer, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
@@ -532,6 +532,24 @@ impl GameWorld {
             {
                 let mut sb = self.sprite_batch.borrow_mut();
 
+                sb.draw(
+                    512f32,
+                    512f32,
+                    128f32,
+                    128f32,
+                    TextureRegion::complete(0),
+                    Some(StdColors::DARK_RED),
+                );
+
+                sb.draw(
+                    512f32,
+                    512f32,
+                    128f32,
+                    128f32,
+                    TextureRegion::complete(1),
+                    Some(StdColors::GREEN),
+                );
+
                 sb.draw_scaled_rotated(
                     0f32,
                     0f32,
@@ -539,7 +557,8 @@ impl GameWorld {
                     1f32,
                     512f32,
                     glm::radians(&glm::vec1(45f32)).x,
-                    0,
+                    TextureRegion::complete(0),
+                    Some(StdColors::MEDIUM_SPRING_GREEN),
                 );
                 sb.draw_scaled_rotated(
                     0f32,
@@ -548,21 +567,25 @@ impl GameWorld {
                     1f32,
                     512f32,
                     glm::radians(&glm::vec1(45f32)).x,
-                    1,
+                    TextureRegion::complete(1),
+                    Some(StdColors::MEDIUM_SPRING_GREEN),
+                );
+
+                sb.draw_with_origin(
+                    draw_context.viewport.width * 0.5f32,
+                    draw_context.viewport.height * 0.5f32,
+                    128f32,
+                    128f32,
+                    TextureRegion::complete(0),
+                    Some(StdColors::ORANGE_RED),
                 );
                 sb.draw_with_origin(
                     draw_context.viewport.width * 0.5f32,
                     draw_context.viewport.height * 0.5f32,
                     128f32,
                     128f32,
-                    0,
-                );
-                sb.draw_with_origin(
-                    draw_context.viewport.width * 0.5f32,
-                    draw_context.viewport.height * 0.5f32,
-                    128f32,
-                    128f32,
-                    1,
+                    TextureRegion::complete(1),
+                    Some(StdColors::ORANGE_RED),
                 );
 
                 sb.draw_scaled_rotated_with_origin(
@@ -572,7 +595,8 @@ impl GameWorld {
                     1f32,
                     32f32,
                     glm::radians(&glm::vec1(60f32)).x,
-                    0,
+                    TextureRegion::complete(0),
+                    Some(StdColors::LIME),
                 );
                 sb.draw_scaled_rotated_with_origin(
                     128f32,
@@ -581,7 +605,8 @@ impl GameWorld {
                     1f32,
                     32f32,
                     glm::radians(&glm::vec1(60f32)).x,
-                    1,
+                    TextureRegion::complete(1),
+                    Some(StdColors::LIME),
                 );
                 sb.render(&draw_context);
             }

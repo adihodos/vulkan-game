@@ -1,5 +1,6 @@
 use crate::{
     app_config::AppConfig,
+    color_palettes::StdColors,
     draw_context::DrawContext,
     math,
     vk_renderer::{
@@ -31,13 +32,72 @@ pub struct SpriteBatch {
     texture: UniqueImageWithView,
 }
 
+#[derive(Copy, Clone)]
+pub struct TextureRegion {
+    pub layer: u32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl TextureRegion {
+    pub fn complete(layer: u32) -> TextureRegion {
+        TextureRegion {
+            layer,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        }
+    }
+}
+
+struct TextureCoords {
+    layer: u32,
+    bottom_left: glm::Vec2,
+    top_left: glm::Vec2,
+    top_right: glm::Vec2,
+    bottom_right: glm::Vec2,
+}
+
+impl TextureCoords {
+    fn new(texture: &UniqueImageWithView, region: TextureRegion) -> Self {
+        assert!(region.layer < texture.info().num_layers);
+        //
+        //
+        let region = if region.width == 0 || region.height == 0 {
+            TextureRegion {
+                width: texture.info().width,
+                height: texture.info().height,
+                ..region
+            }
+        } else {
+            region
+        };
+
+        let u = region.x as f32 / texture.info().width as f32;
+        let v = region.y as f32 / texture.info().height as f32;
+        let s = region.width as f32 / texture.info().width as f32;
+        let t = region.height as f32 / texture.info().height as f32;
+
+        TextureCoords {
+            layer: region.layer,
+            bottom_left: glm::vec2(u, v),
+            top_left: glm::vec2(u, v + t),
+            top_right: glm::vec2(u + s, v + t),
+            bottom_right: glm::vec2(u, v + t),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 struct SpriteVertex {
     pos: glm::Vec2,
     uv: glm::Vec2,
-    color: glm::Vec4,
     texid: u32,
+    color: u32,
 }
 
 impl SpriteBatch {
@@ -113,14 +173,14 @@ impl SpriteBatch {
                 VertexInputAttributeDescription {
                     location: 2,
                     binding: 0,
-                    format: Format::R32G32B32A32_SFLOAT,
-                    offset: offset_of!(SpriteVertex, color) as u32,
+                    format: Format::R32_UINT,
+                    offset: offset_of!(SpriteVertex, texid) as u32,
                 },
                 VertexInputAttributeDescription {
                     location: 3,
                     binding: 0,
-                    format: Format::R32_UINT,
-                    offset: offset_of!(SpriteVertex, texid) as u32,
+                    format: Format::R8G8B8A8_UNORM,
+                    offset: offset_of!(SpriteVertex, color) as u32,
                 },
             ])
             .add_vertex_input_attribute_binding(
@@ -248,35 +308,43 @@ impl SpriteBatch {
         })
     }
 
-    pub fn draw(&mut self, x: f32, y: f32, width: f32, height: f32, texture_id: u32) {
-        let WHITE_COLOR: glm::Vec4 = glm::vec4(1f32, 1f32, 1f32, 1f32);
-
+    pub fn draw(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        region: TextureRegion,
+        color: Option<u32>,
+    ) {
+        let texcoords = TextureCoords::new(&self.texture, region);
+        let sprite_color = color.unwrap_or(StdColors::WHITE);
         let vertex_offset = self.vertices_cpu.len() as u16;
 
         self.vertices_cpu.extend_from_slice(&[
             SpriteVertex {
                 pos: glm::vec2(x, y + height),
-                uv: glm::vec2(0f32, 0f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.bottom_left,
+                color: sprite_color,
+                texid: region.layer,
             },
             SpriteVertex {
                 pos: glm::vec2(x, y),
-                uv: glm::vec2(0f32, 1f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.top_left,
+                color: sprite_color,
+                texid: region.layer,
             },
             SpriteVertex {
                 pos: glm::vec2(x + width, y),
-                uv: glm::vec2(1f32, 1f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.top_right,
+                color: sprite_color,
+                texid: region.layer,
             },
             SpriteVertex {
                 pos: glm::vec2(x + width, y + height),
-                uv: glm::vec2(1f32, 0f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.bottom_right,
+                color: sprite_color,
+                texid: region.layer,
             },
         ]);
 
@@ -295,7 +363,8 @@ impl SpriteBatch {
         height: f32,
         scale: f32,
         rotation: f32,
-        texture_id: u32,
+        region: TextureRegion,
+        color: Option<u32>,
     ) {
         let v0 = glm::vec2(x, y + height);
         let v1 = glm::vec2(x, y);
@@ -345,34 +414,34 @@ impl SpriteBatch {
         let v2 = v2 + o;
         let v3 = v3 + o;
 
-        let WHITE_COLOR: glm::Vec4 = glm::vec4(1f32, 1f32, 1f32, 1f32);
-
+        let texcoords = TextureCoords::new(&self.texture, region);
+        let sprite_color = color.unwrap_or(StdColors::WHITE);
         let vertex_offset = self.vertices_cpu.len() as u16;
 
         self.vertices_cpu.extend_from_slice(&[
             SpriteVertex {
                 pos: v0,
-                uv: glm::vec2(0f32, 0f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.bottom_left,
+                color: sprite_color,
+                texid: texcoords.layer,
             },
             SpriteVertex {
                 pos: v1,
-                uv: glm::vec2(0f32, 1f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.top_left,
+                color: sprite_color,
+                texid: texcoords.layer,
             },
             SpriteVertex {
                 pos: v2,
-                uv: glm::vec2(1f32, 1f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.top_right,
+                color: sprite_color,
+                texid: texcoords.layer,
             },
             SpriteVertex {
                 pos: v3,
-                uv: glm::vec2(1f32, 0f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.bottom_right,
+                color: sprite_color,
+                texid: texcoords.layer,
             },
         ]);
 
@@ -383,10 +452,17 @@ impl SpriteBatch {
         );
     }
 
-    pub fn draw_with_origin(&mut self, ox: f32, oy: f32, width: f32, height: f32, texid: u32) {
+    pub fn draw_with_origin(
+        &mut self,
+        ox: f32,
+        oy: f32,
+        width: f32,
+        height: f32,
+        region: TextureRegion,
+        color: Option<u32>,
+    ) {
         let (hw, hh) = (width * 0.5f32, height * 0.5f32);
-
-        self.draw(ox - hw, oy - hh, width, height, texid);
+        self.draw(ox - hw, oy - hh, width, height, region, color);
     }
 
     pub fn draw_scaled_rotated_with_origin(
@@ -397,7 +473,8 @@ impl SpriteBatch {
         height: f32,
         scale: f32,
         rotation: f32,
-        texture_id: u32,
+        region: TextureRegion,
+        color: Option<u32>,
     ) {
         let t = glm::vec2(ox, oy);
         let (hw, hh) = (width * 0.5f32, height * 0.5f32);
@@ -431,32 +508,33 @@ impl SpriteBatch {
         let v2 = v2 + t;
         let v3 = v3 + t;
 
-        let WHITE_COLOR: glm::Vec4 = glm::vec4(1f32, 1f32, 1f32, 1f32);
+        let texcoords = TextureCoords::new(&self.texture, region);
+        let sprite_color = color.unwrap_or(StdColors::WHITE);
         let vertex_offset = self.vertices_cpu.len() as u16;
         self.vertices_cpu.extend_from_slice(&[
             SpriteVertex {
                 pos: v0,
-                uv: glm::vec2(0f32, 0f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.bottom_left,
+                color: sprite_color,
+                texid: texcoords.layer,
             },
             SpriteVertex {
                 pos: v1,
-                uv: glm::vec2(0f32, 1f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.top_left,
+                color: sprite_color,
+                texid: texcoords.layer,
             },
             SpriteVertex {
                 pos: v2,
-                uv: glm::vec2(1f32, 1f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.top_right,
+                color: sprite_color,
+                texid: texcoords.layer,
             },
             SpriteVertex {
                 pos: v3,
-                uv: glm::vec2(1f32, 0f32),
-                color: WHITE_COLOR,
-                texid: texture_id,
+                uv: texcoords.bottom_right,
+                color: sprite_color,
+                texid: texcoords.layer,
             },
         ]);
 
