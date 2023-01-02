@@ -31,6 +31,64 @@ pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> glm:
     // return projection;
 }
 
+pub fn perspective2(rmin: f32, rmax: f32, umin: f32, umax: f32, dmin: f32, dmax: f32) -> glm::Mat4 {
+    glm::Mat4::from_column_slice(&[
+        //
+        //
+        (2.0 * dmin) / (rmax - rmin),
+        0f32,
+        0f32,
+        0f32,
+        //
+        //
+        0f32,
+        (-2.0 * dmin) / (umax - umin),
+        0f32,
+        0f32,
+        //
+        //
+        -(rmax + rmin) / (rmax - rmin),
+        -(umax + umin) / (umax - umin),
+        dmin / (dmax - dmin),
+        -1f32,
+        //
+        //
+        0f32,
+        0f32,
+        (dmax * dmin) / (dmax - dmin),
+        0f32,
+    ])
+}
+
+pub fn orthographic(rmin: f32, rmax: f32, umin: f32, umax: f32, dmin: f32, dmax: f32) -> glm::Mat4 {
+    glm::Mat4::from_column_slice(&[
+        //
+        //
+        2f32 / (rmax - rmin),
+        0f32,
+        0f32,
+        0f32,
+        //
+        //
+        0f32,
+        2f32 / (umax - umin),
+        0f32,
+        0f32,
+        //
+        //
+        0f32,
+        0f32,
+        1f32 / (dmax - dmin),
+        0f32,
+        //
+        //
+        -(rmax + rmin) / (rmax - rmin),
+        -(umax + umin) / (umax - umin),
+        -dmin / (dmax - dmin),
+        1f32,
+    ])
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct AABB3 {
     pub min: glm::Vec3,

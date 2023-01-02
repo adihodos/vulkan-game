@@ -9,6 +9,7 @@ use ash::vk::{
 use memoffset::offset_of;
 use nalgebra::{Isometry3, Translation};
 use nalgebra_glm as glm;
+use rand::Rng;
 
 use crate::{
     app_config::AppConfig,
@@ -251,17 +252,20 @@ impl SparksSystem {
         })
     }
 
-    pub fn spawn_sparks(&mut self, s: ImpactSpark, orientation_matrix: &nalgebra::Isometry3<f32>) {
-        let orientation_matrix =
-            Isometry3::from_parts(Translation::identity(), orientation_matrix.rotation);
-        self.sparks_cpu
-            .extend(self.sparks_dir_vecs.iter().map(|dir_vec| {
-                let spark_dir = orientation_matrix * dir_vec;
-                ImpactSpark {
-                    dir: glm::normalize(&spark_dir),
-                    ..s
+    pub fn spawn_sparks(&mut self, s: ImpactSpark) {
+        use rand_distr::{Distribution, UnitCircle, UnitSphere};
+        let mut rng = rand::thread_rng();
+
+        self.sparks_cpu.extend((0..8).map(|_| {
+            let dir = loop {
+                let rng_dir: glm::Vec3 = UnitSphere.sample(&mut rng).into();
+                if glm::dot(&rng_dir, &s.dir) < 0f32 {
+                    break rng_dir;
                 }
-            }));
+            };
+
+            ImpactSpark { dir, ..s }
+        }));
     }
 
     pub fn update(&mut self, update_context: &mut UpdateContext) {

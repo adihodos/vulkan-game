@@ -75,11 +75,11 @@ impl Projectile {
             &mut physics_engine.rigid_body_set,
         );
 
-        log::info!(
-            "spawned projectile {:#?}, {:#?}",
-            rigid_body_handle,
-            collider_handle,
-        );
+        // log::info!(
+        //     "spawned projectile {:#?}, {:#?}",
+        //     rigid_body_handle,
+        //     collider_handle,
+        // );
 
         Projectile {
             data: projectile_data,

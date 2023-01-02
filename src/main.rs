@@ -1,6 +1,7 @@
 mod app_config;
 mod arcball_camera;
 mod camera;
+mod crosshair;
 mod debug_draw_overlay;
 mod draw_context;
 mod flight_cam;
@@ -15,6 +16,7 @@ mod projectile_system;
 mod resource_cache;
 mod shadow_swarm;
 mod skybox;
+mod sprite_batch;
 mod starfury;
 mod ui_backend;
 mod vk_renderer;

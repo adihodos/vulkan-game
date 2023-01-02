@@ -25,6 +25,7 @@ use smallvec::SmallVec;
 use crate::{
     app_config::AppConfig,
     camera::Camera,
+    crosshair::CrosshairSystem,
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, FrameRenderContext, UpdateContext},
     flight_cam::FlightCamera,
@@ -36,6 +37,7 @@ use crate::{
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     shadow_swarm::ShadowFighterSwarm,
     skybox::Skybox,
+    sprite_batch::SpriteBatch,
     starfury::Starfury,
     vk_renderer::{
         Cpu2GpuBuffer, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
@@ -229,6 +231,7 @@ pub struct GameWorld {
     debug_draw_overlay: Rc<RefCell<DebugDrawOverlay>>,
     projectiles_sys: RefCell<ProjectileSystem>,
     sparks_sys: RefCell<SparksSystem>,
+    sprite_batch: RefCell<SpriteBatch>,
 }
 
 impl GameWorld {
@@ -477,11 +480,31 @@ impl GameWorld {
             )),
             projectiles_sys: RefCell::new(ProjectileSystem::create(renderer, app_cfg)?),
             sparks_sys: RefCell::new(SparksSystem::create(renderer, app_cfg)?),
+            sprite_batch: RefCell::new(SpriteBatch::create(renderer, app_cfg)?),
         })
     }
 
     pub fn draw(&self, frame_context: &FrameRenderContext) {
         self.debug_draw_overlay.borrow_mut().clear();
+
+        // let cam_orientation = self.camera.borrow().view_transform();
+        // let cam_origin = cam_orientation.column(3).xyz();
+        // //self.camera.borrow().position() + glm::vec3(0f32, 0f32, 1f32);
+        // let x_axis = glm::normalize(&cam_orientation.column(0).xyz());
+        // let y_axis = glm::normalize(&cam_orientation.column(1).xyz());
+        //
+        // self.debug_draw_overlay.borrow_mut().add_line(
+        //     cam_origin - x_axis * 1.5f32,
+        //     cam_origin + x_axis * 1.5f32,
+        //     0xFF0000FF,
+        //     0xFF0000FF,
+        // );
+        // self.debug_draw_overlay.borrow_mut().add_line(
+        //     cam_origin - y_axis * 1.5f32,
+        //     cam_origin + y_axis * 1.5f32,
+        //     0xFF0000FF,
+        //     0xFF0000FF,
+        // );
 
         let projection = math::perspective(
             75f32,
@@ -505,6 +528,63 @@ impl GameWorld {
             };
 
             self.draw_objects(&draw_context);
+
+            {
+                let mut sb = self.sprite_batch.borrow_mut();
+
+                sb.draw_scaled_rotated(
+                    0f32,
+                    0f32,
+                    1f32,
+                    1f32,
+                    512f32,
+                    glm::radians(&glm::vec1(45f32)).x,
+                    0,
+                );
+                sb.draw_scaled_rotated(
+                    0f32,
+                    0f32,
+                    1f32,
+                    1f32,
+                    512f32,
+                    glm::radians(&glm::vec1(45f32)).x,
+                    1,
+                );
+                sb.draw_with_origin(
+                    draw_context.viewport.width * 0.5f32,
+                    draw_context.viewport.height * 0.5f32,
+                    128f32,
+                    128f32,
+                    0,
+                );
+                sb.draw_with_origin(
+                    draw_context.viewport.width * 0.5f32,
+                    draw_context.viewport.height * 0.5f32,
+                    128f32,
+                    128f32,
+                    1,
+                );
+
+                sb.draw_scaled_rotated_with_origin(
+                    128f32,
+                    128f32,
+                    1f32,
+                    1f32,
+                    32f32,
+                    glm::radians(&glm::vec1(60f32)).x,
+                    0,
+                );
+                sb.draw_scaled_rotated_with_origin(
+                    128f32,
+                    128f32,
+                    1f32,
+                    1f32,
+                    32f32,
+                    glm::radians(&glm::vec1(60f32)).x,
+                    1,
+                );
+                sb.render(&draw_context);
+            }
         }
 
         if self.draw_options().debug_draw_physics {
@@ -974,16 +1054,13 @@ impl GameWorld {
             .unwrap()
             .position();
 
-        self.sparks_sys.borrow_mut().spawn_sparks(
-            ImpactSpark {
-                pos: Point3::from_slice(projectile_isometry.translation.vector.as_slice()),
-                dir: -impacted_proj.direction,
-                color: glm::vec3(1f32, 0f32, 0f32),
-                speed: 2.0f32,
-                life: 2f32,
-            },
-            &projectile_isometry,
-        );
+        self.sparks_sys.borrow_mut().spawn_sparks(ImpactSpark {
+            pos: Point3::from_slice(projectile_isometry.translation.vector.as_slice()),
+            dir: impacted_proj.direction,
+            color: glm::vec3(1f32, 0f32, 0f32),
+            speed: 2.0f32,
+            life: 2f32,
+        });
 
         self.projectiles_sys
             .borrow_mut()
