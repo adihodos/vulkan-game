@@ -2,7 +2,7 @@ use nalgebra_glm as glm;
 
 /// Symmetric perspective projection with reverse depth (1.0 -> 0.0) and
 /// Vulkan coordinate space.
-pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> glm::Mat4 {
+pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> (glm::Mat4, glm::Mat4) {
     let fov_rad = vertical_fov * 2.0f32 * std::f32::consts::PI / 360.0f32;
     let focal_length = 1.0f32 / (fov_rad / 2.0f32).tan();
 
@@ -11,11 +11,49 @@ pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> glm:
     let a: f32 = n / (f - n);
     let b: f32 = f * a;
 
-    // clang-format off
-    glm::Mat4::from_column_slice(&[
-        x, 0.0f32, 0.0f32, 0.0f32, 0.0f32, y, 0.0f32, 0.0f32, 0.0f32, 0.0f32, a, -1.0f32, 0.0f32,
-        0.0f32, b, 0.0f32,
-    ])
+    (
+        //
+        // projection
+        glm::Mat4::from_column_slice(&[
+            //
+            //
+            x, 0f32, 0f32, 0f32, //
+            //
+            0f32, y, 0f32, 0f32, //
+            //
+            0f32, 0f32, a, -1.0f32, //
+            //
+            0f32, 0f32, b, 0f32,
+        ]),
+        //
+        // inverse of projection
+        glm::Mat4::from_column_slice(&[
+            //
+            //
+            1f32 / x,
+            0f32,
+            0f32,
+            0f32,
+            //
+            //
+            0f32,
+            1f32 / y,
+            0f32,
+            0f32,
+            //
+            //
+            0f32,
+            0f32,
+            0f32,
+            -1f32,
+            //
+            //
+            0f32,
+            0f32,
+            1f32 / b,
+            a / b,
+        ]),
+    )
 
     //   if (inverse)
     //   {
@@ -27,8 +65,6 @@ pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> glm:
     //       };
     //   }
     //
-    // // clang-format on
-    // return projection;
 }
 
 pub fn perspective2(rmin: f32, rmax: f32, umin: f32, umax: f32, dmin: f32, dmax: f32) -> glm::Mat4 {

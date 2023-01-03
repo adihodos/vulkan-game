@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     mem::size_of,
     rc::Rc,
+    u32::MAX,
 };
 
 use ash::vk::{
@@ -30,9 +31,11 @@ use crate::{
     draw_context::{DrawContext, FrameRenderContext, UpdateContext},
     flight_cam::FlightCamera,
     game_object::GameObjectRenderState,
-    math,
+    math::{self, perspective2},
     particles::{ImpactSpark, SparksSystem},
-    physics_engine::{ColliderUserData, PhysicsEngine},
+    physics_engine::{
+        ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups, PhysicsObjectGroups,
+    },
     projectile_system::{ProjectileSpawnData, ProjectileSystem},
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     shadow_swarm::ShadowFighterSwarm,
@@ -487,26 +490,7 @@ impl GameWorld {
     pub fn draw(&self, frame_context: &FrameRenderContext) {
         self.debug_draw_overlay.borrow_mut().clear();
 
-        // let cam_orientation = self.camera.borrow().view_transform();
-        // let cam_origin = cam_orientation.column(3).xyz();
-        // //self.camera.borrow().position() + glm::vec3(0f32, 0f32, 1f32);
-        // let x_axis = glm::normalize(&cam_orientation.column(0).xyz());
-        // let y_axis = glm::normalize(&cam_orientation.column(1).xyz());
-        //
-        // self.debug_draw_overlay.borrow_mut().add_line(
-        //     cam_origin - x_axis * 1.5f32,
-        //     cam_origin + x_axis * 1.5f32,
-        //     0xFF0000FF,
-        //     0xFF0000FF,
-        // );
-        // self.debug_draw_overlay.borrow_mut().add_line(
-        //     cam_origin - y_axis * 1.5f32,
-        //     cam_origin + y_axis * 1.5f32,
-        //     0xFF0000FF,
-        //     0xFF0000FF,
-        // );
-
-        let projection = math::perspective(
+        let (projection, inverse_projection) = math::perspective(
             75f32,
             frame_context.framebuffer_size.x as f32 / frame_context.framebuffer_size.y as f32,
             0.1f32,
@@ -523,93 +507,15 @@ impl GameWorld {
                 scissor: frame_context.scissor,
                 camera: &*cam_ref,
                 projection,
+                inverse_projection,
                 projection_view: projection * cam_ref.view_transform(),
                 debug_draw: self.debug_draw_overlay.clone(),
             };
 
+            self.draw_crosshair(&draw_context);
             self.draw_objects(&draw_context);
 
-            {
-                let mut sb = self.sprite_batch.borrow_mut();
-
-                sb.draw(
-                    512f32,
-                    512f32,
-                    128f32,
-                    128f32,
-                    TextureRegion::complete(0),
-                    Some(StdColors::DARK_RED),
-                );
-
-                sb.draw(
-                    512f32,
-                    512f32,
-                    128f32,
-                    128f32,
-                    TextureRegion::complete(1),
-                    Some(StdColors::GREEN),
-                );
-
-                sb.draw_scaled_rotated(
-                    0f32,
-                    0f32,
-                    1f32,
-                    1f32,
-                    512f32,
-                    glm::radians(&glm::vec1(45f32)).x,
-                    TextureRegion::complete(0),
-                    Some(StdColors::MEDIUM_SPRING_GREEN),
-                );
-                sb.draw_scaled_rotated(
-                    0f32,
-                    0f32,
-                    1f32,
-                    1f32,
-                    512f32,
-                    glm::radians(&glm::vec1(45f32)).x,
-                    TextureRegion::complete(1),
-                    Some(StdColors::MEDIUM_SPRING_GREEN),
-                );
-
-                sb.draw_with_origin(
-                    draw_context.viewport.width * 0.5f32,
-                    draw_context.viewport.height * 0.5f32,
-                    128f32,
-                    128f32,
-                    TextureRegion::complete(0),
-                    Some(StdColors::ORANGE_RED),
-                );
-                sb.draw_with_origin(
-                    draw_context.viewport.width * 0.5f32,
-                    draw_context.viewport.height * 0.5f32,
-                    128f32,
-                    128f32,
-                    TextureRegion::complete(1),
-                    Some(StdColors::ORANGE_RED),
-                );
-
-                sb.draw_scaled_rotated_with_origin(
-                    128f32,
-                    128f32,
-                    1f32,
-                    1f32,
-                    32f32,
-                    glm::radians(&glm::vec1(60f32)).x,
-                    TextureRegion::complete(0),
-                    Some(StdColors::LIME),
-                );
-                sb.draw_scaled_rotated_with_origin(
-                    128f32,
-                    128f32,
-                    1f32,
-                    1f32,
-                    32f32,
-                    glm::radians(&glm::vec1(60f32)).x,
-                    TextureRegion::complete(1),
-                    Some(StdColors::LIME),
-                );
-                sb.render(&draw_context);
-            }
+            self.sprite_batch.borrow_mut().render(&draw_context);
         }
 
         if self.draw_options().debug_draw_physics {
@@ -1111,5 +1017,91 @@ impl GameWorld {
 
     pub fn gamepad_input(&self, input_state: &InputState) {
         self.starfury.gamepad_input(input_state);
+    }
+
+    fn draw_crosshair(&self, draw_context: &DrawContext) {
+        let player_ship_transform = *self
+            .physics_engine
+            .borrow()
+            .rigid_body_set
+            .get(self.starfury.rigid_body_handle)
+            .unwrap()
+            .position();
+
+        let ray_dir = (player_ship_transform * glm::Vec3::z_axis())
+            .to_homogeneous()
+            .xyz();
+
+        let query_filter = rapier3d::prelude::QueryFilter::new()
+            .exclude_sensors()
+            .exclude_rigid_body(self.starfury.rigid_body_handle)
+            .groups(PhysicsObjectCollisionGroups::ships());
+
+        const MAX_RAY_DIST: f32 = 5000f32;
+        const CROSSHAIR_COLOR: u32 = StdColors::LIME_GREEN;
+
+        let left_gun_origin = player_ship_transform * self.starfury.lower_left_gun();
+        self.physics_engine
+            .borrow()
+            .cast_ray(left_gun_origin, ray_dir, MAX_RAY_DIST, query_filter)
+            .or_else(|| {
+                let right_gun_origin = player_ship_transform * self.starfury.lower_right_gun();
+                self.physics_engine.borrow().cast_ray(
+                    right_gun_origin,
+                    ray_dir,
+                    5000f32,
+                    query_filter,
+                )
+            })
+            .map(|(_, t)| {
+                //
+                // impact from guns is possible, draw full crosshair
+                let ray_end = left_gun_origin.xyz() + ray_dir * t;
+                let clip_space_pos = draw_context.projection_view * ray_end.to_homogeneous();
+                let ndc_pos = clip_space_pos.xyz() / clip_space_pos.w;
+                let window_space_pos = glm::vec2(
+                    ((ndc_pos.x + 1f32) * 0.5f32) * draw_context.viewport.width,
+                    ((ndc_pos.y + 1f32) * 0.5f32) * draw_context.viewport.height,
+                );
+                self.sprite_batch.borrow_mut().draw_with_origin(
+                    window_space_pos.x,
+                    window_space_pos.y,
+                    128f32,
+                    128f32,
+                    TextureRegion::complete(0),
+                    Some(CROSSHAIR_COLOR),
+                );
+                self.sprite_batch.borrow_mut().draw_with_origin(
+                    window_space_pos.x,
+                    window_space_pos.y,
+                    128f32,
+                    128f32,
+                    TextureRegion::complete(1),
+                    Some(CROSSHAIR_COLOR),
+                );
+            })
+            .or_else(|| {
+                //
+                // no impact possible, draw empty crosshair cirle
+
+                let ray_start =
+                    Point3::from_slice(player_ship_transform.translation.vector.as_slice());
+                let ray_end = ray_start + ray_dir * MAX_RAY_DIST;
+                let clip_space_pos = draw_context.projection_view * ray_end.to_homogeneous();
+                let ndc_pos = clip_space_pos.xyz() / clip_space_pos.w;
+                let window_space_pos = glm::vec2(
+                    ((ndc_pos.x + 1f32) * 0.5f32) * draw_context.viewport.width,
+                    ((ndc_pos.y + 1f32) * 0.5f32) * draw_context.viewport.height,
+                );
+                self.sprite_batch.borrow_mut().draw_with_origin(
+                    window_space_pos.x,
+                    window_space_pos.y,
+                    128f32,
+                    128f32,
+                    TextureRegion::complete(0),
+                    Some(CROSSHAIR_COLOR),
+                );
+                Some(())
+            });
     }
 }

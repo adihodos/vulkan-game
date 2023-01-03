@@ -11,6 +11,7 @@ use crate::{
 };
 
 use glm::Vec3;
+use nalgebra::Point3;
 use nalgebra_glm as glm;
 use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, RigidBodyType};
 use serde::{Deserialize, Serialize};
@@ -620,5 +621,13 @@ impl Starfury {
                 ));
             });
         });
+    }
+
+    pub fn lower_left_gun(&self) -> Point3<f32> {
+        self.params.weapons.gun_ports.lower_left
+    }
+
+    pub fn lower_right_gun(&self) -> Point3<f32> {
+        self.params.weapons.gun_ports.lower_right
     }
 }

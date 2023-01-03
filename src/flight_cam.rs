@@ -39,6 +39,7 @@ pub struct FlightCamera {
     params: FlightCameraParams,
     position: glm::Vec3,
     view_matrix: glm::Mat4,
+    inverse_view: glm::Mat4,
 }
 
 impl FlightCamera {
@@ -53,6 +54,7 @@ impl FlightCamera {
             .expect("Invalid flightcam config file."),
             position: glm::Vec3::zeros(),
             view_matrix: glm::Mat4::identity(),
+            inverse_view: glm::Mat4::identity(),
         }
     }
 
@@ -70,6 +72,37 @@ impl FlightCamera {
             + object.position().translation.vector.xyz();
 
         self.view_matrix = glm::look_at(&self.position, &look_at, &up_vec);
+
+        let right = self.view_matrix.column(0);
+        let up = self.view_matrix.column(1);
+        let dir = self.view_matrix.column(2);
+
+        self.inverse_view = glm::Mat4::from_column_slice(&[
+            //
+            //
+            right[0],
+            up[0],
+            dir[0],
+            self.position[0],
+            //
+            //
+            right[1],
+            up[1],
+            dir[1],
+            self.position[1],
+            //
+            //
+            right[2],
+            up[2],
+            dir[2],
+            self.position[2],
+            //
+            //
+            0f32,
+            0f32,
+            0f32,
+            1f32,
+        ]);
     }
 }
 
@@ -80,5 +113,9 @@ impl Camera for FlightCamera {
 
     fn view_transform(&self) -> glm::Mat4 {
         self.view_matrix
+    }
+
+    fn inverse_view_transform(&self) -> glm::Mat4 {
+        self.inverse_view
     }
 }

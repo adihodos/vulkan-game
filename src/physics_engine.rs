@@ -82,6 +82,7 @@ pub struct PhysicsEngine {
     integration_params: IntegrationParameters,
     debug_render_pipeline: DebugRenderPipeline,
     physics_pipeline: PhysicsPipeline,
+    query_pipeline: QueryPipeline,
     island_manager: IslandManager,
     broad_phase: BroadPhase,
     narrow_phase: NarrowPhase,
@@ -113,6 +114,7 @@ impl PhysicsEngine {
                 DebugRenderMode::COLLIDER_SHAPES | DebugRenderMode::RIGID_BODY_AXES,
             ),
             physics_pipeline: PhysicsPipeline::new(),
+            query_pipeline: QueryPipeline::new(),
             island_manager: IslandManager::new(),
             broad_phase: BroadPhase::new(),
             narrow_phase: NarrowPhase::new(),
@@ -144,6 +146,12 @@ impl PhysicsEngine {
             &self.event_handler,
         );
 
+        self.query_pipeline.update(
+            &self.island_manager,
+            &self.rigid_body_set,
+            &self.collider_set,
+        );
+
         while let Ok(collision_event) = self.collision_recv.try_recv() {
             if !collision_event.sensor() || !collision_event.started() {
                 continue;
@@ -166,6 +174,23 @@ impl PhysicsEngine {
                     });
             }
         }
+    }
+
+    pub fn cast_ray(
+        &self,
+        origin: nalgebra::Point3<f32>,
+        direction: glm::Vec3,
+        max_toi: f32,
+        filter: QueryFilter,
+    ) -> Option<(ColliderHandle, Real)> {
+        self.query_pipeline.cast_ray(
+            &self.rigid_body_set,
+            &self.collider_set,
+            &Ray::new(origin, direction),
+            max_toi,
+            true,
+            filter,
+        )
     }
 
     pub fn debug_draw(&mut self, backend: &mut DebugDrawOverlay) {

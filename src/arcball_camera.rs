@@ -10,8 +10,8 @@ pub struct ArcballCamera {
     translation: Mat4,
     center_translation: Mat4,
     rotation: UnitQuaternion<f32>,
-    camera: Mat4,
-    inv_camera: Mat4,
+    view_transform: Mat4,
+    inverse_view_transform: Mat4,
     zoom_speed: f32,
     inv_screen: Vec2,
     prev_mouse: Vec2,
@@ -31,8 +31,8 @@ impl ArcballCamera {
             translation: Mat4::new_translation(&Vec3::new(0f32, 0f32, -1f32)),
             center_translation: inverse(&Mat4::new_translation(&center)),
             rotation: UnitQuaternion::identity(),
-            camera: Mat4::identity(),
-            inv_camera: Mat4::identity(),
+            view_transform: Mat4::identity(),
+            inverse_view_transform: Mat4::identity(),
             zoom_speed,
             inv_screen: Vec2::new(1f32 / screen.x as f32, 1f32 / screen.y as f32),
             prev_mouse: Vec2::zeros(),
@@ -47,12 +47,13 @@ impl ArcballCamera {
     }
 
     pub fn camera(&self) -> Mat4 {
-        self.camera
+        self.view_transform
     }
 
     fn update_camera(&mut self) {
-        self.camera = self.translation * self.rotation.to_homogeneous() * self.center_translation;
-        self.inv_camera = inverse(&self.camera);
+        self.view_transform =
+            self.translation * self.rotation.to_homogeneous() * self.center_translation;
+        self.inverse_view_transform = inverse(&self.view_transform);
     }
 
     pub fn update_screen(&mut self, width: i32, height: i32) {
@@ -92,7 +93,7 @@ impl ArcballCamera {
             0f32,
         ) * zoom_dist;
 
-        let motion = self.inv_camera * delta;
+        let motion = self.inverse_view_transform * delta;
         self.center_translation = Mat4::new_translation(&motion.xyz()) * self.center_translation;
         self.prev_mouse = mouse_cur;
         self.update_camera();
@@ -198,14 +199,18 @@ impl ArcballCamera {
 
 impl Camera for ArcballCamera {
     fn view_transform(&self) -> Mat4 {
-        self.camera
+        self.view_transform
     }
 
     fn position(&self) -> Vec3 {
         Vec3::new(
-            self.inv_camera.m14,
-            self.inv_camera.m24,
-            self.inv_camera.m34,
+            self.inverse_view_transform.m14,
+            self.inverse_view_transform.m24,
+            self.inverse_view_transform.m34,
         )
+    }
+
+    fn inverse_view_transform(&self) -> glm::Mat4 {
+        self.inverse_view_transform
     }
 }
