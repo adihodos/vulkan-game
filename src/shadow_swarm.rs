@@ -109,4 +109,8 @@ impl ShadowFighterSwarm {
         )
         .expect("Failed to write shadow sharm config");
     }
+
+    pub fn instances(&self) -> &[GameObjectPhysicsData] {
+        &self.instances_physics_data
+    }
 }

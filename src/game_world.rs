@@ -512,9 +512,10 @@ impl GameWorld {
                 debug_draw: self.debug_draw_overlay.clone(),
             };
 
-            self.draw_crosshair(&draw_context);
             self.draw_objects(&draw_context);
 
+            self.draw_crosshair(&draw_context);
+            self.draw_lead_indicator(&draw_context);
             self.sprite_batch.borrow_mut().render(&draw_context);
         }
 
@@ -1038,7 +1039,12 @@ impl GameWorld {
             .groups(PhysicsObjectCollisionGroups::ships());
 
         const MAX_RAY_DIST: f32 = 5000f32;
-        const CROSSHAIR_COLOR: u32 = StdColors::LIME_GREEN;
+        const CROSSHAIR_COLOR: u32 = StdColors::GREEN;
+        const CROSSHAIR_NORMAL: usize = 122;
+        const CROSSHAIR_HITIND: usize = 159;
+
+        let crosshair_hit_ind = self.sprite_batch.borrow().get_sprite(CROSSHAIR_HITIND);
+        let crosshair_normal = self.sprite_batch.borrow().get_sprite(CROSSHAIR_NORMAL);
 
         let left_gun_origin = player_ship_transform * self.starfury.lower_left_gun();
         self.physics_engine
@@ -1068,7 +1074,7 @@ impl GameWorld {
                     window_space_pos.y,
                     128f32,
                     128f32,
-                    TextureRegion::complete(0),
+                    crosshair_normal,
                     Some(CROSSHAIR_COLOR),
                 );
                 self.sprite_batch.borrow_mut().draw_with_origin(
@@ -1076,7 +1082,7 @@ impl GameWorld {
                     window_space_pos.y,
                     128f32,
                     128f32,
-                    TextureRegion::complete(1),
+                    crosshair_hit_ind,
                     Some(CROSSHAIR_COLOR),
                 );
             })
@@ -1087,21 +1093,116 @@ impl GameWorld {
                 let ray_start =
                     Point3::from_slice(player_ship_transform.translation.vector.as_slice());
                 let ray_end = ray_start + ray_dir * MAX_RAY_DIST;
-                let clip_space_pos = draw_context.projection_view * ray_end.to_homogeneous();
-                let ndc_pos = clip_space_pos.xyz() / clip_space_pos.w;
-                let window_space_pos = glm::vec2(
-                    ((ndc_pos.x + 1f32) * 0.5f32) * draw_context.viewport.width,
-                    ((ndc_pos.y + 1f32) * 0.5f32) * draw_context.viewport.height,
+
+                let window_space_pos = math::world_coords_to_screen_coords(
+                    ray_end,
+                    &draw_context.projection_view,
+                    draw_context.viewport.width,
+                    draw_context.viewport.height,
                 );
+
                 self.sprite_batch.borrow_mut().draw_with_origin(
                     window_space_pos.x,
                     window_space_pos.y,
                     128f32,
                     128f32,
-                    TextureRegion::complete(0),
+                    crosshair_normal,
                     Some(CROSSHAIR_COLOR),
                 );
                 Some(())
             });
+    }
+
+    fn draw_lead_indicator(&self, draw_context: &DrawContext) {
+        const TARGET_OUTLINE_SPRITE: usize = 25;
+        const TARGET_CENTERMASS_IND_SPRITE: usize = 179;
+
+        const TARGET_OUTLINE_COLOR: u32 = StdColors::GREEN;
+
+        let target_outline_sprite = self.sprite_batch.borrow().get_sprite(TARGET_OUTLINE_SPRITE);
+
+        let physics_engine = self.physics_engine.borrow();
+        self.shadows_swarm.instances().iter().for_each(|inst| {
+            physics_engine
+                .rigid_body_set
+                .get(inst.rigid_body_handle)
+                .map(|enemy_ship| {
+                    let current_position = *enemy_ship.position();
+
+                    let ship_centermass_world = current_position.translation.vector;
+
+                    let predicted_pos = enemy_ship.predict_position_using_velocity_and_forces(1f32);
+
+                    let position_vec = predicted_pos.translation.vector - ship_centermass_world;
+                    let target_centermass_sprite = self
+                        .sprite_batch
+                        .borrow()
+                        .get_sprite(TARGET_CENTERMASS_IND_SPRITE);
+
+                    let lead_ind_circle_pos = if position_vec.norm_squared() > 1.0e-4f32 {
+                        //
+                        // also draw a line from the centermass to the predicted position
+                        math::world_coords_to_screen_coords(
+                            Point3::from_slice(predicted_pos.translation.vector.as_slice()),
+                            &draw_context.projection_view,
+                            draw_context.viewport.width,
+                            draw_context.viewport.height,
+                        )
+                    } else {
+                        math::world_coords_to_screen_coords(
+                            Point3::from_slice(ship_centermass_world.as_slice()),
+                            &draw_context.projection_view,
+                            draw_context.viewport.width,
+                            draw_context.viewport.height,
+                        )
+                    };
+
+                    self.sprite_batch.borrow_mut().draw_with_origin(
+                        lead_ind_circle_pos.x,
+                        lead_ind_circle_pos.y,
+                        64f32,
+                        64f32,
+                        target_centermass_sprite,
+                        Some(TARGET_OUTLINE_COLOR),
+                    );
+                });
+
+            physics_engine
+                .collider_set
+                .get(inst.collider_handle)
+                .map(|collider| {
+                    let aabb = collider.compute_aabb();
+
+                    let (pmin, pmax) = aabb
+                        .vertices()
+                        .iter()
+                        .map(|&aabb_vertex| {
+                            math::world_coords_to_screen_coords(
+                                aabb_vertex,
+                                &draw_context.projection_view,
+                                draw_context.viewport.width,
+                                draw_context.viewport.height,
+                            )
+                        })
+                        .fold(
+                            (
+                                glm::vec2(std::f32::MAX, std::f32::MAX),
+                                glm::vec2(std::f32::MIN, std::f32::MIN),
+                            ),
+                            |(min_p, max_p), pt| (glm::min2(&min_p, &pt), glm::max2(&max_p, &pt)),
+                        );
+
+                    let size = (pmax - pmin).abs();
+
+                    self.sprite_batch.borrow_mut().draw(
+                        pmin.x,
+                        pmin.y,
+                        size.x,
+                        size.y,
+                        target_outline_sprite,
+                        Some(TARGET_OUTLINE_COLOR),
+                    );
+                });
+        });
     }
 }

@@ -30,9 +30,10 @@ pub struct SpriteBatch {
     pipeline: UniqueGraphicsPipeline,
     sampler: UniqueSampler,
     texture: UniqueImageWithView,
+    atlas: TextureAtlas,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TextureRegion {
     pub layer: u32,
     pub x: u32,
@@ -91,6 +92,13 @@ impl TextureCoords {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TextureAtlas {
+    frames: Vec<TextureRegion>,
+    size: (u32, u32),
+    scale: u32,
+}
+
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 struct SpriteVertex {
@@ -131,11 +139,19 @@ impl SpriteBatch {
             renderer.max_inflight_frames() as DeviceSize,
         )?;
 
+        let texture_atlas: TextureAtlas = ron::de::from_reader(
+            std::fs::File::open(app_config.engine.texture_path("ui/reticles/crosshairs.ron"))
+                .expect("Failed to read texture atlas configuration file."),
+        )
+        .expect("Invalid configuration file");
+
         let tex_load_work_pkg = renderer.create_work_package()?;
         let texture = UniqueImageWithView::from_ktx(
             renderer,
             &tex_load_work_pkg,
-            app_config.engine.texture_path("ui/reticles/reticle.ktx2"),
+            app_config
+                .engine
+                .texture_path("ui/reticles/crosshairs.ktx2"),
         )?;
 
         renderer.push_work_package(tex_load_work_pkg);
@@ -305,6 +321,7 @@ impl SpriteBatch {
             pipeline,
             sampler,
             texture,
+            atlas: texture_atlas,
         })
     }
 
@@ -635,5 +652,9 @@ impl SpriteBatch {
 
         self.vertices_cpu.clear();
         self.indices_cpu.clear();
+    }
+
+    pub fn get_sprite(&self, idx: usize) -> TextureRegion {
+        self.atlas.frames[idx]
     }
 }

@@ -54,17 +54,20 @@ pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> (glm
             a / b,
         ]),
     )
+}
 
-    //   if (inverse)
-    //   {
-    //       *inverse = glm::mat4{
-    //           1/x,  0.0f, 0.0f,  0.0f,
-    //           0.0f,  1/y, 0.0f,  0.0f,
-    //           0.0f, 0.0f, 0.0f, -1.0f,
-    //           0.0f, 0.0f,  1/B,   A/B,
-    //       };
-    //   }
-    //
+pub fn world_coords_to_screen_coords(
+    p: nalgebra::Point3<f32>,
+    projection_view_matrix: &glm::Mat4,
+    screen_width: f32,
+    screen_height: f32,
+) -> glm::Vec2 {
+    let clip_space_pos = projection_view_matrix * p.to_homogeneous();
+    let ndc_pos = clip_space_pos.xyz() / clip_space_pos.w;
+    glm::vec2(
+        ((ndc_pos.x + 1f32) * 0.5f32) * screen_width,
+        ((ndc_pos.y + 1f32) * 0.5f32) * screen_height,
+    )
 }
 
 pub fn perspective2(rmin: f32, rmax: f32, umin: f32, umax: f32, dmin: f32, dmax: f32) -> glm::Mat4 {
