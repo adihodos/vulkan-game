@@ -5,16 +5,16 @@ use crate::{
     math,
     vk_renderer::{
         Cpu2GpuBuffer, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
-        ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline,
-        UniqueImageWithView, UniqueSampler, VulkanRenderer,
+        ShaderModuleDescription, ShaderModuleSource, UniqueGraphicsPipeline, UniqueImageWithView,
+        UniqueSampler, VulkanRenderer,
     },
 };
 use ash::vk::{
     BlendFactor, BlendOp, BufferUsageFlags, ColorComponentFlags, DescriptorBufferInfo,
     DescriptorImageInfo, DescriptorSet, DescriptorSetAllocateInfo, DescriptorSetLayoutBinding,
     DescriptorType, DeviceSize, DynamicState, Filter, Format, ImageLayout, IndexType,
-    MemoryPropertyFlags, PipelineBindPoint, PipelineColorBlendAttachmentState, PrimitiveTopology,
-    SamplerAddressMode, SamplerMipmapMode, ShaderStageFlags, VertexInputAttributeDescription,
+    PipelineBindPoint, PipelineColorBlendAttachmentState, PrimitiveTopology, SamplerAddressMode,
+    SamplerMipmapMode, ShaderStageFlags, VertexInputAttributeDescription,
     VertexInputBindingDescription, VertexInputRate, WriteDescriptorSet,
 };
 use memoffset::offset_of;

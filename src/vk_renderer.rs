@@ -555,7 +555,10 @@ impl UniqueImage {
         work_package: &RendererWorkPackage,
         path: P,
     ) -> Option<UniqueImage> {
-        let ktx_file = std::fs::File::open(path).expect("Failed to open texture file");
+        let ktx_file = std::fs::File::open(path.as_ref()).expect(&format!(
+            "Failed to open texture file {}",
+            path.as_ref().display()
+        ));
         let ktx_file_mapping = unsafe {
             mmap_rs::MmapOptions::new(ktx_file.metadata().unwrap().len() as usize)
                 .with_file(ktx_file, 0)
