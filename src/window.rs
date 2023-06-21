@@ -96,6 +96,15 @@ impl MainWindow {
         let mut gilrs = gilrs::Gilrs::new().expect("Failed to initialize input library");
         let mut gamepad_input_state = None;
 
+        gilrs.gamepads().for_each(|(_, gp)| {
+            log::info!(
+                "Detected gamepad {} ({}) -> state: {:?}",
+                gp.name(),
+                gp.os_name(),
+                gp.power_info()
+            );
+        });
+
         event_loop.run(move |event, _, control_flow| {
             control_flow.set_poll();
 
@@ -108,13 +117,13 @@ impl MainWindow {
                     control_flow.set_exit();
                 }
 
-                Event::WindowEvent { window_id, event } => {
+                Event::WindowEvent { event, .. } => {
                     game_main.handle_event(&event);
                 }
 
                 Event::MainEventsCleared => {
                     while let Some(event) = gilrs.next_event() {
-                        // log::info!("gamepad {:?}", event);
+                        log::info!("gamepad {:?}", event);
 
                         if gamepad_input_state.is_none() {
                             let gamepad = gilrs.gamepad(event.id);
@@ -231,8 +240,8 @@ impl MainWindow {
                         game_main.gamepad_input(in_st);
                     });
 
-                    gilrs.inc();
                     game_main.main();
+                    gilrs.inc();
                 }
 
                 _ => (),
