@@ -235,6 +235,10 @@ pub struct GameWorld {
     projectiles_sys: RefCell<ProjectileSystem>,
     sparks_sys: RefCell<SparksSystem>,
     sprite_batch: RefCell<SpriteBatch>,
+    spr_crosshair_normal: TextureRegion,
+    spr_crosshair_hit: TextureRegion,
+    spr_obj_outline: TextureRegion,
+    spr_obj_centermass: TextureRegion,
 }
 
 impl GameWorld {
@@ -460,6 +464,12 @@ impl GameWorld {
             shadows_swarm.params.instance_count,
         )?;
 
+        let sprites = SpriteBatch::create(renderer, app_cfg)?;
+        let spr_crosshair_hit = sprites.get_sprite_by_name("crosshair_small_051").unwrap();
+        let spr_crosshair_normal = sprites.get_sprite_by_name("crosshair_small_117").unwrap();
+        let spr_obj_outline = sprites.get_sprite_by_name("crosshair_small_025").unwrap();
+        let spr_obj_centermass = sprites.get_sprite_by_name("crosshair_small_125").unwrap();
+
         Some(GameWorld {
             draw_opts: RefCell::new(DebugDrawOptions::default()),
             resource_cache,
@@ -483,7 +493,11 @@ impl GameWorld {
             )),
             projectiles_sys: RefCell::new(ProjectileSystem::create(renderer, app_cfg)?),
             sparks_sys: RefCell::new(SparksSystem::create(renderer, app_cfg)?),
-            sprite_batch: RefCell::new(SpriteBatch::create(renderer, app_cfg)?),
+            sprite_batch: RefCell::new(sprites),
+            spr_crosshair_hit,
+            spr_crosshair_normal,
+            spr_obj_centermass,
+            spr_obj_outline,
         })
     }
 
@@ -694,7 +708,7 @@ impl GameWorld {
     }
 
     fn draw_instanced_objects(&self, draw_context: &DrawContext) {
-        let device = draw_context.renderer.graphics_device();
+        // let device = draw_context.renderer.graphics_device();
 
         let global_uniforms = PbrTransformDataMultiInstanceUBO {
             view: draw_context.camera.view_transform(),
@@ -1040,11 +1054,6 @@ impl GameWorld {
 
         const MAX_RAY_DIST: f32 = 5000f32;
         const CROSSHAIR_COLOR: u32 = StdColors::GREEN;
-        const CROSSHAIR_NORMAL: usize = 122;
-        const CROSSHAIR_HITIND: usize = 159;
-
-        let crosshair_hit_ind = self.sprite_batch.borrow().get_sprite(CROSSHAIR_HITIND);
-        let crosshair_normal = self.sprite_batch.borrow().get_sprite(CROSSHAIR_NORMAL);
 
         let left_gun_origin = player_ship_transform * self.starfury.lower_left_gun();
         self.physics_engine
@@ -1074,7 +1083,7 @@ impl GameWorld {
                     window_space_pos.y,
                     128f32,
                     128f32,
-                    crosshair_normal,
+                    self.spr_crosshair_normal,
                     Some(CROSSHAIR_COLOR),
                 );
                 self.sprite_batch.borrow_mut().draw_with_origin(
@@ -1082,7 +1091,7 @@ impl GameWorld {
                     window_space_pos.y,
                     128f32,
                     128f32,
-                    crosshair_hit_ind,
+                    self.spr_crosshair_hit,
                     Some(CROSSHAIR_COLOR),
                 );
             })
@@ -1106,7 +1115,7 @@ impl GameWorld {
                     window_space_pos.y,
                     128f32,
                     128f32,
-                    crosshair_normal,
+                    self.spr_crosshair_normal,
                     Some(CROSSHAIR_COLOR),
                 );
                 Some(())
@@ -1114,12 +1123,7 @@ impl GameWorld {
     }
 
     fn draw_lead_indicator(&self, draw_context: &DrawContext) {
-        const TARGET_OUTLINE_SPRITE: usize = 25;
-        const TARGET_CENTERMASS_IND_SPRITE: usize = 179;
-
         const TARGET_OUTLINE_COLOR: u32 = StdColors::GREEN;
-
-        let target_outline_sprite = self.sprite_batch.borrow().get_sprite(TARGET_OUTLINE_SPRITE);
 
         let physics_engine = self.physics_engine.borrow();
         self.shadows_swarm.instances().iter().for_each(|inst| {
@@ -1134,10 +1138,6 @@ impl GameWorld {
                     let predicted_pos = enemy_ship.predict_position_using_velocity_and_forces(1f32);
 
                     let position_vec = predicted_pos.translation.vector - ship_centermass_world;
-                    let target_centermass_sprite = self
-                        .sprite_batch
-                        .borrow()
-                        .get_sprite(TARGET_CENTERMASS_IND_SPRITE);
 
                     let lead_ind_circle_pos = if position_vec.norm_squared() > 1.0e-4f32 {
                         //
@@ -1162,7 +1162,7 @@ impl GameWorld {
                         lead_ind_circle_pos.y,
                         64f32,
                         64f32,
-                        target_centermass_sprite,
+                        self.spr_obj_centermass,
                         Some(TARGET_OUTLINE_COLOR),
                     );
                 });
@@ -1199,7 +1199,7 @@ impl GameWorld {
                         pmin.y,
                         size.x,
                         size.y,
-                        target_outline_sprite,
+                        self.spr_obj_outline,
                         Some(TARGET_OUTLINE_COLOR),
                     );
                 });

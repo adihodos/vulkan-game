@@ -123,8 +123,6 @@ impl MainWindow {
 
                 Event::MainEventsCleared => {
                     while let Some(event) = gilrs.next_event() {
-                        log::info!("gamepad {:?}", event);
-
                         if gamepad_input_state.is_none() {
                             let gamepad = gilrs.gamepad(event.id);
                             let code_right_x = gamepad.axis_code(gilrs::Axis::RightStickX).unwrap();

@@ -34,6 +34,16 @@ pub struct SpriteBatch {
 }
 
 #[derive(Copy, Clone, serde::Serialize, serde::Deserialize)]
+struct NamedTextureRegion {
+    pub name: u64,
+    pub layer: u32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Copy, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TextureRegion {
     pub layer: u32,
     pub x: u32,
@@ -94,9 +104,9 @@ impl TextureCoords {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TextureAtlas {
-    frames: Vec<TextureRegion>,
+    frames: Vec<NamedTextureRegion>,
     size: (u32, u32),
-    scale: u32,
+    file: std::path::PathBuf,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -151,7 +161,7 @@ impl SpriteBatch {
             &tex_load_work_pkg,
             app_config
                 .engine
-                .texture_path("ui/reticles/crosshairs.ktx2"),
+                .texture_path(std::path::Path::new("ui/reticles").join(&texture_atlas.file)),
         )?;
 
         renderer.push_work_package(tex_load_work_pkg);
@@ -654,7 +664,22 @@ impl SpriteBatch {
         self.indices_cpu.clear();
     }
 
-    pub fn get_sprite(&self, idx: usize) -> TextureRegion {
-        self.atlas.frames[idx]
+    pub fn get_sprite_by_name(&self, name: &str) -> Option<TextureRegion> {
+        use std::hash::Hasher;
+        let mut h = fnv::FnvHasher::default();
+        h.write(name.as_bytes());
+        let hashed_name = h.finish();
+
+        self.atlas
+            .frames
+            .iter()
+            .find(|named_tex_region| named_tex_region.name == hashed_name)
+            .map(|region| TextureRegion {
+                layer: region.layer,
+                x: region.x,
+                y: region.y,
+                width: region.width,
+                height: region.height,
+            })
     }
 }

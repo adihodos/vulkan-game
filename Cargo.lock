@@ -2121,6 +2121,7 @@ dependencies = [
  "chrono",
  "crossbeam",
  "flexi_logger",
+ "fnv",
  "gilrs",
  "gltf",
  "image",
