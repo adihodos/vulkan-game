@@ -1819,7 +1819,7 @@ impl UniqueRenderpass {
                 .stencil_store_op(AttachmentStoreOp::STORE)
                 .stencil_load_op(AttachmentLoadOp::LOAD)
                 .initial_layout(ImageLayout::UNDEFINED)
-                .final_layout(ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .final_layout(ImageLayout::GENERAL)
                 .build(),
         ];
 
@@ -3109,7 +3109,6 @@ fn find_queue_family_indices(
     })
 }
 
-/// Cykaaaaaa
 fn create_logical_device(
     vk_instance: &Instance,
     phys_device: PhysicalDevice,
