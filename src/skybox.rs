@@ -3,8 +3,8 @@ use std::{mem::size_of, path::Path, slice::from_raw_parts};
 
 use ash::vk::{
     BorderColor, BufferUsageFlags, CompareOp, DescriptorImageInfo, DescriptorSet,
-    DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType, DeviceSize,
-    DynamicState, Filter, ImageLayout, ImageTiling, ImageUsageFlags, ImageViewCreateInfo,
+    DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType,
+    DynamicState, Filter, ImageLayout,
     IndexType, MemoryPropertyFlags, PipelineBindPoint, PushConstantRange, SamplerAddressMode,
     SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, WriteDescriptorSet,
 };
@@ -15,9 +15,8 @@ use crate::{
     app_config::{EngineConfig, SceneDescription},
     draw_context::DrawContext,
     vk_renderer::{
-        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
-        ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline,
-        UniqueImage, UniqueImageView, UniqueImageWithView, UniqueSampler, VulkanRenderer,
+        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
+        ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline, UniqueImageWithView, UniqueSampler, VulkanRenderer,
     },
 };
 

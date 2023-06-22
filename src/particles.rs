@@ -7,7 +7,7 @@ use ash::vk::{
     VertexInputRate, WriteDescriptorSet,
 };
 use memoffset::offset_of;
-use nalgebra::{Isometry3, Translation};
+
 use nalgebra_glm as glm;
 use rand::Rng;
 
@@ -253,7 +253,7 @@ impl SparksSystem {
     }
 
     pub fn spawn_sparks(&mut self, s: ImpactSpark) {
-        use rand_distr::{Distribution, UnitCircle, UnitSphere};
+        use rand_distr::{Distribution, UnitSphere};
         let mut rng = rand::thread_rng();
 
         self.sparks_cpu.extend((0..8).map(|_| {

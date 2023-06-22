@@ -3,23 +3,23 @@ use std::{
     time::Instant,
 };
 
-use nalgebra_glm::{IVec2, Vec3};
-use raw_window_handle::HasRawWindowHandle;
+use nalgebra_glm::{IVec2};
+
 use winit::{
     event::{Event, WindowEvent},
     event_loop,
-    window::{Fullscreen, WindowBuilder},
+    window::{Fullscreen},
 };
 
 use crate::{
-    app_config::{self, AppConfig},
+    app_config::{AppConfig},
     draw_context::FrameRenderContext,
     game_world::GameWorld,
     ui_backend::UiBackend,
-    vk_renderer::{UniqueImage, VulkanRenderer},
+    vk_renderer::{VulkanRenderer},
 };
 
-use nalgebra_glm as glm;
+
 
 #[derive(Clone, Copy, Debug)]
 pub struct GamepadStick {
@@ -58,7 +58,7 @@ pub struct MainWindow {}
 
 impl MainWindow {
     pub fn run() {
-        let logger = flexi_logger::Logger::with(
+        let _logger = flexi_logger::Logger::with(
             flexi_logger::LogSpecification::builder()
                 .default(flexi_logger::LevelFilter::Debug)
                 .build(),
@@ -69,7 +69,7 @@ impl MainWindow {
             panic!("Failed to start the logger {}", e);
         });
 
-        let app_config = crate::app_config::AppConfig::load();
+        let _app_config = crate::app_config::AppConfig::load();
 
         log::info!("uraaa this be info!");
         log::warn!("urraa! this be warn cyka!");

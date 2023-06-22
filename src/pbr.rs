@@ -1,7 +1,7 @@
 use ash::vk::{
     ComponentMapping, ComponentSwizzle, Extent3D, Format, ImageAspectFlags, ImageCreateInfo,
     ImageLayout, ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags,
-    ImageViewCreateInfo, ImageViewType, MemoryPropertyFlags, SampleCountFlags, SharingMode,
+    ImageViewCreateInfo, ImageViewType, SampleCountFlags, SharingMode,
 };
 use log::error;
 use nalgebra_glm::Vec4;

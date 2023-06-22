@@ -1,19 +1,17 @@
 use std::{
-    collections::{BinaryHeap, HashMap, HashSet},
+    collections::{HashMap},
     mem::size_of,
 };
 
 use crate::{math::AABB3, pbr::PbrMaterial};
-use ash::vk::{DeviceSize, Format, VertexInputAttributeDescription};
+use ash::vk::{DeviceSize};
 use gltf::{
-    buffer::{self, Data},
-    image::{self, Source},
-    mesh::Mode,
+    buffer::{self},
+    image::{self},
     scene::Transform,
-    Document, Node,
 };
 use mmap_rs::MmapOptions;
-use nalgebra_glm::{identity, quat, translate, Mat4, Qua, Vec2, Vec3, Vec4};
+use nalgebra_glm::{Mat4, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
 use slice_of_array::prelude::*;
 
@@ -258,19 +256,19 @@ impl ImportedGeometry {
             let tex_arr_id_base_color = self
                 .pixels_base_color
                 .iter()
-                .find(|(tex_arr_idx, src_img_idx)| *src_img_idx == mtl.base_color_src)
+                .find(|(_tex_arr_idx, src_img_idx)| *src_img_idx == mtl.base_color_src)
                 .expect("Mapping GLTF material -> PBR material for base color is missing");
 
             let tex_arr_id_metal_roughness = self
                 .pixels_metallic_roughness
                 .iter()
-                .find(|(tex_arr_idx, src_img_idx)| *src_img_idx == mtl.metallic_src)
+                .find(|(_tex_arr_idx, src_img_idx)| *src_img_idx == mtl.metallic_src)
                 .expect("Mapping GLTF material -> PBR material for metallic+roughness missing");
 
             let tex_arr_id_normals = self
                 .pixels_normal
                 .iter()
-                .find(|(tex_arr_idx, src_img_idx)| *src_img_idx == mtl.normal_src)
+                .find(|(_tex_arr_idx, src_img_idx)| *src_img_idx == mtl.normal_src)
                 .expect("Mapping GLTF material -> PBR material for normals missing");
 
             let pbr_mat_idx = pbr_mat_2_gpu_buf.len() as u32;
@@ -293,7 +291,7 @@ impl ImportedGeometry {
 
     fn process_nodes(&mut self, gltf_doc: &gltf::Document) {
         for s in gltf_doc.scenes() {
-            for (idx, nd) in s.nodes().enumerate() {
+            for (_idx, nd) in s.nodes().enumerate() {
                 self.process_node(&nd, gltf_doc, None);
             }
         }
@@ -343,9 +341,9 @@ impl ImportedGeometry {
             //glm::transpose(&glm::inverse(&matrix));
 
             for primitive in mesh.primitives() {
-                let mut first_index = self.indices.len() as u32;
-                let mut vertex_start = self.vertices.len();
-                let mut index_count = 0u32;
+                let _first_index = self.indices.len() as u32;
+                let vertex_start = self.vertices.len();
+                let _index_count = 0u32;
                 let mtl_name = primitive
                     .material()
                     .name()

@@ -1,26 +1,24 @@
 use ash::vk::{
-    BlendFactor, BlendOp, BorderColor, BufferUsageFlags, ColorComponentFlags, CommandBuffer,
-    ComponentMapping, CopyDescriptorSet, CullModeFlags, DescriptorBufferInfo, DescriptorImageInfo,
-    DescriptorSet, DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType, Device,
+    BlendFactor, BlendOp, BorderColor, BufferUsageFlags, ColorComponentFlags,
+    ComponentMapping, CullModeFlags, DescriptorBufferInfo, DescriptorImageInfo,
+    DescriptorSet, DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType,
     DeviceSize, DynamicState, Extent2D, Extent3D, Filter, Format, FrontFace, Handle,
     ImageAspectFlags, ImageCreateInfo, ImageLayout, ImageSubresourceRange, ImageTiling, ImageType,
-    ImageUsageFlags, ImageViewCreateInfo, ImageViewType, IndexType, MemoryPropertyFlags,
-    MemoryType, Offset2D, PipelineBindPoint, PipelineColorBlendAttachmentState,
-    PipelineRasterizationStateCreateInfo, PolygonMode, PrimitiveTopology, PushConstantRange,
-    Rect2D, SampleCountFlags, SampleMask, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode,
-    ShaderModuleCreateInfo, ShaderStageFlags, SharingMode, VertexInputAttributeDescription,
+    ImageUsageFlags, ImageViewCreateInfo, ImageViewType, IndexType, MemoryPropertyFlags, Offset2D, PipelineBindPoint, PipelineColorBlendAttachmentState,
+    PipelineRasterizationStateCreateInfo, PolygonMode, PrimitiveTopology,
+    Rect2D, SampleCountFlags, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, SharingMode, VertexInputAttributeDescription,
     VertexInputBindingDescription, VertexInputRate, WriteDescriptorSet,
 };
-use imgui::{draw_list, DrawCmd, DrawVert, TextureId};
+use imgui::{DrawCmd, TextureId};
 use log::{error, info};
 use memoffset::offset_of;
-use nalgebra_glm::{I32Vec2, Vec2};
+use nalgebra_glm::{I32Vec2};
 use winit::event::{ElementState, MouseScrollDelta};
 
 use crate::{
-    draw_context::{DrawContext, FrameRenderContext},
+    draw_context::{FrameRenderContext},
     vk_renderer::{
-        self, FrameRenderData, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
+        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
         ImageCopySource, ScopedBufferMapping, ShaderModuleDescription, ShaderModuleSource,
         UniqueBuffer, UniqueGraphicsPipeline, UniqueImage, UniqueImageView, UniqueSampler,
         VulkanRenderer,
@@ -31,7 +29,6 @@ use std::{
     cell::{Cell, RefCell, RefMut},
     mem::size_of,
     path::Path,
-    ptr::slice_from_raw_parts,
 };
 
 type UiVertex = imgui::DrawVert;
@@ -455,7 +452,7 @@ impl UiBackend {
 
             graphics_device.cmd_set_viewport(frame_context.cmd_buff, 0, &viewports);
 
-            let scissors = [frame_context.scissor];
+            let _scissors = [frame_context.scissor];
 
             let scale = [
                 2f32 / draw_data.display_size[0],

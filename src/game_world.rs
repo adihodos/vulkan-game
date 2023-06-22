@@ -1,26 +1,20 @@
 use std::{
-    cell::{Cell, RefCell},
-    mem::size_of,
+    cell::{RefCell},
     rc::Rc,
-    u32::MAX,
 };
 
 use ash::vk::{
-    BorderColor, BufferUsageFlags, CullModeFlags, DescriptorBufferInfo, DescriptorImageInfo,
-    DescriptorSet, DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType,
-    DeviceSize, DynamicState, Filter, FrontFace, ImageLayout, ImageTiling, ImageUsageFlags,
-    IndexType, MemoryPropertyFlags, PipelineBindPoint, PipelineRasterizationStateCreateInfo,
-    PolygonMode, PrimitiveTopology, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode,
-    ShaderStageFlags, WriteDescriptorSet, WriteDescriptorSetBuilder,
+    BorderColor, BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo,
+    DescriptorSet, DescriptorSetAllocateInfo, DescriptorType,
+    DeviceSize, Filter, ImageLayout,
+    IndexType, PipelineBindPoint, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, WriteDescriptorSet,
 };
-use glm::{Mat4, Vec3};
-use nalgebra::{Isometry3, Point3, Translation3};
+use glm::{Vec3};
+use nalgebra::{Point3};
 use nalgebra_glm::Vec4;
 
 use nalgebra_glm as glm;
-use rapier3d::prelude::{
-    ColliderBuilder, ColliderHandle, RigidBodyBuilder, RigidBodyHandle, RigidBodyType,
-};
+
 use smallvec::SmallVec;
 
 use crate::{
@@ -30,11 +24,10 @@ use crate::{
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, FrameRenderContext, UpdateContext},
     flight_cam::FlightCamera,
-    game_object::GameObjectRenderState,
-    math::{self, perspective2},
+    math::{self},
     particles::{ImpactSpark, SparksSystem},
     physics_engine::{
-        ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups, PhysicsObjectGroups,
+        ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups,
     },
     projectile_system::{ProjectileSpawnData, ProjectileSystem},
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
@@ -43,9 +36,7 @@ use crate::{
     sprite_batch::{SpriteBatch, TextureRegion},
     starfury::Starfury,
     vk_renderer::{
-        Cpu2GpuBuffer, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
-        ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline,
-        UniqueImage, UniqueSampler, VulkanRenderer,
+        Cpu2GpuBuffer, UniqueSampler, VulkanRenderer,
     },
     window::InputState,
 };
@@ -286,7 +277,7 @@ impl GameWorld {
     pub fn new(renderer: &VulkanRenderer, app_cfg: &AppConfig) -> Option<GameWorld> {
         ShadowFighterSwarm::write_default_config();
 
-        let debug_draw_overlay = DebugDrawOverlay::create(renderer)?;
+        let _debug_draw_overlay = DebugDrawOverlay::create(renderer)?;
         let skybox = Skybox::create(renderer, &app_cfg.scene, &app_cfg.engine)?;
 
         let resource_cache = ResourceHolder::create(renderer, app_cfg)?;

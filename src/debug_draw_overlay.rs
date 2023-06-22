@@ -11,7 +11,6 @@ use memoffset::offset_of;
 use nalgebra_glm as glm;
 
 use crate::{
-    draw_context::DrawContext,
     vk_renderer::{
         GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
         ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline,

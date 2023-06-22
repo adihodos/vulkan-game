@@ -1,12 +1,12 @@
 use std::cell::{Cell, RefCell};
 
 use crate::{
-    draw_context::{DrawContext, UpdateContext},
+    draw_context::{UpdateContext},
     game_world::{GameObjectHandle, QueuedCommand},
     math::AABB3,
-    physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
+    physics_engine::{PhysicsEngine},
     projectile_system::ProjectileSpawnData,
-    resource_cache::{GeometryRenderInfo, PbrRenderable, PbrRenderableHandle, ResourceHolder},
+    resource_cache::{PbrRenderableHandle, ResourceHolder},
     window::InputState,
 };
 
@@ -426,7 +426,7 @@ impl Starfury {
             .set((self.guns_cooldown.get() - update_context.frame_time as f32).max(0f32));
 
         {
-            let rigid_body = update_context
+            let _rigid_body = update_context
                 .physics_engine
                 .rigid_body_set
                 .get_mut(self.rigid_body_handle)
@@ -501,7 +501,7 @@ impl Starfury {
     }
 
     pub fn gamepad_input(&self, input_state: &InputState) {
-        use gilrs::{Axis, Gamepad};
+        
 
         input_state.gamepad.ltrigger.data.map(|btn| {
             // log::info!("Ltrigger pressed, cooldown: {}", self.guns_cooldown.get());

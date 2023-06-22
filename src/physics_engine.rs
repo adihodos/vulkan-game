@@ -3,7 +3,7 @@ use nalgebra_glm as glm;
 use rapier3d::prelude::*;
 
 use crate::{
-    debug_draw_overlay::DebugDrawOverlay, draw_context::DrawContext, game_world::QueuedCommand,
+    debug_draw_overlay::DebugDrawOverlay, game_world::QueuedCommand,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -168,7 +168,7 @@ impl PhysicsEngine {
                             || collider_handle == collision_event.collider2())
                             && collider.is_sensor()
                     })
-                    .map(|(collider_handle, collider)| {
+                    .map(|(_collider_handle, collider)| {
                         let collider_user_data = ColliderUserData(collider.user_data);
                         cmds.push(QueuedCommand::ProcessProjectileImpact(collider_user_data));
                     });

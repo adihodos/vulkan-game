@@ -1,4 +1,4 @@
-use ash::vk::{CommandBuffer, Extent2D, Offset2D, Rect2D, Viewport};
+use ash::vk::{CommandBuffer, Rect2D, Viewport};
 
 use crate::{
     camera::Camera, debug_draw_overlay::DebugDrawOverlay, game_world::QueuedCommand,

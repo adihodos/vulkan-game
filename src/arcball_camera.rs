@@ -184,7 +184,7 @@ impl ArcballCamera {
                 phase: _,
                 modifiers: _,
             } => match delta {
-                MouseScrollDelta::LineDelta(horizontal, vertical) => {
+                MouseScrollDelta::LineDelta(_horizontal, vertical) => {
                     self.zoom(*vertical, 0f32);
                 }
                 MouseScrollDelta::PixelDelta(amount) => {

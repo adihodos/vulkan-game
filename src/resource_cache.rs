@@ -1,28 +1,27 @@
 use ash::vk::{
     BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
-    DescriptorSetAllocateInfo, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorType,
+    DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType,
     DeviceSize, DynamicState, Filter, Format, ImageLayout, MemoryPropertyFlags, SamplerAddressMode,
     SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, VertexInputAttributeDescription,
-    VertexInputBindingDescription, VertexInputRate, WriteDescriptorSet, WHOLE_SIZE,
+    VertexInputBindingDescription, VertexInputRate, WriteDescriptorSet,
 };
 use chrono::Duration;
 use memoffset::offset_of;
-use nalgebra_glm as glm;
+
 use rayon::prelude::*;
 use smallvec::SmallVec;
 use std::{
-    collections::HashMap, mem::size_of, path::Path, ptr::copy_nonoverlapping, time::Instant,
+    collections::HashMap, mem::size_of, path::Path, time::Instant,
 };
 
 use crate::{
-    app_config::{self, AppConfig},
+    app_config::{AppConfig},
     imported_geometry::{GeometryNode, GeometryVertex, ImportedGeometry},
     math::AABB3,
     pbr::{PbrMaterial, PbrMaterialTextureCollection},
     vk_renderer::{
-        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ImageInfo, ScopedBufferMapping,
-        ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline,
-        UniqueImageWithView, UniqueSampler, VulkanRenderer,
+        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
+        ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline, UniqueSampler, VulkanRenderer,
     },
 };
 
@@ -169,7 +168,7 @@ impl ResourceHolder {
             handles.insert((*tag).clone(), geometry_handle);
         });
 
-        let vertex_bytes = vertex_offset as DeviceSize * size_of::<GeometryVertex>() as DeviceSize;
+        let _vertex_bytes = vertex_offset as DeviceSize * size_of::<GeometryVertex>() as DeviceSize;
         let vertex_data: SmallVec<[&[GeometryVertex]; 8]> = imported_geometries
             .iter()
             .map(|(_, geom)| geom.vertices())
@@ -183,7 +182,7 @@ impl ResourceHolder {
             None,
         )?;
 
-        let index_bytes = index_offset as DeviceSize * size_of::<u32>() as DeviceSize;
+        let _index_bytes = index_offset as DeviceSize * size_of::<u32>() as DeviceSize;
         let indices_data: SmallVec<[&[u32]; 8]> = imported_geometries
             .iter()
             .map(|(_, geom)| geom.indices())
@@ -197,7 +196,7 @@ impl ResourceHolder {
             None,
         )?;
 
-        let pbr_bytes = pbr_data_aligned_size * pbr_data.len() as DeviceSize;
+        let _pbr_bytes = pbr_data_aligned_size * pbr_data.len() as DeviceSize;
         let pbr_data_buffer = UniqueBuffer::gpu_only_buffer(
             renderer,
             BufferUsageFlags::STORAGE_BUFFER | BufferUsageFlags::TRANSFER_DST,
