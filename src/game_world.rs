@@ -244,6 +244,7 @@ pub struct GameWorld {
 impl GameWorld {
     const PHYSICS_TIME_STEP: f64 = 1f64 / 240f64;
     const MAX_HISTOGRAM_VALUES: usize = 32;
+    const CROSSHAIR_SIZE: f32 = 32f32;
 
     fn draw_options(&self) -> std::cell::Ref<DebugDrawOptions> {
         self.draw_opts.borrow()
@@ -1081,16 +1082,16 @@ impl GameWorld {
                 self.sprite_batch.borrow_mut().draw_with_origin(
                     window_space_pos.x,
                     window_space_pos.y,
-                    128f32,
-                    128f32,
+                    Self::CROSSHAIR_SIZE,
+                    Self::CROSSHAIR_SIZE,
                     self.spr_crosshair_normal,
                     Some(CROSSHAIR_COLOR),
                 );
                 self.sprite_batch.borrow_mut().draw_with_origin(
                     window_space_pos.x,
                     window_space_pos.y,
-                    128f32,
-                    128f32,
+                    Self::CROSSHAIR_SIZE,
+                    Self::CROSSHAIR_SIZE,
                     self.spr_crosshair_hit,
                     Some(CROSSHAIR_COLOR),
                 );
@@ -1113,8 +1114,8 @@ impl GameWorld {
                 self.sprite_batch.borrow_mut().draw_with_origin(
                     window_space_pos.x,
                     window_space_pos.y,
-                    128f32,
-                    128f32,
+                    Self::CROSSHAIR_SIZE,
+                    Self::CROSSHAIR_SIZE,
                     self.spr_crosshair_normal,
                     Some(CROSSHAIR_COLOR),
                 );
