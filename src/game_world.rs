@@ -24,7 +24,7 @@ use rapier3d::prelude::{
 use smallvec::SmallVec;
 
 use crate::{
-    app_config::AppConfig,
+    app_config::{AppConfig, PlayerShipConfig},
     camera::Camera,
     color_palettes::StdColors,
     debug_draw_overlay::DebugDrawOverlay,
@@ -219,6 +219,38 @@ struct GameObjectData {
     renderable: PbrRenderableHandle,
 }
 
+struct PlayerShipOptions {
+    spr_crosshair_normal: TextureRegion,
+    spr_crosshair_hit: TextureRegion,
+    spr_obj_outline: TextureRegion,
+    spr_obj_centermass: TextureRegion,
+    crosshair_size: f32,
+    crosshair_color: u32,
+    enemy_outline_color: u32,
+}
+
+impl PlayerShipOptions {
+    fn new(cfg: &PlayerShipConfig, texture_atlas: &SpriteBatch) -> Self {
+        Self {
+            spr_crosshair_normal: texture_atlas
+                .get_sprite_by_name(&cfg.crosshair_normal)
+                .unwrap(),
+            spr_crosshair_hit: texture_atlas
+                .get_sprite_by_name(&cfg.crosshair_hit)
+                .unwrap(),
+            spr_obj_outline: texture_atlas
+                .get_sprite_by_name(&cfg.target_outline)
+                .unwrap(),
+            spr_obj_centermass: texture_atlas
+                .get_sprite_by_name(&cfg.target_centermass)
+                .unwrap(),
+            crosshair_size: cfg.crosshair_size,
+            crosshair_color: cfg.crosshair_color,
+            enemy_outline_color: cfg.target_color,
+        }
+    }
+}
+
 pub struct GameWorld {
     draw_opts: RefCell<DebugDrawOptions>,
     resource_cache: ResourceHolder,
@@ -235,10 +267,7 @@ pub struct GameWorld {
     projectiles_sys: RefCell<ProjectileSystem>,
     sparks_sys: RefCell<SparksSystem>,
     sprite_batch: RefCell<SpriteBatch>,
-    spr_crosshair_normal: TextureRegion,
-    spr_crosshair_hit: TextureRegion,
-    spr_obj_outline: TextureRegion,
-    spr_obj_centermass: TextureRegion,
+    player_opts: PlayerShipOptions,
 }
 
 impl GameWorld {
@@ -466,10 +495,6 @@ impl GameWorld {
         )?;
 
         let sprites = SpriteBatch::create(renderer, app_cfg)?;
-        let spr_crosshair_hit = sprites.get_sprite_by_name("crosshair_small_051").unwrap();
-        let spr_crosshair_normal = sprites.get_sprite_by_name("crosshair_small_117").unwrap();
-        let spr_obj_outline = sprites.get_sprite_by_name("crosshair_small_025").unwrap();
-        let spr_obj_centermass = sprites.get_sprite_by_name("crosshair_small_125").unwrap();
 
         Some(GameWorld {
             draw_opts: RefCell::new(DebugDrawOptions::default()),
@@ -494,11 +519,8 @@ impl GameWorld {
             )),
             projectiles_sys: RefCell::new(ProjectileSystem::create(renderer, app_cfg)?),
             sparks_sys: RefCell::new(SparksSystem::create(renderer, app_cfg)?),
+            player_opts: PlayerShipOptions::new(&app_cfg.player, &sprites),
             sprite_batch: RefCell::new(sprites),
-            spr_crosshair_hit,
-            spr_crosshair_normal,
-            spr_obj_centermass,
-            spr_obj_outline,
         })
     }
 
@@ -1082,18 +1104,18 @@ impl GameWorld {
                 self.sprite_batch.borrow_mut().draw_with_origin(
                     window_space_pos.x,
                     window_space_pos.y,
-                    Self::CROSSHAIR_SIZE,
-                    Self::CROSSHAIR_SIZE,
-                    self.spr_crosshair_normal,
-                    Some(CROSSHAIR_COLOR),
+                    self.player_opts.crosshair_size,
+                    self.player_opts.crosshair_size,
+                    self.player_opts.spr_crosshair_normal,
+                    Some(self.player_opts.crosshair_color),
                 );
                 self.sprite_batch.borrow_mut().draw_with_origin(
                     window_space_pos.x,
                     window_space_pos.y,
-                    Self::CROSSHAIR_SIZE,
-                    Self::CROSSHAIR_SIZE,
-                    self.spr_crosshair_hit,
-                    Some(CROSSHAIR_COLOR),
+                    self.player_opts.crosshair_size,
+                    self.player_opts.crosshair_size,
+                    self.player_opts.spr_crosshair_hit,
+                    Some(self.player_opts.crosshair_color),
                 );
             })
             .or_else(|| {
@@ -1114,10 +1136,10 @@ impl GameWorld {
                 self.sprite_batch.borrow_mut().draw_with_origin(
                     window_space_pos.x,
                     window_space_pos.y,
-                    Self::CROSSHAIR_SIZE,
-                    Self::CROSSHAIR_SIZE,
-                    self.spr_crosshair_normal,
-                    Some(CROSSHAIR_COLOR),
+                    self.player_opts.crosshair_size,
+                    self.player_opts.crosshair_size,
+                    self.player_opts.spr_crosshair_normal,
+                    Some(self.player_opts.crosshair_color),
                 );
                 Some(())
             });
@@ -1163,8 +1185,8 @@ impl GameWorld {
                         lead_ind_circle_pos.y,
                         64f32,
                         64f32,
-                        self.spr_obj_centermass,
-                        Some(TARGET_OUTLINE_COLOR),
+                        self.player_opts.spr_obj_centermass,
+                        Some(self.player_opts.enemy_outline_color),
                     );
                 });
 
@@ -1200,8 +1222,8 @@ impl GameWorld {
                         pmin.y,
                         size.x,
                         size.y,
-                        self.spr_obj_outline,
-                        Some(TARGET_OUTLINE_COLOR),
+                        self.player_opts.spr_obj_outline,
+                        Some(self.player_opts.enemy_outline_color),
                     );
                 });
         });

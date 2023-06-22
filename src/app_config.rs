@@ -14,6 +14,17 @@ pub struct GeometryDescription {
     pub path: std::path::PathBuf,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct PlayerShipConfig {
+    pub crosshair_normal: String,
+    pub crosshair_hit: String,
+    pub target_outline: String,
+    pub target_centermass: String,
+    pub crosshair_size: f32,
+    pub crosshair_color: u32,
+    pub target_color: u32,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SceneDescription {
     pub skyboxes: Vec<SkyboxDescription>,
@@ -23,6 +34,7 @@ pub struct SceneDescription {
 pub struct AppConfig {
     pub engine: EngineConfig,
     pub scene: SceneDescription,
+    pub player: PlayerShipConfig,
 }
 
 impl AppConfig {
@@ -36,6 +48,10 @@ impl AppConfig {
                 File::open("config/scene.config.ron").expect("Can't open scene config file!"),
             )
             .expect("Failed to read scene description"),
+            player: ron::de::from_reader(
+                File::open("config/player.config.ron").expect("Failed to open player config file"),
+            )
+            .expect("Can't parse player config file!"),
         }
     }
 }

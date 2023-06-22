@@ -1,0 +1,9 @@
+(
+    crosshair_normal: "crosshair_small_117",
+    crosshair_hit: "crosshair_small_051",
+    crosshair_size: 48.0,
+    crosshair_color: 0xff00ff00,
+    target_outline: "crosshair_small_025",
+    target_centermass: "crosshair_small_125",
+    target_color: 0xffff3399,
+)
