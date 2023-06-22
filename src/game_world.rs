@@ -1,16 +1,13 @@
-use std::{
-    cell::{RefCell},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use ash::vk::{
-    BorderColor, BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo,
-    DescriptorSet, DescriptorSetAllocateInfo, DescriptorType,
-    DeviceSize, Filter, ImageLayout,
-    IndexType, PipelineBindPoint, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, WriteDescriptorSet,
+    BorderColor, BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
+    DescriptorSetAllocateInfo, DescriptorType, DeviceSize, Filter, ImageLayout, IndexType,
+    PipelineBindPoint, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode,
+    WriteDescriptorSet,
 };
-use glm::{Vec3};
-use nalgebra::{Point3};
+use glm::Vec3;
+use nalgebra::Point3;
 use nalgebra_glm::Vec4;
 
 use nalgebra_glm as glm;
@@ -26,18 +23,14 @@ use crate::{
     flight_cam::FlightCamera,
     math::{self},
     particles::{ImpactSpark, SparksSystem},
-    physics_engine::{
-        ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups,
-    },
+    physics_engine::{ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups},
     projectile_system::{ProjectileSpawnData, ProjectileSystem},
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     shadow_swarm::ShadowFighterSwarm,
     skybox::Skybox,
     sprite_batch::{SpriteBatch, TextureRegion},
     starfury::Starfury,
-    vk_renderer::{
-        Cpu2GpuBuffer, UniqueSampler, VulkanRenderer,
-    },
+    vk_renderer::{Cpu2GpuBuffer, UniqueSampler, VulkanRenderer},
     window::InputState,
 };
 
@@ -264,7 +257,6 @@ pub struct GameWorld {
 impl GameWorld {
     const PHYSICS_TIME_STEP: f64 = 1f64 / 240f64;
     const MAX_HISTOGRAM_VALUES: usize = 32;
-    const CROSSHAIR_SIZE: f32 = 32f32;
 
     fn draw_options(&self) -> std::cell::Ref<DebugDrawOptions> {
         self.draw_opts.borrow()
@@ -1067,7 +1059,6 @@ impl GameWorld {
             .groups(PhysicsObjectCollisionGroups::ships());
 
         const MAX_RAY_DIST: f32 = 5000f32;
-        const CROSSHAIR_COLOR: u32 = StdColors::GREEN;
 
         let left_gun_origin = player_ship_transform * self.starfury.lower_left_gun();
         self.physics_engine
