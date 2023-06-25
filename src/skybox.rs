@@ -2,10 +2,10 @@
 use std::{mem::size_of, path::Path, slice::from_raw_parts};
 
 use ash::vk::{
-    BorderColor, BufferUsageFlags, CompareOp, DescriptorImageInfo, DescriptorSet,
-    DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType,
-    DynamicState, Filter, ImageLayout,
-    IndexType, MemoryPropertyFlags, PipelineBindPoint, PushConstantRange, SamplerAddressMode,
+    BorderColor, BufferUsageFlags, CompareOp, CullModeFlags, DescriptorImageInfo, DescriptorSet,
+    DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType, DynamicState, Filter,
+    FrontFace, ImageLayout, IndexType, MemoryPropertyFlags, PipelineBindPoint,
+    PipelineRasterizationStateCreateInfo, PolygonMode, PushConstantRange, SamplerAddressMode,
     SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, WriteDescriptorSet,
 };
 use log::{error, info};
@@ -15,8 +15,9 @@ use crate::{
     app_config::{EngineConfig, SceneDescription},
     draw_context::DrawContext,
     vk_renderer::{
-        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
-        ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline, UniqueImageWithView, UniqueSampler, VulkanRenderer,
+        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ShaderModuleDescription,
+        ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline, UniqueImageWithView,
+        UniqueSampler, VulkanRenderer,
     },
 };
 
@@ -109,14 +110,13 @@ impl Skybox {
                 },
             ])
             .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
-            .set_depth_compare_op(CompareOp::LESS_OR_EQUAL)
             .build(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
                 GraphicsPipelineLayoutBuilder::new()
                     .add_push_constant(
                         PushConstantRange::builder()
-                            .size(size_of::<Mat4>() as u32 * renderer.max_inflight_frames())
+                            .size(size_of::<Mat4>() as u32)
                             .stage_flags(ShaderStageFlags::VERTEX)
                             .offset(0)
                             .build(),
@@ -172,6 +172,7 @@ impl Skybox {
                     .image_view(skybox_ibl.specular.image_view())
                     .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .build()];
+
                 let wds = [WriteDescriptorSet::builder()
                     .dst_set(ds[0])
                     .image_info(&dsi)
@@ -202,11 +203,8 @@ impl Skybox {
         let graphics_device = draw_context.renderer.graphics_device();
 
         unsafe {
-            let viewports = [draw_context.viewport];
-            let scissors = [draw_context.scissor];
-
-            graphics_device.cmd_set_viewport(draw_context.cmd_buff, 0, &viewports);
-            graphics_device.cmd_set_scissor(draw_context.cmd_buff, 0, &scissors);
+            graphics_device.cmd_set_viewport(draw_context.cmd_buff, 0, &[draw_context.viewport]);
+            graphics_device.cmd_set_scissor(draw_context.cmd_buff, 0, &[draw_context.scissor]);
             graphics_device.cmd_bind_pipeline(
                 draw_context.cmd_buff,
                 PipelineBindPoint::GRAPHICS,
@@ -225,22 +223,20 @@ impl Skybox {
                 world_view_proj.len() * size_of::<f32>(),
             );
 
-            let pushconst_offset = size_of::<Mat4>() as u32 * draw_context.frame_id;
             graphics_device.cmd_push_constants(
                 draw_context.cmd_buff,
                 self.pipeline.layout,
                 ShaderStageFlags::VERTEX,
-                pushconst_offset,
+                0,
                 world_view_proj,
             );
 
-            let desc_sets = [self.descriptor_set[self.active_skybox as usize]];
             graphics_device.cmd_bind_descriptor_sets(
                 draw_context.cmd_buff,
                 PipelineBindPoint::GRAPHICS,
                 self.pipeline.layout,
                 0,
-                &desc_sets,
+                &[self.descriptor_set[self.active_skybox as usize]],
                 &[],
             );
 

@@ -3,23 +3,18 @@ use std::{
     time::Instant,
 };
 
-use nalgebra_glm::{IVec2};
+use nalgebra_glm::IVec2;
 
 use winit::{
     event::{Event, WindowEvent},
     event_loop,
-    window::{Fullscreen},
+    window::Fullscreen,
 };
 
 use crate::{
-    app_config::{AppConfig},
-    draw_context::FrameRenderContext,
-    game_world::GameWorld,
-    ui_backend::UiBackend,
-    vk_renderer::{VulkanRenderer},
+    app_config::AppConfig, draw_context::FrameRenderContext, game_world::GameWorld,
+    test_world::TestWorld, ui_backend::UiBackend, vk_renderer::VulkanRenderer,
 };
-
-
 
 #[derive(Clone, Copy, Debug)]
 pub struct GamepadStick {
@@ -87,10 +82,18 @@ impl MainWindow {
 
         let window = winit::window::Window::new(&event_loop).expect("Failed to create window");
 
-        window.set_decorations(false);
+        if _app_config.engine.full_screen {
+            window.set_decorations(false);
+        }
         window.set_visible(true);
         window.set_inner_size(vidmode.size());
-        window.set_fullscreen(Some(Fullscreen::Exclusive(vidmode)));
+
+        if _app_config.engine.full_screen {
+            window.set_fullscreen(Some(Fullscreen::Exclusive(vidmode)));
+        } else {
+            let wnd_pos = pmon.position();
+            window.set_outer_position(wnd_pos);
+        }
 
         let mut game_main = GameMain::new(&window);
         let mut gilrs = gilrs::Gilrs::new().expect("Failed to initialize input library");
@@ -251,6 +254,7 @@ impl MainWindow {
 struct GameMain {
     ui: UiBackend,
     game_world: RefCell<GameWorld>,
+    test_world: RefCell<TestWorld>,
     timestamp: Cell<Instant>,
     app_config: AppConfig,
     renderer: VulkanRenderer,
@@ -285,6 +289,9 @@ impl GameMain {
         GameMain {
             ui,
             game_world: RefCell::new(game_world),
+            test_world: RefCell::new(
+                TestWorld::new(&renderer, &app_config).expect("Failed to create test world"),
+            ),
             timestamp: Cell::new(Instant::now()),
             app_config,
             renderer,
@@ -302,6 +309,7 @@ impl GameMain {
         }
 
         self.game_world.borrow().input_event(event);
+        // self.test_world.borrow().input_event(event);
         self.ui.input_event(event);
     }
 
@@ -312,6 +320,7 @@ impl GameMain {
     fn do_ui(&self) {
         let mut ui = self.ui.new_frame();
         self.game_world.borrow().ui(&mut ui);
+        // self.test_world.borrow().ui(&mut ui);
     }
 
     fn draw_frame(&self) {
@@ -327,6 +336,7 @@ impl GameMain {
         };
 
         self.game_world.borrow().draw(&frame_context);
+        // self.test_world.borrow().draw(&frame_context);
         self.ui.draw_frame(&frame_context);
 
         self.renderer.end_frame();
@@ -339,6 +349,7 @@ impl GameMain {
         let frame_time = elapsed.as_secs_f64().clamp(0f64, 0.25f64);
 
         self.game_world.borrow().update(frame_time);
+        // self.test_world.borrow().update(frame_time);
         self.do_ui();
         self.draw_frame();
     }

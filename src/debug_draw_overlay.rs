@@ -11,6 +11,9 @@ use memoffset::offset_of;
 use nalgebra_glm as glm;
 
 use crate::{
+    color_palettes::StdColors,
+    math,
+    plane::Plane,
     vk_renderer::{
         GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
         ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline,
@@ -232,6 +235,23 @@ impl DebugDrawOverlay {
         });
     }
 
+    pub fn world_space_coord_sys(&mut self, extent: f32) {
+        let axis_vectors = [
+            glm::Vec3::x_axis().xyz(),
+            glm::Vec3::y_axis().xyz(),
+            glm::Vec3::z_axis().xyz(),
+        ];
+
+        let colors = [StdColors::RED, StdColors::GREEN, StdColors::BLUE];
+
+        self.add_axes(
+            glm::Vec3::zeros(),
+            extent,
+            &glm::Mat3::from_columns(&axis_vectors),
+            Some(&colors),
+        );
+    }
+
     pub fn add_axes(
         &mut self,
         origin: glm::Vec3,
@@ -261,6 +281,27 @@ impl DebugDrawOverlay {
             .for_each(|(axis, color)| {
                 self.add_line(origin, origin + axis * extents, *color, *color);
             });
+    }
+
+    pub fn add_plane(&mut self, p: &Plane, o: &glm::Vec3, size: f32, color: u32) {
+        let (u, v, w) = p.coord_sys();
+
+        let half_size = size * 0.5f32;
+
+        let vertices = [
+            *o - (u + v) * half_size,
+            *o + (u - v) * half_size,
+            *o + (u + v) * half_size,
+            *o + (v - u) * half_size,
+        ];
+
+        let indices = [0, 1, 1, 2, 2, 3, 3, 0, 0, 2, 1, 3];
+
+        indices.windows(2).for_each(|idx| {
+            self.add_line(vertices[idx[0]], vertices[idx[1]], color, color);
+        });
+
+        self.add_line(*o, *o + w * half_size, color, color);
     }
 
     pub fn clear(&mut self) {

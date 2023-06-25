@@ -12,18 +12,20 @@ use nalgebra_glm::Vec4;
 
 use nalgebra_glm as glm;
 
+use rapier3d::prelude::RigidBodyHandle;
 use smallvec::SmallVec;
 
 use crate::{
     app_config::{AppConfig, PlayerShipConfig},
     camera::Camera,
-    color_palettes::StdColors,
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, FrameRenderContext, UpdateContext},
     flight_cam::FlightCamera,
+    frustrum::{is_aabb_on_frustrum, Frustrum},
     math::{self},
     particles::{ImpactSpark, SparksSystem},
     physics_engine::{ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups},
+    plane::Plane,
     projectile_system::{ProjectileSpawnData, ProjectileSystem},
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     shadow_swarm::ShadowFighterSwarm,
@@ -315,7 +317,7 @@ impl GameWorld {
                     .build(),
             )
         }
-        .expect("Papali, papali sukyyyyyyyyyyyyyy");
+        .expect("Failed to allocate descriptor sets");
 
         let desc_buff_info = [
             DescriptorBufferInfo::builder()
@@ -420,7 +422,7 @@ impl GameWorld {
                         .build(),
                 )
             }
-            .expect("Papalyyyy cykyyyyyyyyyyyyyyy");
+            .expect("Failed to allocate descriptor sets");
 
             let wds = [
                 //
@@ -479,6 +481,9 @@ impl GameWorld {
 
         let sprites = SpriteBatch::create(renderer, app_cfg)?;
 
+        let aspect = renderer.framebuffer_extents().width as f32
+            / renderer.framebuffer_extents().height as f32;
+
         Some(GameWorld {
             draw_opts: RefCell::new(DebugDrawOptions::default()),
             resource_cache,
@@ -496,7 +501,7 @@ impl GameWorld {
             shadows_swarm_inst_render_data,
             frame_times: RefCell::new(Vec::with_capacity(Self::MAX_HISTOGRAM_VALUES)),
             physics_engine: RefCell::new(physics_engine),
-            camera: RefCell::new(FlightCamera::new()),
+            camera: RefCell::new(FlightCamera::new(75f32, aspect, 0.1f32, 5000f32)),
             debug_draw_overlay: std::rc::Rc::new(RefCell::new(
                 DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
             )),
@@ -517,6 +522,9 @@ impl GameWorld {
             5000f32,
         );
 
+        self.camera.borrow_mut().projection_matrix = projection;
+        self.camera.borrow_mut().inverse_projection = inverse_projection;
+
         {
             let cam_ref = self.camera.borrow();
             let draw_context = DrawContext {
@@ -534,9 +542,9 @@ impl GameWorld {
 
             self.draw_objects(&draw_context);
 
-            self.draw_crosshair(&draw_context);
-            self.draw_lead_indicator(&draw_context);
-            self.sprite_batch.borrow_mut().render(&draw_context);
+            // self.draw_crosshair(&draw_context);
+            // self.draw_lead_indicator(&draw_context);
+            // self.sprite_batch.borrow_mut().render(&draw_context);
         }
 
         if self.draw_options().debug_draw_physics {
@@ -552,14 +560,14 @@ impl GameWorld {
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {
-        if self.draw_options().debug_draw_world_axis {
-            self.debug_draw_overlay.borrow_mut().add_axes(
-                Vec3::zeros(),
-                self.draw_opts.borrow().world_axis_length,
-                &glm::Mat3::identity(),
-                None,
-            );
-        }
+        // if self.draw_options().debug_draw_world_axis {
+        //     self.debug_draw_overlay.borrow_mut().add_axes(
+        //         Vec3::zeros(),
+        //         self.draw_opts.borrow().world_axis_length,
+        //         &glm::Mat3::identity(),
+        //         None,
+        //     );
+        // }
 
         self.skybox.draw(&draw_context);
 
@@ -703,18 +711,54 @@ impl GameWorld {
                     // });
                 }
             });
-
-            self.draw_instanced_objects(draw_context);
-
-            self.projectiles_sys
-                .borrow()
-                .render(draw_context, &self.physics_engine.borrow());
-            self.sparks_sys.borrow().render(draw_context);
         }
+
+        self.draw_instanced_objects(draw_context);
+
+        // self.projectiles_sys
+        //     .borrow()
+        //     .render(draw_context, &self.physics_engine.borrow());
+        // self.sparks_sys.borrow().render(draw_context);
     }
 
     fn draw_instanced_objects(&self, draw_context: &DrawContext) {
-        // let device = draw_context.renderer.graphics_device();
+        // let frustrum = Frustrum::from_flight_cam(&self.camera.borrow());
+
+        // let visible_instances: SmallVec<[(RigidBodyHandle, nalgebra::Isometry3<f32>); 8]> = self
+        //     .shadows_swarm
+        //     .instances_physics_data
+        //     .iter()
+        //     .filter_map(|inst_data| {
+        //         self.physics_engine
+        //             .borrow()
+        //             .rigid_body_set
+        //             .get(inst_data.rigid_body_handle)
+        //             .map(|rbody| {
+        //                 let inst_transform = *rbody.position();
+        //                 let inst_aabb = self
+        //                     .resource_cache
+        //                     .get_geometry_info(self.shadows_swarm.renderable)
+        //                     .aabb;
+        //                 let transformed_aabb = inst_transform.to_matrix() * inst_aabb;
+        //                 if is_aabb_on_frustrum(&frustrum, &transformed_aabb, &inst_transform) {
+        //                     Some((inst_data.rigid_body_handle, inst_transform))
+        //                 } else {
+        //                     None
+        //                 }
+        //             })
+        //     })
+        //     .flatten()
+        //     .collect();
+
+        // if visible_instances.is_empty() {
+        //     return;
+        // }
+
+        // log::info!(
+        //     "Sending {}/{} instances to GPU",
+        //     visible_instances.len(),
+        //     self.shadows_swarm.instances_physics_data.len()
+        // );
 
         let global_uniforms = PbrTransformDataMultiInstanceUBO {
             view: draw_context.camera.view_transform(),
@@ -925,8 +969,6 @@ impl GameWorld {
     }
 
     pub fn update(&self, frame_time: f64) {
-        // log::info!("Frame time: {}", frame_time);
-
         {
             let queued_commands = {
                 let mut phys_engine = self.physics_engine.borrow_mut();
@@ -992,7 +1034,6 @@ impl GameWorld {
     }
 
     fn projectile_impacted_event(&self, proj_collider_data: ColliderUserData) {
-        // log::info!("Impact for {}", proj_collider_data);
         let impacted_proj = self
             .projectiles_sys
             .borrow()
@@ -1128,8 +1169,6 @@ impl GameWorld {
     }
 
     fn draw_lead_indicator(&self, draw_context: &DrawContext) {
-        const TARGET_OUTLINE_COLOR: u32 = StdColors::GREEN;
-
         let physics_engine = self.physics_engine.borrow();
         self.shadows_swarm.instances().iter().for_each(|inst| {
             physics_engine

@@ -1,15 +1,24 @@
+use nalgebra::ComplexField;
 use nalgebra_glm as glm;
 
+use crate::plane::Plane;
+
+///
 /// Symmetric perspective projection with reverse depth (1.0 -> 0.0) and
-/// Vulkan coordinate space.
+/// Vulkan coordinate space. (left-hand coord system)
 pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> (glm::Mat4, glm::Mat4) {
     let fov_rad = vertical_fov * 2.0f32 * std::f32::consts::PI / 360.0f32;
     let focal_length = 1.0f32 / (fov_rad / 2.0f32).tan();
 
     let x = focal_length / aspect_ratio;
     let y = -focal_length;
-    let a: f32 = n / (f - n);
-    let b: f32 = f * a;
+    // let a: f32 = -n / (f - n);
+    // let b: f32 = (n * f) / (f - n);
+    // let a = 1f32 / (n - f);
+    // let b = -f / (n - f);
+
+    let a = f / (f - n);
+    let b = (-f * n) / (f - n);
 
     (
         //
@@ -21,7 +30,7 @@ pub fn perspective(vertical_fov: f32, aspect_ratio: f32, n: f32, f: f32) -> (glm
             //
             0f32, y, 0f32, 0f32, //
             //
-            0f32, 0f32, a, -1.0f32, //
+            0f32, 0f32, a, 1.0f32, //
             //
             0f32, 0f32, b, 0f32,
         ]),
@@ -134,17 +143,32 @@ pub struct AABB3 {
     pub max: glm::Vec3,
 }
 
+impl std::fmt::Display for AABB3 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AABB3 {{ {:?} {:?} }}", self.min, self.max)
+    }
+}
+
 impl AABB3 {
     pub fn new(min: glm::Vec3, max: glm::Vec3) -> Self {
         Self { min, max }
     }
 
+    pub fn unit() -> Self {
+        Self::new(
+            glm::vec3(-0.5f32, -0.5f32, -0.5f32),
+            glm::vec3(0.5f32, 0.5f32, 0.5f32),
+        )
+    }
+
     pub fn center(&self) -> glm::Vec3 {
-        self.min + (self.max - self.min) * 0.5f32
+        // self.min + (self.max - self.min) * 0.5f32
+        (self.max + self.min) * 0.5f32
     }
 
     pub fn extents(&self) -> glm::Vec3 {
-        self.max - self.min
+        let c = self.center();
+        self.max - c
     }
 
     pub fn width(&self) -> f32 {
@@ -169,6 +193,12 @@ impl AABB3 {
     pub fn add_point(&mut self, pt: glm::Vec3) {
         self.min = glm::min2(&self.min, &pt);
         self.max = glm::max2(&self.max, &pt);
+    }
+
+    pub fn is_on_or_forward_plane(&self, p: &Plane) -> bool {
+        let extents = self.extents();
+        let r = glm::dot(&extents, &p.normal.abs());
+        -r <= p.signed_distance(&self.center())
     }
 }
 
@@ -222,4 +252,19 @@ impl std::convert::From<[f32; 6]> for AABB3 {
 
 pub fn aabb_merge(a: &AABB3, b: &AABB3) -> AABB3 {
     AABB3::new(glm::min2(&a.min, &b.min), glm::max2(&a.max, &b.max))
+}
+
+pub fn orthonormal_basis_from_vec(n: &glm::Vec3) -> (glm::Vec3, glm::Vec3, glm::Vec3) {
+    let axis2 = glm::normalize(n);
+
+    let a = if axis2.x.abs() > 0.9f32 {
+        glm::Vec3::new(0f32, 1f32, 0f32)
+    } else {
+        glm::Vec3::new(1f32, 0f32, 0f32)
+    };
+
+    let axis1 = glm::normalize(&glm::cross(&axis2, &a));
+    let axis0 = glm::cross(&axis2, &axis1);
+
+    (axis0, axis1, axis2)
 }

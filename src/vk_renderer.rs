@@ -1519,7 +1519,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             depth_stencil_state: PipelineDepthStencilStateCreateInfo::builder()
                 .depth_test_enable(true)
                 .stencil_test_enable(false)
-                .depth_compare_op(CompareOp::LESS)
+                .depth_compare_op(CompareOp::GREATER_OR_EQUAL)
                 .depth_write_enable(true)
                 .min_depth_bounds(1f32)
                 .max_depth_bounds(0f32)
@@ -1557,6 +1557,11 @@ impl<'a> GraphicsPipelineBuilder<'a> {
     ) -> Self {
         self.vertex_input_attrib_bindings.push(binding);
         self
+    }
+
+    pub fn set_raster_state(mut self, raster_state: PipelineRasterizationStateCreateInfo) -> Self {
+	self.raster_state = raster_state;
+	self
     }
 
     pub fn set_input_assembly_state(
@@ -2729,7 +2734,7 @@ impl VulkanRenderer {
             },
             ClearValue {
                 depth_stencil: ClearDepthStencilValue {
-                    depth: 1f32,
+                    depth: 0f32,
                     stencil: 0,
                 },
             },

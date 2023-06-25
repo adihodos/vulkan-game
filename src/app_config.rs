@@ -58,6 +58,7 @@ impl AppConfig {
 
 #[derive(Serialize, Deserialize)]
 pub struct EngineConfig {
+    pub full_screen: bool,
     pub root_path: PathBuf,
     pub textures: PathBuf,
     pub models: PathBuf,
@@ -73,39 +74,3 @@ impl EngineConfig {
         self.textures.clone().join(texture_file)
     }
 }
-
-// fn write_config() {
-//     use ron::ser::{to_writer_pretty, PrettyConfig};
-//
-//     let engine_cfg = EngineConfig {
-//         root_path: "data".into(),
-//         textures: "data/textures".into(),
-//         models: "data/models".into(),
-//         shaders: "data/shaders".into(),
-//     };
-//
-//     let cfg_opts = PrettyConfig::new()
-//         .depth_limit(8)
-//         .separate_tuple_members(true);
-//
-//     to_writer_pretty(
-//         File::create("config/engine.cfg.ron").expect("cykaaaaa"),
-//         &engine_cfg,
-//         cfg_opts.clone(),
-//     )
-//     .expect("oh noes ...");
-//
-//     let my_scene = SceneDescription {
-//         skyboxes: vec![SkyboxDescription {
-//             tag: "starfield1".into(),
-//             path: "skybox-ibl".into(),
-//         }],
-//     };
-//
-//     to_writer_pretty(
-//         File::create("config/scene.cfg.ron").expect("kurwa jebane!"),
-//         &my_scene,
-//         cfg_opts,
-//     )
-//     .expect("Dublu plm ,,,");
-// }

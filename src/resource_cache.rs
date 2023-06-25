@@ -1,8 +1,9 @@
 use ash::vk::{
-    BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
-    DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType,
-    DeviceSize, DynamicState, Filter, Format, ImageLayout, MemoryPropertyFlags, SamplerAddressMode,
-    SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, VertexInputAttributeDescription,
+    BufferUsageFlags, CullModeFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
+    DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType, DeviceSize,
+    DynamicState, Filter, Format, FrontFace, ImageLayout, MemoryPropertyFlags,
+    PipelineRasterizationStateCreateInfo, PolygonMode, SamplerAddressMode, SamplerCreateInfo,
+    SamplerMipmapMode, ShaderStageFlags, VertexInputAttributeDescription,
     VertexInputBindingDescription, VertexInputRate, WriteDescriptorSet,
 };
 use chrono::Duration;
@@ -10,18 +11,16 @@ use memoffset::offset_of;
 
 use rayon::prelude::*;
 use smallvec::SmallVec;
-use std::{
-    collections::HashMap, mem::size_of, path::Path, time::Instant,
-};
+use std::{collections::HashMap, mem::size_of, path::Path, time::Instant};
 
 use crate::{
-    app_config::{AppConfig},
+    app_config::AppConfig,
     imported_geometry::{GeometryNode, GeometryVertex, ImportedGeometry},
     math::AABB3,
     pbr::{PbrMaterial, PbrMaterialTextureCollection},
     vk_renderer::{
-        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
-        ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline, UniqueSampler, VulkanRenderer,
+        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ShaderModuleDescription,
+        ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline, UniqueSampler, VulkanRenderer,
     },
 };
 
@@ -388,6 +387,14 @@ impl ResourceHolder {
                     entry_point: "main",
                 },
             ])
+            .set_raster_state(
+                PipelineRasterizationStateCreateInfo::builder()
+                    .cull_mode(CullModeFlags::BACK)
+                    .front_face(FrontFace::CLOCKWISE)
+                    .line_width(1f32)
+                    .polygon_mode(PolygonMode::FILL)
+                    .build(),
+            )
             .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
             .build(
                 renderer.graphics_device(),
@@ -544,6 +551,14 @@ impl ResourceHolder {
                 },
             ])
             .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
+            .set_raster_state(
+                PipelineRasterizationStateCreateInfo::builder()
+                    .cull_mode(CullModeFlags::BACK)
+                    .front_face(FrontFace::CLOCKWISE)
+                    .line_width(1f32)
+                    .polygon_mode(PolygonMode::FILL)
+                    .build(),
+            )
             .build(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
