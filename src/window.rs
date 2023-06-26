@@ -131,9 +131,9 @@ impl MainWindow {
                             let code_right_x = gamepad.axis_code(gilrs::Axis::RightStickX).unwrap();
                             let code_right_y = gamepad.axis_code(gilrs::Axis::RightStickY).unwrap();
                             let code_z_right =
-                                gamepad.button_code(gilrs::Button::LeftThumb).unwrap();
+                                gamepad.button_code(gilrs::Button::LeftTrigger2).unwrap();
                             let code_z_left =
-                                gamepad.button_code(gilrs::Button::RightThumb).unwrap();
+                                gamepad.button_code(gilrs::Button::RightTrigger2).unwrap();
 
                             let code_left_x = gamepad.axis_code(gilrs::Axis::LeftStickX).unwrap();
                             let code_left_y = gamepad.axis_code(gilrs::Axis::LeftStickY).unwrap();

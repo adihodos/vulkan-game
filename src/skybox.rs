@@ -2,11 +2,10 @@
 use std::{mem::size_of, path::Path, slice::from_raw_parts};
 
 use ash::vk::{
-    BorderColor, BufferUsageFlags, CompareOp, CullModeFlags, DescriptorImageInfo, DescriptorSet,
+    BorderColor, BufferUsageFlags, CompareOp, DescriptorImageInfo, DescriptorSet,
     DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType, DynamicState, Filter,
-    FrontFace, ImageLayout, IndexType, MemoryPropertyFlags, PipelineBindPoint,
-    PipelineRasterizationStateCreateInfo, PolygonMode, PushConstantRange, SamplerAddressMode,
-    SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, WriteDescriptorSet,
+    ImageLayout, IndexType, MemoryPropertyFlags, PipelineBindPoint, PushConstantRange,
+    SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, WriteDescriptorSet,
 };
 use log::{error, info};
 use nalgebra_glm::Mat4;

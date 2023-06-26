@@ -66,7 +66,7 @@ impl FlightCamera {
             near,
             far,
             aspect,
-            fovy,
+            fovy: fovy.to_radians(),
             projection_matrix,
             inverse_projection,
         }
@@ -85,52 +85,8 @@ impl FlightCamera {
             * self.params.lookahead_factor
             + object.position().translation.vector.xyz();
 
-        let view_dir = glm::normalize(&(look_at - self.position));
-        let right_dir = glm::normalize(&glm::cross(&view_dir, &up_vec));
-        let up_dir = glm::cross(&right_dir, &view_dir);
-
-        let eye_pos = self.position;
-        // let look_at = glm::vec3(0f32, 10f32, 10f32);
-
-        self.view_matrix = glm::look_at_lh(&eye_pos, &look_at, &up_dir);
+        self.view_matrix = glm::look_at_lh(&self.position, &look_at, &up_vec);
         self.inverse_view = glm::inverse(&self.view_matrix);
-        // self.position = eye_pos;
-
-        // self.view_matrix = glm::look_at_lh(&self.position, &look_at, &up_vec);
-        // self.inverse_view = glm::inverse(&self.view_matrix);
-
-        // let right = self.view_matrix.column(0);
-        // let up = self.view_matrix.column(1);
-        // let dir = self.view_matrix.column(2);
-
-        // // log::info!("[{} {} {}]\n{}", right, up, dir, self.view_matrix);
-
-        // self.inverse_view = glm::Mat4::from_column_slice(&[
-        //     //
-        //     //
-        //     right[0],
-        //     up[0],
-        //     dir[0],
-        //     self.position[0],
-        //     //
-        //     //
-        //     right[1],
-        //     up[1],
-        //     dir[1],
-        //     self.position[1],
-        //     //
-        //     //
-        //     right[2],
-        //     up[2],
-        //     dir[2],
-        //     self.position[2],
-        //     //
-        //     //
-        //     0f32,
-        //     0f32,
-        //     0f32,
-        //     1f32,
-        // ]);
     }
 
     pub fn right_up_dir(&self) -> (glm::Vec3, glm::Vec3, glm::Vec3) {

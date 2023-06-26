@@ -64,7 +64,7 @@ impl ShadowFighterSwarm {
                 .angular_damping(swarm_params.angular_damping)
                 .build();
 
-                let bbox_half_extents = aabb.extents() * 0.5f32;
+                let bbox_half_extents = aabb.extents();
 
                 let collider = rapier3d::prelude::ColliderBuilder::cuboid(
                     bbox_half_extents.x,

@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::{env, io::Stdout};
+use std::{env};
 use std::{
-    ffi::{CStr, CString, OsStr},
-    fs,
+    ffi::{CString},
 };
-use std::{fmt::Write, io::Error, io::ErrorKind};
+use std::{io::Error, io::ErrorKind};
 
 // use shaderc;
 fn add_extension(path: &mut std::path::PathBuf, extension: impl AsRef<std::path::Path>) {
@@ -27,7 +26,7 @@ fn get_output_path() -> PathBuf {
     let path = Path::new(&manifest_dir_string)
         .join("target")
         .join(build_type);
-    return PathBuf::from(path);
+    path
 }
 
 fn main() -> std::io::Result<()> {

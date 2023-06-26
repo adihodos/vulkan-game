@@ -196,9 +196,12 @@ impl AABB3 {
     }
 
     pub fn is_on_or_forward_plane(&self, p: &Plane) -> bool {
-        let extents = self.extents();
-        let r = glm::dot(&extents, &p.normal.abs());
-        -r <= p.signed_distance(&self.center())
+        let c = self.center();
+        let h = (self.max - self.min) * 0.5f32;
+        let e = glm::dot(&h, &p.normal.abs());
+        let s = p.signed_distance(&c);
+
+        (s - e) >= 0f32
     }
 }
 

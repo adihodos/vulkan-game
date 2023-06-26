@@ -12,7 +12,7 @@ use nalgebra_glm as glm;
 
 use crate::{
     color_palettes::StdColors,
-    math,
+    frustrum::Frustrum,
     plane::Plane,
     vk_renderer::{
         GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
@@ -302,6 +302,34 @@ impl DebugDrawOverlay {
         });
 
         self.add_line(*o, *o + w * half_size, color, color);
+    }
+
+    pub fn add_half_plane(&mut self, p: &Plane, o: &glm::Vec3, size: f32, color: u32) {
+        let (u, v, w) = p.coord_sys();
+
+        let vertices = [
+            *o,
+            *o + v * size,
+            *o + (u + v) * size,
+            *o + u,
+            *o + w * size,
+        ];
+        let indices = [0, 1, 1, 2, 2, 3, 3, 0, 0, 4];
+
+        indices.windows(2).for_each(|idx| {
+            self.add_line(vertices[idx[0]], vertices[idx[1]], color, color);
+        });
+    }
+
+    pub fn add_frustrum(&mut self, f: &Frustrum) {
+        let origin = glm::Vec3::zeros();
+        const PLANE_SIZE: f32 = 32f32;
+
+        self.add_plane(&f.near_face, &origin, PLANE_SIZE, StdColors::GREEN);
+        self.add_plane(&f.top_face, &origin, PLANE_SIZE, StdColors::CORNFLOWER_BLUE);
+        self.add_plane(&f.bottom_face, &origin, PLANE_SIZE, StdColors::DARK_ORANGE);
+        self.add_plane(&f.left_face, &origin, PLANE_SIZE, StdColors::BLUE_VIOLET);
+        self.add_plane(&f.right_face, &origin, PLANE_SIZE, StdColors::INDIAN_RED);
     }
 
     pub fn clear(&mut self) {

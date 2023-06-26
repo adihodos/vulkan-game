@@ -1,10 +1,10 @@
 use std::cell::{Cell, RefCell};
 
 use crate::{
-    draw_context::{UpdateContext},
+    draw_context::UpdateContext,
     game_world::{GameObjectHandle, QueuedCommand},
     math::AABB3,
-    physics_engine::{PhysicsEngine},
+    physics_engine::PhysicsEngine,
     projectile_system::ProjectileSpawnData,
     resource_cache::{PbrRenderableHandle, ResourceHolder},
     window::InputState,
@@ -176,46 +176,6 @@ impl FlightModel {
     }
 }
 
-impl std::default::Default for FlightModel {
-    fn default() -> Self {
-        Self {
-            mass: 23_000f32,
-            linear_damping: 1f32,
-            angular_damping: 1f32,
-            thruster_force_primary: 10_000f32,
-            thruster_force_secondary: 2500f32,
-            throttle_sensitivity: 0.5f32,
-            thruster_force_vectors: [
-                //
-                //upper left
-                glm::vec3(0f32, 0f32, -1f32),
-                glm::vec3(0f32, -1f32, 0f32),
-                glm::vec3(1f32, 0f32, 0f32),
-                glm::vec3(0f32, 0f32, 1f32),
-                //
-                //upper right
-                glm::vec3(0f32, 0f32, -1f32),
-                glm::vec3(0f32, -1f32, 0f32),
-                glm::vec3(-1f32, 0f32, 0f32),
-                glm::vec3(0f32, 0f32, 1f32),
-                //
-                // Lower left thruster
-                glm::vec3(0f32, 0f32, -1f32),
-                glm::vec3(0f32, 1f32, 0f32),
-                glm::vec3(1f32, 0f32, 0f32),
-                glm::vec3(0f32, 0f32, 1f32),
-                //
-                // Lower right thruster
-                glm::vec3(0f32, 0f32, -1f32),
-                glm::vec3(0f32, 1f32, 0f32),
-                glm::vec3(-1f32, 0f32, 0f32),
-                glm::vec3(0f32, 0f32, 1f32),
-            ],
-            maneuver: Maneuver::default(),
-        }
-    }
-}
-
 struct EngineThruster {
     name: String,
     transform: glm::Mat4,
@@ -256,27 +216,10 @@ impl std::default::Default for Weapons {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 struct StarfuryParameters {
     fm: FlightModel,
     weapons: Weapons,
-}
-
-impl StarfuryParameters {
-    fn write_default_config() {
-        use ron::ser::{to_writer_pretty, PrettyConfig};
-
-        let cfg_opts = PrettyConfig::new()
-            .depth_limit(8)
-            .separate_tuple_members(true);
-
-        to_writer_pretty(
-            std::fs::File::create("config/starfury.flightmodel.default.cfg.ron").expect("cykaaaaa"),
-            &StarfuryParameters::default(),
-            cfg_opts.clone(),
-        )
-        .expect("Failed to write default flight model config");
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -304,7 +247,7 @@ impl Starfury {
         physics_engine: &mut PhysicsEngine,
         resource_cache: &ResourceHolder,
     ) -> Starfury {
-        StarfuryParameters::write_default_config();
+        // StarfuryParameters::write_default_config();
 
         let params: StarfuryParameters = ron::de::from_reader(
             std::fs::File::open("config/starfury.flightmodel.cfg.ron")
@@ -338,7 +281,7 @@ impl Starfury {
             .angular_damping(params.fm.angular_damping)
             .build();
 
-        let bbox_half_extents = geometry.aabb.extents() * 0.5f32;
+        let bbox_half_extents = geometry.aabb.extents();
         let collider = ColliderBuilder::cuboid(
             bbox_half_extents.x,
             bbox_half_extents.y,
@@ -501,11 +444,7 @@ impl Starfury {
     }
 
     pub fn gamepad_input(&self, input_state: &InputState) {
-        
-
         input_state.gamepad.ltrigger.data.map(|btn| {
-            // log::info!("Ltrigger pressed, cooldown: {}", self.guns_cooldown.get());
-
             if btn.is_pressed() && !(self.guns_cooldown.get() > 0f32) {
                 self.queued_ops.borrow_mut().push(QueuedOp::FireGuns);
                 self.guns_cooldown.set(self.params.weapons.guns_cooldown);
@@ -515,19 +454,20 @@ impl Starfury {
         let movement = [
             (
                 &input_state.gamepad.left_stick_x,
-                self.params.fm.maneuver.movement.right,
                 self.params.fm.maneuver.movement.left,
+                self.params.fm.maneuver.movement.right,
+                true,
             ),
             (
                 &input_state.gamepad.left_stick_y,
                 self.params.fm.maneuver.movement.forward,
                 self.params.fm.maneuver.movement.backward,
+                true,
             ),
         ];
 
-        movement
-            .iter()
-            .for_each(|&(gamepad_stick, thruster_id_pos, thruster_id_neg)| {
+        movement.iter().for_each(
+            |&(gamepad_stick, thruster_id_pos, thruster_id_neg, primary)| {
                 gamepad_stick.axis_data.map(|axis_data| {
                     if axis_data.value().abs() <= gamepad_stick.deadzone {
                         return;
@@ -535,23 +475,30 @@ impl Starfury {
 
                     let throttle = axis_data.value() * self.params.fm.throttle_sensitivity;
 
+                    let force_multiplier = if primary {
+                        self.params.fm.thruster_force_primary
+                    } else {
+                        self.params.fm.thruster_force_secondary
+                    };
+
                     let phys_op = if throttle > 0f32 {
                         QueuedOp::ApplyForce(
                             throttle.abs()
-                                * self.params.fm.thruster_force_primary
+                                * force_multiplier
                                 * self.params.fm.thruster_force_vector(thruster_id_pos),
                         )
                     } else {
                         QueuedOp::ApplyForce(
                             throttle.abs()
-                                * self.params.fm.thruster_force_primary
+                                * force_multiplier
                                 * self.params.fm.thruster_force_vector(thruster_id_neg),
                         )
                     };
 
                     self.queued_ops.borrow_mut().push(phys_op);
                 });
-            });
+            },
+        );
 
         let roll_pitch = [
             (
@@ -575,7 +522,6 @@ impl Starfury {
                     }
 
                     let throttle = axis_data.value() * self.params.fm.throttle_sensitivity;
-                    // log::info!("Throttle: {}", throttle);
 
                     let phys_op = if throttle > 0f32 {
                         QueuedOp::ApplyTorque(
@@ -598,11 +544,11 @@ impl Starfury {
         let yaws = [
             (
                 &input_state.gamepad.right_z,
-                self.params.fm.maneuver.yaw.right[0],
+                self.params.fm.maneuver.yaw.left[0],
             ),
             (
                 &input_state.gamepad.left_z,
-                self.params.fm.maneuver.yaw.left[0],
+                self.params.fm.maneuver.yaw.right[0],
             ),
         ];
 

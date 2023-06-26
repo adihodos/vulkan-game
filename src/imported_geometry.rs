@@ -1,10 +1,7 @@
-use std::{
-    collections::{HashMap},
-    mem::size_of,
-};
+use std::{collections::HashMap, mem::size_of};
 
 use crate::{math::AABB3, pbr::PbrMaterial};
-use ash::vk::{DeviceSize};
+use ash::vk::DeviceSize;
 use gltf::{
     buffer::{self},
     image::{self},
@@ -337,8 +334,9 @@ impl ImportedGeometry {
 
             self.nodes[node_id as usize].transform = matrix;
 
-            let normals_matrix = matrix;
-            //glm::transpose(&glm::inverse(&matrix));
+            let normals_matrix =
+		//matrix;
+            glm::transpose(&glm::inverse(&matrix));
 
             for primitive in mesh.primitives() {
                 let _first_index = self.indices.len() as u32;

@@ -1,5 +1,7 @@
 use nalgebra_glm as glm;
 
+use crate::math::AABB3;
+
 #[derive(Copy, Clone)]
 pub struct Plane {
     pub normal: glm::Vec3,
@@ -84,6 +86,27 @@ impl Plane {
             PointPlaneClass::NegativeHalfspace
         } else {
             PointPlaneClass::InPlane
+        }
+    }
+
+    pub fn intersects_aabb(&self, aabb: &AABB3) -> bool {
+        let mut dmin = glm::Vec3::zeros();
+        let mut dmax = glm::Vec3::zeros();
+
+        for i in 0..3 {
+            if self.normal[i] >= 0f32 {
+                dmin[i] = aabb.min[i];
+                dmax[i] = aabb.max[i];
+            } else {
+                dmin[i] = aabb.max[i];
+                dmax[i] = aabb.min[i];
+            }
+        }
+
+        if (glm::dot(&self.normal, &dmin) + self.offset) >= 0f32 {
+            false
+        } else {
+            true
         }
     }
 }
