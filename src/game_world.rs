@@ -769,11 +769,11 @@ impl GameWorld {
                             StdColors::RED,
                         );
 
-                        if is_aabb_on_frustrum(&frustrum, &inst_aabb, &inst_transform) {
-                            Some((inst_data.rigid_body_handle, inst_transform))
-                        } else {
-                            None
-                        }
+                        // if is_aabb_on_frustrum(&frustrum, &inst_aabb, &inst_transform) {
+                        Some((inst_data.rigid_body_handle, inst_transform))
+                        // } else {
+                        // None
+                        // }
                     })
             })
             .flatten()
