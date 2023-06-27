@@ -1,5 +1,5 @@
 (
-    full_screen: true,
+    full_screen: false,
     root_path: "data",
     textures: "data/textures",
     models: "data/models",

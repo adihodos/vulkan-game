@@ -17,40 +17,40 @@ use ash::{
     },
     prelude::VkResult,
     vk::{
-        self, AccessFlags, AttachmentDescription, AttachmentLoadOp, AttachmentReference, AttachmentStoreOp, BlendFactor, BlendOp, Bool32, Buffer,
-        BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsageFlags, ClearColorValue,
-        ClearDepthStencilValue, ClearValue, ColorComponentFlags, CommandBuffer,
-        CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferLevel,
-        CommandBufferResetFlags, CommandBufferUsageFlags, CommandPool, CommandPoolCreateFlags,
-        CommandPoolCreateInfo, CompareOp, ComponentMapping, ComponentSwizzle,
-        CompositeAlphaFlagsKHR, CullModeFlags, DebugUtilsMessageSeverityFlagsEXT,
-        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT,
-        DebugUtilsMessengerEXT, DependencyFlags,
-        DescriptorPool, DescriptorPoolCreateInfo, DescriptorPoolSize, DescriptorSet,
-        DescriptorSetAllocateInfo, DescriptorSetLayout, DescriptorSetLayoutBinding,
-        DescriptorSetLayoutCreateFlags, DescriptorSetLayoutCreateInfo, DescriptorType,
-        DeviceCreateInfo, DeviceMemory, DeviceQueueCreateInfo, DeviceSize, DynamicState, Extent2D,
-        Extent3D, Fence, FenceCreateFlags, FenceCreateInfo, Format, FormatFeatureFlags,
-        Framebuffer, FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image,
-        ImageAspectFlags, ImageCreateFlags, ImageCreateInfo, ImageLayout, ImageMemoryBarrier,
-        ImageSubresourceLayers, ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags,
-        ImageView, ImageViewCreateInfo, ImageViewType, MappedMemoryRange, MemoryAllocateInfo,
-        MemoryMapFlags, MemoryPropertyFlags, MemoryRequirements, Offset2D, Offset3D, PhysicalDevice, PhysicalDeviceFeatures, PhysicalDeviceFeatures2,
-        PhysicalDeviceMemoryProperties, PhysicalDeviceProperties, PhysicalDeviceType,
-        PhysicalDeviceVulkan11Features, Pipeline, PipelineBindPoint, PipelineCache,
-        PipelineCacheCreateInfo, PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
+        self, AccessFlags, AttachmentDescription, AttachmentLoadOp, AttachmentReference,
+        AttachmentStoreOp, BlendFactor, BlendOp, Bool32, Buffer, BufferCopy, BufferCreateInfo,
+        BufferImageCopy, BufferUsageFlags, ClearColorValue, ClearDepthStencilValue, ClearValue,
+        ColorComponentFlags, CommandBuffer, CommandBufferAllocateInfo, CommandBufferBeginInfo,
+        CommandBufferLevel, CommandBufferResetFlags, CommandBufferUsageFlags, CommandPool,
+        CommandPoolCreateFlags, CommandPoolCreateInfo, CompareOp, ComponentMapping,
+        ComponentSwizzle, CompositeAlphaFlagsKHR, CullModeFlags, DebugUtilsMessageSeverityFlagsEXT,
+        DebugUtilsMessageTypeFlagsEXT, DebugUtilsMessengerCallbackDataEXT,
+        DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessengerEXT, DependencyFlags, DescriptorPool,
+        DescriptorPoolCreateInfo, DescriptorPoolSize, DescriptorSet, DescriptorSetAllocateInfo,
+        DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateFlags,
+        DescriptorSetLayoutCreateInfo, DescriptorType, DeviceCreateInfo, DeviceMemory,
+        DeviceQueueCreateInfo, DeviceSize, DynamicState, Extent2D, Extent3D, Fence,
+        FenceCreateFlags, FenceCreateInfo, Format, FormatFeatureFlags, Framebuffer,
+        FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image, ImageAspectFlags,
+        ImageCreateFlags, ImageCreateInfo, ImageLayout, ImageMemoryBarrier, ImageSubresourceLayers,
+        ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags, ImageView,
+        ImageViewCreateInfo, ImageViewType, MappedMemoryRange, MemoryAllocateInfo, MemoryMapFlags,
+        MemoryPropertyFlags, MemoryRequirements, Offset2D, Offset3D, PhysicalDevice,
+        PhysicalDeviceFeatures, PhysicalDeviceFeatures2, PhysicalDeviceMemoryProperties,
+        PhysicalDeviceProperties, PhysicalDeviceType, PhysicalDeviceVulkan11Features, Pipeline,
+        PipelineBindPoint, PipelineCache, PipelineCacheCreateInfo,
+        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
         PipelineDepthStencilStateCreateInfo, PipelineDynamicStateCreateInfo,
         PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
         PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
         PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
         PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PresentModeKHR,
         PrimitiveTopology, PushConstantRange, Queue, QueueFlags, Rect2D, RenderPass,
-        RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags,
-        SamplerCreateInfo, Semaphore, SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo,
-        ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents, SubpassDependency,
-        SubpassDescription, SurfaceCapabilitiesKHR, SurfaceFormatKHR,
-        SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR, VertexInputAttributeDescription,
-        VertexInputBindingDescription, Viewport,
+        RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, SamplerCreateInfo, Semaphore,
+        SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SharingMode,
+        SubmitInfo, SubpassContents, SubpassDependency, SubpassDescription, SurfaceCapabilitiesKHR,
+        SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
+        VertexInputAttributeDescription, VertexInputBindingDescription, Viewport,
         QUEUE_FAMILY_IGNORED, SUBPASS_EXTERNAL, WHOLE_SIZE,
     },
     Device, Entry, Instance,
@@ -1020,6 +1020,7 @@ impl UniqueSwapchain {
         vk_surface: SurfaceKHR,
         surface_format: SurfaceFormatKHR,
         presentation_mode: PresentModeKHR,
+	old_swapchain: Option<SwapchainKHR>
     ) -> Option<(UniqueSwapchain, u32)> {
         let image_count = (surface_caps.min_image_count + 1)
             .clamp(surface_caps.min_image_count, surface_caps.max_image_count);
@@ -1039,6 +1040,7 @@ impl UniqueSwapchain {
                     .composite_alpha(CompositeAlphaFlagsKHR::OPAQUE)
                     .present_mode(presentation_mode)
                     .clipped(true)
+                    .old_swapchain(old_swapchain.unwrap_or(SwapchainKHR::null()))
                     .build(),
                 None,
             )
@@ -1560,8 +1562,8 @@ impl<'a> GraphicsPipelineBuilder<'a> {
     }
 
     pub fn set_raster_state(mut self, raster_state: PipelineRasterizationStateCreateInfo) -> Self {
-	self.raster_state = raster_state;
-	self
+        self.raster_state = raster_state;
+        self
     }
 
     pub fn set_input_assembly_state(
@@ -2131,15 +2133,16 @@ pub struct VulkanRenderer {
     pipeline_cache: UniquePipelineCache,
     res_loader: ResourceLoader,
     renderpass: UniqueRenderpass,
-    current_frame_id: std::cell::Cell<u32>,
+    current_frame_id: u32,
     frame_render_data: Vec<FrameRenderData>,
     framebuffer_extents: Extent2D,
-    surface_format: Format,
+    surface_format: SurfaceFormatKHR,
     depth_stencil_format: Format,
     cmd_pool: UniqueCommandPool,
     descriptor_pool: UniqueDescriptorPool,
     queue: Queue,
     queue_family_index: u32,
+    present_mode: PresentModeKHR,
     max_inflight_frames: u32,
     swapchain: UniqueSwapchain,
     swapchain_loader: std::pin::Pin<std::boxed::Box<Swapchain>>,
@@ -2461,6 +2464,7 @@ impl VulkanRenderer {
             vk_surface,
             surface_fmt,
             presentation_mode,
+	    None
         )?;
 
         let swapchain_images =
@@ -2554,15 +2558,16 @@ impl VulkanRenderer {
             pipeline_cache,
             res_loader,
             renderpass,
-            current_frame_id: std::cell::Cell::new(0),
+            current_frame_id: 0,
             frame_render_data,
             framebuffer_extents: surface_capabilities.current_extent,
-            surface_format: surface_fmt.format,
+            surface_format: surface_fmt,
             depth_stencil_format: depth_stencil_fmt,
             cmd_pool,
             descriptor_pool: dpool,
             queue,
             queue_family_index: queue_idx,
+            present_mode: presentation_mode,
             max_inflight_frames,
             swapchain,
             swapchain_loader,
@@ -2581,7 +2586,7 @@ impl VulkanRenderer {
     }
 
     pub fn current_frame_id(&self) -> u32 {
-        self.current_frame_id.get()
+        self.current_frame_id
     }
 
     pub fn framebuffer_extents(&self) -> Extent2D {
@@ -2698,32 +2703,54 @@ impl VulkanRenderer {
         &self.frame_render_data[self.current_frame_id() as usize]
     }
 
-    pub fn begin_frame(&self) {
-        let current_frame_data = self.current_frame_data();
+    pub fn begin_frame(&mut self) {
+        let wait_fence = self.current_frame_data().fence.fence;
+        let wait_sema = self.current_frame_data().sem_img_available.semaphore;
 
         unsafe {
-            let fences = [current_frame_data.fence.fence];
-            let _ = self.graphics_device.wait_for_fences(&fences, true, !0u64);
+            let _ = self
+                .graphics_device
+                .wait_for_fences(&[wait_fence], true, !0u64);
         }
 
-        let (available_image, _suboptimal) = unsafe {
-            self.swapchain_loader.acquire_next_image(
-                self.swapchain.swapchain,
-                !0u64,
-                current_frame_data.sem_img_available.semaphore,
-                Fence::null(),
-            )
-        }
-        .expect("Acquire image from swapchain failed");
+        let mut tries = 0;
+        let available_image = loop {
+            let acquire_result = unsafe {
+                self.swapchain_loader.acquire_next_image(
+                    self.swapchain.swapchain,
+                    !0u64,
+                    wait_sema,
+                    Fence::null(),
+                )
+            };
+            match acquire_result {
+                Ok((available_image, false)) => {
+                    break available_image;
+                }
 
-        //
-        //TODO : handle suboptimal
+                Ok((_, true)) | Err(ash::vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    if tries < 5 {
+                        self.handle_suboptimal();
+                        tries += 1;
+                    } else {
+                        panic!("Failed to recreate swapchain and acquire image, giving up after {} tries", tries);
+                    }
+                }
+                Err(e) => {
+                    log::error!("Acquire image error {}", e);
+                    panic!();
+                }
+            };
+        };
 
         //
         // wait for submits
+
+        let current_frame_data = self.current_frame_data();
         unsafe {
-            let fences = [current_frame_data.fence.fence];
-            let _ = self.graphics_device.reset_fences(&fences);
+            let _ = self
+                .graphics_device
+                .reset_fences(&[current_frame_data.fence.fence]);
         }
 
         let clear_values = [
@@ -2773,7 +2800,7 @@ impl VulkanRenderer {
         }
     }
 
-    pub fn end_frame(&self) {
+    pub fn end_frame(&mut self) {
         let current_frame_render_data = self.current_frame_data();
 
         unsafe {
@@ -2804,25 +2831,27 @@ impl VulkanRenderer {
             let swapchains = [self.swapchain.swapchain];
             let swapchain_image_indices = [self.current_frame_id()];
 
-            let suboptimal_swapchain = self
-                .swapchain_loader
-                .queue_present(
-                    self.queue,
-                    &PresentInfoKHR::builder()
-                        .wait_semaphores(&signal_semaphores)
-                        .swapchains(&swapchains)
-                        .image_indices(&swapchain_image_indices)
-                        .build(),
-                )
-                .map_err(|e| error!("Presentation error {}", e))
-                .unwrap_or(true);
+            let present_result = self.swapchain_loader.queue_present(
+                self.queue,
+                &PresentInfoKHR::builder()
+                    .wait_semaphores(&signal_semaphores)
+                    .swapchains(&swapchains)
+                    .image_indices(&swapchain_image_indices)
+                    .build(),
+            );
 
-            if suboptimal_swapchain {
-                info!("Suboptimal present");
+            match present_result {
+                Ok(true) | Err(ash::vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    self.handle_suboptimal();
+                }
+                Ok(false) => {
+                    self.current_frame_id = (self.current_frame_id + 1) % self.max_inflight_frames;
+                }
+                Err(e) => {
+                    log::error!("Fatal present error: {}", e);
+                    panic!();
+                }
             }
-
-            self.current_frame_id
-                .set((self.current_frame_id.get() + 1) % self.max_inflight_frames);
         }
     }
 
@@ -2832,6 +2861,7 @@ impl VulkanRenderer {
 
     pub fn wait_idle(&self) {
         unsafe {
+            let _ = self.graphics_device.queue_wait_idle(self.queue);
             let _ = self.graphics_device.device_wait_idle();
         }
     }
@@ -2858,6 +2888,76 @@ impl VulkanRenderer {
 
     pub fn instance(&self) -> &Instance {
         &self.vk_instance
+    }
+
+    pub fn handle_suboptimal(&mut self) {
+        let mut surface_caps = unsafe {
+            self.surface_loader
+                .get_physical_device_surface_capabilities(self.phys_device, self.vk_surface)
+        }
+        .expect("Failed to query surface caps");
+
+        if surface_caps.current_extent.width == std::u32::MAX
+            || surface_caps.current_extent.height == std::u32::MAX
+        {
+            surface_caps.current_extent.width = 1200;
+            surface_caps.current_extent.height = 1200;
+        }
+
+        let (swapchain, max_inflight_frames) = UniqueSwapchain::new(
+            &self.swapchain_loader,
+            &surface_caps,
+            self.vk_surface,
+            self.surface_format,
+            self.present_mode,
+	    Some(self.swapchain.swapchain)
+        )
+        .expect("Failed to re-create swapchain");
+
+        let swapchain_images = unsafe {
+            self.swapchain_loader
+                .get_swapchain_images(swapchain.swapchain)
+        }
+        .expect("Failed to get swapchain images ...");
+
+        log::info!("Swapchain created, image count {}", max_inflight_frames);
+
+        self.wait_idle();
+
+        //
+        // would be more efficient to recycle some of the old frame render resources
+        // but the code is much simpler this way
+        let frame_render_data = (0..max_inflight_frames)
+            .filter_map(|frame_idx| {
+                FrameRenderData::new(
+                    self.device_memory(),
+                    swapchain_images[frame_idx as usize],
+                    &self.graphics_device,
+                    self.cmd_pool.cmd_pool,
+                    self.depth_stencil_format,
+                    self.surface_format.format,
+                    surface_caps.current_extent.width,
+                    surface_caps.current_extent.height,
+                    self.renderpass.handle,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        if frame_render_data.len() != max_inflight_frames as usize {
+            error!(
+                "Failed to create frame render data (needed {} frames, got {} frames)",
+                max_inflight_frames,
+                frame_render_data.len()
+            );
+        }
+
+        info!("Frame render data created");
+
+        self.frame_render_data = frame_render_data;
+        self.swapchain = swapchain;
+
+        self.max_inflight_frames = max_inflight_frames;
+        self.current_frame_id = 0;
     }
 }
 

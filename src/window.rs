@@ -323,7 +323,7 @@ impl GameMain {
         // self.test_world.borrow().ui(&mut ui);
     }
 
-    fn draw_frame(&self) {
+    fn draw_frame(&mut self) {
         self.renderer.begin_frame();
 
         let frame_context = FrameRenderContext {
