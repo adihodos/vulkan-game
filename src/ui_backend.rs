@@ -1,32 +1,40 @@
 use ash::vk::{
-    BlendFactor, BlendOp, BorderColor, BufferUsageFlags, ColorComponentFlags,
-    ComponentMapping, CullModeFlags, DescriptorBufferInfo, DescriptorImageInfo,
-    DescriptorSet, DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType,
-    DeviceSize, DynamicState, Extent2D, Extent3D, Filter, Format, FrontFace, Handle,
-    ImageAspectFlags, ImageCreateInfo, ImageLayout, ImageSubresourceRange, ImageTiling, ImageType,
-    ImageUsageFlags, ImageViewCreateInfo, ImageViewType, IndexType, MemoryPropertyFlags, Offset2D, PipelineBindPoint, PipelineColorBlendAttachmentState,
-    PipelineRasterizationStateCreateInfo, PolygonMode, PrimitiveTopology,
-    Rect2D, SampleCountFlags, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, SharingMode, VertexInputAttributeDescription,
-    VertexInputBindingDescription, VertexInputRate, WriteDescriptorSet,
+    BlendFactor, BlendOp, BorderColor, BufferUsageFlags, ColorComponentFlags, ComponentMapping,
+    CullModeFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
+    DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType, DeviceSize,
+    DynamicState, Extent2D, Extent3D, Filter, Format, FrontFace, Handle, ImageAspectFlags,
+    ImageCreateInfo, ImageLayout, ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags,
+    ImageViewCreateInfo, ImageViewType, IndexType, MemoryPropertyFlags, Offset2D,
+    PipelineBindPoint, PipelineColorBlendAttachmentState, PipelineRasterizationStateCreateInfo,
+    PolygonMode, PrimitiveTopology, Rect2D, SampleCountFlags, SamplerAddressMode,
+    SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, SharingMode,
+    VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
+    WriteDescriptorSet,
 };
-use imgui::{DrawCmd, TextureId};
 use log::{error, info};
 use memoffset::offset_of;
-use nalgebra_glm::{I32Vec2};
-use winit::event::{ElementState, MouseScrollDelta};
+
+use imgui::{self, BackendFlags, DrawCmd, FontConfig, FontSource, Io, Key};
+
+use winit::{
+    dpi::{LogicalPosition, LogicalSize},
+    event::{
+        DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta, TouchPhase,
+        VirtualKeyCode, WindowEvent,
+    },
+    window::{CursorIcon as MouseCursor, Window},
+};
 
 use crate::{
-    draw_context::{FrameRenderContext},
+    draw_context::FrameRenderContext,
     vk_renderer::{
-        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
-        ImageCopySource, ScopedBufferMapping, ShaderModuleDescription, ShaderModuleSource,
-        UniqueBuffer, UniqueGraphicsPipeline, UniqueImage, UniqueImageView, UniqueSampler,
-        VulkanRenderer,
+        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ImageCopySource,
+        ScopedBufferMapping, ShaderModuleDescription, ShaderModuleSource, UniqueBuffer,
+        UniqueGraphicsPipeline, UniqueImage, UniqueImageView, UniqueSampler, VulkanRenderer,
     },
 };
 
 use std::{
-    cell::{Cell, RefCell, RefMut},
     mem::size_of,
     path::Path,
 };
@@ -39,9 +47,211 @@ struct Uniform {
     world_view_proj: nalgebra_glm::Mat4,
 }
 
-fn translate_winit_key(key: winit::event::VirtualKeyCode) -> imgui::Key {
-    use winit::event::VirtualKeyCode;
+/// Parts adapted from imgui-winit-support example
 
+/// winit backend platform state
+#[derive(Debug)]
+pub struct WinitPlatform {
+    hidpi_mode: ActiveHiDpiMode,
+    hidpi_factor: f64,
+    cursor_cache: Option<CursorSettings>,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct CursorSettings {
+    cursor: Option<imgui::MouseCursor>,
+    draw_cursor: bool,
+}
+
+fn to_winit_cursor(cursor: imgui::MouseCursor) -> MouseCursor {
+    match cursor {
+        imgui::MouseCursor::Arrow => MouseCursor::Default,
+        imgui::MouseCursor::TextInput => MouseCursor::Text,
+        imgui::MouseCursor::ResizeAll => MouseCursor::Move,
+        imgui::MouseCursor::ResizeNS => MouseCursor::NsResize,
+        imgui::MouseCursor::ResizeEW => MouseCursor::EwResize,
+        imgui::MouseCursor::ResizeNESW => MouseCursor::NeswResize,
+        imgui::MouseCursor::ResizeNWSE => MouseCursor::NwseResize,
+        imgui::MouseCursor::Hand => MouseCursor::Hand,
+        imgui::MouseCursor::NotAllowed => MouseCursor::NotAllowed,
+    }
+}
+
+impl CursorSettings {
+    fn apply(&self, window: &Window) {
+        match self.cursor {
+            Some(mouse_cursor) if !self.draw_cursor => {
+                window.set_cursor_visible(true);
+                window.set_cursor_icon(to_winit_cursor(mouse_cursor));
+            }
+            _ => window.set_cursor_visible(false),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum ActiveHiDpiMode {
+    Default,
+    Rounded,
+    Locked,
+}
+
+/// DPI factor handling mode.
+///
+/// Applications that use imgui-rs might want to customize the used DPI factor and not use
+/// directly the value coming from winit.
+///
+/// **Note: if you use a mode other than default and the DPI factor is adjusted, winit and imgui-rs
+/// will use different logical coordinates, so be careful if you pass around logical size or
+/// position values.**
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum HiDpiMode {
+    /// The DPI factor from winit is used directly without adjustment
+    Default,
+    /// The DPI factor from winit is rounded to an integer value.
+    ///
+    /// This prevents the user interface from becoming blurry with non-integer scaling.
+    Rounded,
+    /// The DPI factor from winit is ignored, and the included value is used instead.
+    ///
+    /// This is useful if you want to force some DPI factor (e.g. 1.0) and not care about the value
+    /// coming from winit.
+    Locked(f64),
+}
+
+impl HiDpiMode {
+    fn apply(&self, hidpi_factor: f64) -> (ActiveHiDpiMode, f64) {
+        match *self {
+            HiDpiMode::Default => (ActiveHiDpiMode::Default, hidpi_factor),
+            HiDpiMode::Rounded => (ActiveHiDpiMode::Rounded, hidpi_factor.round()),
+            HiDpiMode::Locked(value) => (ActiveHiDpiMode::Locked, value),
+        }
+    }
+}
+
+fn to_imgui_mouse_button(button: MouseButton) -> Option<imgui::MouseButton> {
+    match button {
+        MouseButton::Left | MouseButton::Other(0) => Some(imgui::MouseButton::Left),
+        MouseButton::Right | MouseButton::Other(1) => Some(imgui::MouseButton::Right),
+        MouseButton::Middle | MouseButton::Other(2) => Some(imgui::MouseButton::Middle),
+        MouseButton::Other(3) => Some(imgui::MouseButton::Extra1),
+        MouseButton::Other(4) => Some(imgui::MouseButton::Extra2),
+        _ => None,
+    }
+}
+
+fn to_imgui_key(keycode: VirtualKeyCode) -> Option<Key> {
+    match keycode {
+        VirtualKeyCode::Tab => Some(Key::Tab),
+        VirtualKeyCode::Left => Some(Key::LeftArrow),
+        VirtualKeyCode::Right => Some(Key::RightArrow),
+        VirtualKeyCode::Up => Some(Key::UpArrow),
+        VirtualKeyCode::Down => Some(Key::DownArrow),
+        VirtualKeyCode::PageUp => Some(Key::PageUp),
+        VirtualKeyCode::PageDown => Some(Key::PageDown),
+        VirtualKeyCode::Home => Some(Key::Home),
+        VirtualKeyCode::End => Some(Key::End),
+        VirtualKeyCode::Insert => Some(Key::Insert),
+        VirtualKeyCode::Delete => Some(Key::Delete),
+        VirtualKeyCode::Back => Some(Key::Backspace),
+        VirtualKeyCode::Space => Some(Key::Space),
+        VirtualKeyCode::Return => Some(Key::Enter),
+        VirtualKeyCode::Escape => Some(Key::Escape),
+        VirtualKeyCode::LControl => Some(Key::LeftCtrl),
+        VirtualKeyCode::LShift => Some(Key::LeftShift),
+        VirtualKeyCode::LAlt => Some(Key::LeftAlt),
+        VirtualKeyCode::LWin => Some(Key::LeftSuper),
+        VirtualKeyCode::RControl => Some(Key::RightCtrl),
+        VirtualKeyCode::RShift => Some(Key::RightShift),
+        VirtualKeyCode::RAlt => Some(Key::RightAlt),
+        VirtualKeyCode::RWin => Some(Key::RightSuper),
+        //VirtualKeyCode::Menu => Some(Key::Menu), // TODO: find out if there is a Menu key in winit
+        VirtualKeyCode::Key0 => Some(Key::Alpha0),
+        VirtualKeyCode::Key1 => Some(Key::Alpha1),
+        VirtualKeyCode::Key2 => Some(Key::Alpha2),
+        VirtualKeyCode::Key3 => Some(Key::Alpha3),
+        VirtualKeyCode::Key4 => Some(Key::Alpha4),
+        VirtualKeyCode::Key5 => Some(Key::Alpha5),
+        VirtualKeyCode::Key6 => Some(Key::Alpha6),
+        VirtualKeyCode::Key7 => Some(Key::Alpha7),
+        VirtualKeyCode::Key8 => Some(Key::Alpha8),
+        VirtualKeyCode::Key9 => Some(Key::Alpha9),
+        VirtualKeyCode::A => Some(Key::A),
+        VirtualKeyCode::B => Some(Key::B),
+        VirtualKeyCode::C => Some(Key::C),
+        VirtualKeyCode::D => Some(Key::D),
+        VirtualKeyCode::E => Some(Key::E),
+        VirtualKeyCode::F => Some(Key::F),
+        VirtualKeyCode::G => Some(Key::G),
+        VirtualKeyCode::H => Some(Key::H),
+        VirtualKeyCode::I => Some(Key::I),
+        VirtualKeyCode::J => Some(Key::J),
+        VirtualKeyCode::K => Some(Key::K),
+        VirtualKeyCode::L => Some(Key::L),
+        VirtualKeyCode::M => Some(Key::M),
+        VirtualKeyCode::N => Some(Key::N),
+        VirtualKeyCode::O => Some(Key::O),
+        VirtualKeyCode::P => Some(Key::P),
+        VirtualKeyCode::Q => Some(Key::Q),
+        VirtualKeyCode::R => Some(Key::R),
+        VirtualKeyCode::S => Some(Key::S),
+        VirtualKeyCode::T => Some(Key::T),
+        VirtualKeyCode::U => Some(Key::U),
+        VirtualKeyCode::V => Some(Key::V),
+        VirtualKeyCode::W => Some(Key::W),
+        VirtualKeyCode::X => Some(Key::X),
+        VirtualKeyCode::Y => Some(Key::Y),
+        VirtualKeyCode::Z => Some(Key::Z),
+        VirtualKeyCode::F1 => Some(Key::F1),
+        VirtualKeyCode::F2 => Some(Key::F2),
+        VirtualKeyCode::F3 => Some(Key::F3),
+        VirtualKeyCode::F4 => Some(Key::F4),
+        VirtualKeyCode::F5 => Some(Key::F5),
+        VirtualKeyCode::F6 => Some(Key::F6),
+        VirtualKeyCode::F7 => Some(Key::F7),
+        VirtualKeyCode::F8 => Some(Key::F8),
+        VirtualKeyCode::F9 => Some(Key::F9),
+        VirtualKeyCode::F10 => Some(Key::F10),
+        VirtualKeyCode::F11 => Some(Key::F11),
+        VirtualKeyCode::F12 => Some(Key::F12),
+        VirtualKeyCode::Apostrophe => Some(Key::Apostrophe),
+        VirtualKeyCode::Comma => Some(Key::Comma),
+        VirtualKeyCode::Minus => Some(Key::Minus),
+        VirtualKeyCode::Period => Some(Key::Period),
+        VirtualKeyCode::Slash => Some(Key::Slash),
+        VirtualKeyCode::Semicolon => Some(Key::Semicolon),
+        VirtualKeyCode::Equals => Some(Key::Equal),
+        VirtualKeyCode::LBracket => Some(Key::LeftBracket),
+        VirtualKeyCode::Backslash => Some(Key::Backslash),
+        VirtualKeyCode::RBracket => Some(Key::RightBracket),
+        VirtualKeyCode::Grave => Some(Key::GraveAccent),
+        VirtualKeyCode::Capital => Some(Key::CapsLock),
+        VirtualKeyCode::Scroll => Some(Key::ScrollLock),
+        VirtualKeyCode::Numlock => Some(Key::NumLock),
+        VirtualKeyCode::Snapshot => Some(Key::PrintScreen),
+        VirtualKeyCode::Pause => Some(Key::Pause),
+        VirtualKeyCode::Numpad0 => Some(Key::Keypad0),
+        VirtualKeyCode::Numpad1 => Some(Key::Keypad1),
+        VirtualKeyCode::Numpad2 => Some(Key::Keypad2),
+        VirtualKeyCode::Numpad3 => Some(Key::Keypad3),
+        VirtualKeyCode::Numpad4 => Some(Key::Keypad4),
+        VirtualKeyCode::Numpad5 => Some(Key::Keypad5),
+        VirtualKeyCode::Numpad6 => Some(Key::Keypad6),
+        VirtualKeyCode::Numpad7 => Some(Key::Keypad7),
+        VirtualKeyCode::Numpad8 => Some(Key::Keypad8),
+        VirtualKeyCode::Numpad9 => Some(Key::Keypad9),
+        VirtualKeyCode::NumpadDecimal => Some(Key::KeypadDecimal),
+        VirtualKeyCode::NumpadDivide => Some(Key::KeypadDivide),
+        VirtualKeyCode::NumpadMultiply => Some(Key::KeypadMultiply),
+        VirtualKeyCode::NumpadSubtract => Some(Key::KeypadSubtract),
+        VirtualKeyCode::NumpadAdd => Some(Key::KeypadAdd),
+        VirtualKeyCode::NumpadEnter => Some(Key::KeypadEnter),
+        VirtualKeyCode::NumpadEquals => Some(Key::KeypadEqual),
+        _ => None,
+    }
+}
+
+fn translate_winit_key(key: winit::event::VirtualKeyCode) -> imgui::Key {
     match key {
         VirtualKeyCode::Tab => imgui::Key::Tab,
         VirtualKeyCode::Left => imgui::Key::LeftArrow,
@@ -69,12 +279,10 @@ fn translate_winit_key(key: winit::event::VirtualKeyCode) -> imgui::Key {
 }
 
 pub struct UiBackend {
-    imgui: RefCell<imgui::Context>,
+    imgui: imgui::Context,
     vertex_bytes_one_frame: DeviceSize,
     index_bytes_one_frame: DeviceSize,
     ubo_bytes_one_frame: DeviceSize,
-    window_size: Cell<I32Vec2>,
-    framebuffer_size: Cell<I32Vec2>,
     uniform_buffer: UniqueBuffer,
     sampler: UniqueSampler,
     pipeline: UniqueGraphicsPipeline,
@@ -83,11 +291,74 @@ pub struct UiBackend {
     index_buffer: UniqueBuffer,
     font_atlas_image: UniqueImage,
     font_atlas_imageview: UniqueImageView,
+    platform: WinitPlatform,
 }
 
 impl UiBackend {
     const MAX_VERTICES: u32 = 8192;
     const MAX_INDICES: u32 = 16535;
+
+    /// Scales a logical size coming from winit using the current DPI mode.
+    ///
+    /// This utility function is useful if you are using a DPI mode other than default, and want
+    /// your application to use the same logical coordinates as imgui-rs.
+    pub fn scale_size_from_winit(
+        platform: &WinitPlatform,
+        window: &Window,
+        logical_size: LogicalSize<f64>,
+    ) -> LogicalSize<f64> {
+        match platform.hidpi_mode {
+            ActiveHiDpiMode::Default => logical_size,
+            _ => logical_size
+                .to_physical::<f64>(window.scale_factor())
+                .to_logical(platform.hidpi_factor),
+        }
+    }
+
+    /// Scales a logical position coming from winit using the current DPI mode.
+    ///
+    /// This utility function is useful if you are using a DPI mode other than default, and want
+    /// your application to use the same logical coordinates as imgui-rs.
+    pub fn scale_pos_from_winit(
+        platform: &WinitPlatform,
+        window: &Window,
+        logical_pos: LogicalPosition<f64>,
+    ) -> LogicalPosition<f64> {
+        match platform.hidpi_mode {
+            ActiveHiDpiMode::Default => logical_pos,
+            _ => logical_pos
+                .to_physical::<f64>(window.scale_factor())
+                .to_logical(platform.hidpi_factor),
+        }
+    }
+
+    /// Scales a logical position for winit using the current DPI mode.
+    ///
+    /// This utility function is useful if you are using a DPI mode other than default, and want
+    /// your application to use the same logical coordinates as imgui-rs.
+    pub fn scale_pos_for_winit(
+        platform: &WinitPlatform,
+        window: &Window,
+        logical_pos: LogicalPosition<f64>,
+    ) -> LogicalPosition<f64> {
+        match platform.hidpi_mode {
+            ActiveHiDpiMode::Default => logical_pos,
+            _ => logical_pos
+                .to_physical::<f64>(platform.hidpi_factor)
+                .to_logical(window.scale_factor()),
+        }
+    }
+
+    fn init_imgui() -> imgui::Context {
+        let mut imgui = imgui::Context::create();
+        let io = imgui.io_mut();
+
+        io.backend_flags.insert(BackendFlags::HAS_MOUSE_CURSORS);
+        io.backend_flags.insert(BackendFlags::HAS_SET_MOUSE_POS);
+        imgui.set_platform_name(Some(format!("B5 {}", env!("CARGO_PKG_VERSION"))));
+
+        imgui
+    }
 
     pub fn new(renderer: &VulkanRenderer, window: &winit::window::Window) -> Option<UiBackend> {
         info!(
@@ -135,7 +406,46 @@ impl UiBackend {
             ubo_bytes_one_frame * renderer.max_inflight_frames() as DeviceSize,
         )?;
 
-        let mut imgui = Self::init_imgui(window);
+        let mut imgui = Self::init_imgui();
+        let hidpi_mode = HiDpiMode::Default;
+        let (hidpi_mode, hidpi_factor) = hidpi_mode.apply(window.scale_factor());
+
+        let platform = WinitPlatform {
+            hidpi_mode,
+            hidpi_factor,
+            cursor_cache: None,
+        };
+
+        imgui.io_mut().display_framebuffer_scale = [hidpi_factor as f32, hidpi_factor as f32];
+        let logical_size = window.inner_size().to_logical(hidpi_factor);
+        let logical_size = Self::scale_size_from_winit(&platform, window, logical_size);
+        imgui.io_mut().display_size = [logical_size.width as f32, logical_size.height as f32];
+
+        let font_files = [
+            "data/fonts/iosevka-ss03-regular.ttf",
+            "data/fonts/iosevka-ss03-medium.ttf",
+            "data/fonts/RobotoMono-Medium.ttf",
+            "data/fonts/RobotoMono-Regular.ttf",
+        ];
+
+        if let Ok(mut font_file) = std::fs::File::open(font_files[0]) {
+            let mut ttf_bytes = Vec::<u8>::new();
+            use std::io::Read;
+
+            if let Ok(_) = font_file.read_to_end(&mut ttf_bytes) {
+                imgui.fonts().add_font(&[FontSource::TtfData {
+                    data: &ttf_bytes,
+                    size_pixels: 18f32,
+                    config: Some(FontConfig {
+                        oversample_h: 4,
+                        oversample_v: 4,
+                        rasterizer_multiply: 1.5f32,
+                        ..FontConfig::default()
+                    }),
+                }]);
+            }
+        }
+
         let font_atlas_image = imgui.fonts().build_alpha8_texture();
 
         let img_pixels = [ImageCopySource {
@@ -303,7 +613,7 @@ impl UiBackend {
         .ok()?;
 
         assert!(descriptor_sets.len() == 1);
-        imgui.fonts().tex_id = TextureId::new(descriptor_sets[0].as_raw() as usize);
+        imgui.fonts().tex_id = imgui::TextureId::new(descriptor_sets[0].as_raw() as usize);
 
         let ds_buffer_info = [DescriptorBufferInfo::builder()
             .range(size_of::<Uniform>() as DeviceSize)
@@ -338,17 +648,11 @@ impl UiBackend {
             renderer.graphics_device().update_descriptor_sets(&wds, &[]);
         }
 
-        info!("UI backend created ...");
-        let win_size = window.outer_size();
-        let fb_size = window.inner_size();
-
         Some(UiBackend {
-            imgui: RefCell::new(imgui),
+            imgui,
             vertex_bytes_one_frame: vertex_bytes_one_frame as u64,
             index_bytes_one_frame: index_bytes_one_frame as u64,
             ubo_bytes_one_frame,
-            window_size: Cell::new(I32Vec2::new(win_size.width as i32, win_size.height as i32)),
-            framebuffer_size: Cell::new(I32Vec2::new(fb_size.width as i32, fb_size.height as i32)),
             uniform_buffer,
             sampler,
             pipeline,
@@ -357,19 +661,20 @@ impl UiBackend {
             index_buffer,
             font_atlas_image,
             font_atlas_imageview,
+            platform,
         })
     }
 
-    pub fn draw_frame(&self, frame_context: &FrameRenderContext) {
-        let mut ui_context = self.imgui.borrow_mut();
+    pub fn draw_frame(&mut self, frame_context: &FrameRenderContext) {
+        let ui_context = &mut self.imgui;
 
         let draw_data = ui_context.render();
         assert!(draw_data.total_vtx_count < Self::MAX_VERTICES as i32);
         assert!(draw_data.total_idx_count < Self::MAX_INDICES as i32);
 
-        let fb_width = (draw_data.display_size[0] * draw_data.framebuffer_scale[0]) as i32;
-        let fb_height = (draw_data.display_size[1] * draw_data.framebuffer_scale[1]) as i32;
-        if fb_width <= 0 || fb_height <= 0 {
+        let fb_width = draw_data.display_size[0] * draw_data.framebuffer_scale[0];
+        let fb_height = draw_data.display_size[1] * draw_data.framebuffer_scale[1];
+        if !(fb_width > 0.0 && fb_height > 0.0) {
             return;
         }
 
@@ -598,163 +903,189 @@ impl UiBackend {
         }
     }
 
-    fn init_imgui(window: &winit::window::Window) -> imgui::Context {
-        let mut imgui = imgui::Context::create();
-        let io = imgui.io_mut();
-        use imgui::Key;
-        use winit::event::VirtualKeyCode;
-
-        io[Key::Tab] = VirtualKeyCode::Tab as _;
-        io[Key::LeftArrow] = VirtualKeyCode::Left as _;
-        io[Key::RightArrow] = VirtualKeyCode::Right as _;
-        io[Key::UpArrow] = VirtualKeyCode::Up as _;
-        io[Key::DownArrow] = VirtualKeyCode::Down as _;
-        io[Key::PageUp] = VirtualKeyCode::PageUp as _;
-        io[Key::PageDown] = VirtualKeyCode::PageDown as _;
-        io[Key::Home] = VirtualKeyCode::Home as _;
-        io[Key::End] = VirtualKeyCode::End as _;
-        io[Key::Insert] = VirtualKeyCode::Insert as _;
-        io[Key::Delete] = VirtualKeyCode::Delete as _;
-        io[Key::Backspace] = VirtualKeyCode::Back as _;
-        io[Key::Space] = VirtualKeyCode::Space as _;
-        io[Key::Enter] = VirtualKeyCode::Return as _;
-        io[Key::Escape] = VirtualKeyCode::Escape as _;
-        io[Key::KeyPadEnter] = VirtualKeyCode::NumpadEnter as _;
-        io[Key::A] = VirtualKeyCode::A as _;
-        io[Key::C] = VirtualKeyCode::C as _;
-        io[Key::V] = VirtualKeyCode::V as _;
-        io[Key::X] = VirtualKeyCode::X as _;
-        io[Key::Y] = VirtualKeyCode::Y as _;
-        io[Key::Z] = VirtualKeyCode::Z as _;
-
-        let wnd_size = window.outer_size();
-        io.display_size = [wnd_size.width as f32, wnd_size.height as f32];
-        let fb_size = window.inner_size();
-        io.display_framebuffer_scale = [
-            fb_size.width as f32 / io.display_size[0],
-            fb_size.height as f32 / io.display_size[1],
-        ];
-
-        imgui
+    pub fn new_frame(&mut self) -> &mut imgui::Ui {
+        self.imgui.new_frame()
     }
 
-    pub fn input_event(&self, event: &winit::event::WindowEvent) {
-        let mut context = self.imgui.borrow_mut();
-        let mut io = context.io_mut();
-        use winit::event::WindowEvent;
-
-        match event {
-            WindowEvent::Resized(phys_size) => {
-                self.framebuffer_size.set(I32Vec2::new(
-                    phys_size.width as i32,
-                    phys_size.height as i32,
-                ));
-
-                let winsize = self.window_size.get();
-                let fbsize = self.framebuffer_size.get();
-
-                if winsize.x > 0 && winsize.y > 0 {
-                    io.display_framebuffer_scale = [
-                        fbsize.x as f32 / winsize.x as f32,
-                        fbsize.y as f32 / winsize.y as f32,
-                    ];
-                }
-            }
-
-            WindowEvent::ScaleFactorChanged {
-                scale_factor,
-                new_inner_size,
-            } => {
-                let width = (new_inner_size.width as f64 * scale_factor).ceil() as i32;
-                let height = (new_inner_size.height as f64 * scale_factor).ceil() as i32;
-                self.window_size.set(I32Vec2::new(width, height));
-                //
-                let winsize = self.window_size.get();
-                let fbsize = self.framebuffer_size.get();
-
-                if winsize.x > 0 && winsize.y > 0 {
-                    io.display_framebuffer_scale = [
-                        fbsize.x as f32 / winsize.x as f32,
-                        fbsize.y as f32 / winsize.y as f32,
-                    ];
-                }
-            }
-
-            WindowEvent::CursorMoved {
-                device_id: _,
-                position,
-                modifiers: _,
-            } => {
-                io.mouse_pos = [position.x as f32, position.y as f32];
-            }
-
-            WindowEvent::MouseWheel {
-                device_id: _,
-                delta,
-                phase: _,
-                modifiers: _,
-            } => match delta {
-                MouseScrollDelta::LineDelta(horizontal, vertical) => {
-                    io.mouse_wheel_h = *horizontal as f32;
-                    io.mouse_wheel = *vertical as f32;
-                }
-                MouseScrollDelta::PixelDelta(amount) => {
-                    log::info!("Pixel delta {:?}", amount);
-                }
-            },
-
-            WindowEvent::Focused(focused) => {
-                io.app_focus_lost = !focused;
-            }
-
-            WindowEvent::KeyboardInput {
-                device_id: _,
-                input,
-                is_synthetic: _,
-            } => {
-                input.virtual_keycode.map(|key_code| {
-                    let pressed = input.state == ElementState::Pressed;
-                    let imguy_key = translate_winit_key(key_code);
-                    io.keys_down[imguy_key as usize] = pressed;
-                });
-            }
-
-            WindowEvent::ReceivedCharacter(char_code) => {
-                if *char_code != '\u{7f}' {
-                    io.add_input_character(*char_code);
-                }
-            }
-
-            WindowEvent::MouseInput {
-                device_id: _,
-                state,
-                button,
-                modifiers: _,
-            } => {
-                let pressed = *state == ElementState::Pressed;
-                use winit::event::MouseButton;
-
-                match button {
-                    MouseButton::Left => io.mouse_down[0] = pressed,
-                    MouseButton::Right => io.mouse_down[1] = pressed,
-                    MouseButton::Middle => io.mouse_down[2] = pressed,
-                    _ => {}
-                }
-            }
-
-            WindowEvent::ModifiersChanged(modifier_state) => {
-                io.key_shift = modifier_state.shift();
-                io.key_ctrl = modifier_state.ctrl();
-                io.key_alt = modifier_state.alt();
-                io.key_super = modifier_state.logo();
-            }
-
-            _ => {}
+    fn handle_key_modifier(io: &mut Io, key: VirtualKeyCode, down: bool) {
+        if key == VirtualKeyCode::LShift || key == VirtualKeyCode::RShift {
+            io.add_key_event(imgui::Key::ModShift, down);
+        } else if key == VirtualKeyCode::LControl || key == VirtualKeyCode::RControl {
+            io.add_key_event(imgui::Key::ModCtrl, down);
+        } else if key == VirtualKeyCode::LAlt || key == VirtualKeyCode::RAlt {
+            io.add_key_event(imgui::Key::ModAlt, down);
+        } else if key == VirtualKeyCode::LWin || key == VirtualKeyCode::RWin {
+            io.add_key_event(imgui::Key::ModSuper, down);
         }
     }
 
-    pub fn new_frame(&self) -> RefMut<imgui::Ui> {
-        let ctx = self.imgui.borrow_mut();
-        RefMut::map(ctx, |imgui_ctx| imgui_ctx.new_frame())
+    /// Handles a winit event.
+    ///
+    /// This function performs the following actions (depends on the event):
+    ///
+    /// * window size / dpi factor changes are applied
+    /// * keyboard state is updated
+    /// * mouse state is updated
+    pub fn handle_event<T>(&mut self, window: &Window, event: &Event<T>) -> bool {
+        match *event {
+            Event::WindowEvent {
+                window_id,
+                ref event,
+            } if window_id == window.id() => {
+                self.handle_window_event(window, event);
+            }
+            // Track key release events outside our window. If we don't do this,
+            // we might never see the release event if some other window gets focus.
+            Event::DeviceEvent {
+                event:
+                    DeviceEvent::Key(KeyboardInput {
+                        state: ElementState::Released,
+                        virtual_keycode: Some(key),
+                        ..
+                    }),
+                ..
+            } => {
+                if let Some(key) = to_imgui_key(key) {
+                    self.imgui.io_mut().add_key_event(key, false);
+                }
+            }
+            _ => (),
+        }
+
+        let (wants_keys, wants_mouse) = (
+            self.imgui.io().want_capture_keyboard,
+            self.imgui.io().want_capture_mouse,
+        );
+
+        wants_keys || wants_mouse
+    }
+
+    fn handle_window_event(&mut self, window: &Window, event: &WindowEvent) {
+        match *event {
+            WindowEvent::Resized(physical_size) => {
+                let logical_size = physical_size.to_logical(window.scale_factor());
+                let logical_size =
+                    Self::scale_size_from_winit(&self.platform, window, logical_size);
+                self.imgui.io_mut().display_size =
+                    [logical_size.width as f32, logical_size.height as f32];
+            }
+
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                let hidpi_factor = match self.platform.hidpi_mode {
+                    ActiveHiDpiMode::Default => scale_factor,
+                    ActiveHiDpiMode::Rounded => scale_factor.round(),
+                    _ => return,
+                };
+                // Mouse position needs to be changed while we still have both the old and the new
+                // values
+                if self.imgui.io().mouse_pos[0].is_finite()
+                    && self.imgui.io().mouse_pos[1].is_finite()
+                {
+                    self.imgui.io_mut().mouse_pos = [
+                        self.imgui.io().mouse_pos[0]
+                            * (hidpi_factor / self.platform.hidpi_factor) as f32,
+                        self.imgui.io().mouse_pos[1]
+                            * (hidpi_factor / self.platform.hidpi_factor) as f32,
+                    ];
+                }
+
+                self.platform.hidpi_factor = hidpi_factor;
+                self.imgui.io_mut().display_framebuffer_scale =
+                    [hidpi_factor as f32, hidpi_factor as f32];
+                // Window size might change too if we are using DPI rounding
+                let logical_size = window.inner_size().to_logical(scale_factor);
+                let logical_size =
+                    Self::scale_size_from_winit(&self.platform, window, logical_size);
+                self.imgui.io_mut().display_size =
+                    [logical_size.width as f32, logical_size.height as f32];
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                // We need to track modifiers separately because some system like macOS, will
+                // not reliably send modifier states during certain events like ScreenCapture.
+                // Gotta let the people show off their pretty imgui widgets!
+                let io = self.imgui.io_mut();
+                io.add_key_event(Key::ModShift, modifiers.shift());
+                io.add_key_event(Key::ModCtrl, modifiers.ctrl());
+                io.add_key_event(Key::ModAlt, modifiers.alt());
+                io.add_key_event(Key::ModSuper, modifiers.logo());
+            }
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        virtual_keycode: Some(key),
+                        state,
+                        ..
+                    },
+                ..
+            } => {
+                let pressed = state == ElementState::Pressed;
+
+                // We map both left and right ctrl to `ModCtrl`, etc.
+                // imgui is told both "left control is pressed" and
+                // "consider the control key is pressed". Allows
+                // applications to use either general "ctrl" or a
+                // specific key. Same applies to other modifiers.
+                // https://github.com/ocornut/imgui/issues/5047
+                Self::handle_key_modifier(self.imgui.io_mut(), key, pressed);
+
+                // Add main key event
+                if let Some(key) = to_imgui_key(key) {
+                    self.imgui.io_mut().add_key_event(key, pressed);
+                }
+            }
+            WindowEvent::ReceivedCharacter(ch) => {
+                // Exclude the backspace key ('\u{7f}'). Otherwise we will insert this char and then
+                // delete it.
+                if ch != '\u{7f}' {
+                    self.imgui.io_mut().add_input_character(ch);
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let position = position.to_logical(window.scale_factor());
+                let position = Self::scale_pos_from_winit(&self.platform, window, position);
+                self.imgui
+                    .io_mut()
+                    .add_mouse_pos_event([position.x as f32, position.y as f32]);
+            }
+            WindowEvent::MouseWheel {
+                delta,
+                phase: TouchPhase::Moved,
+                ..
+            } => {
+                use std::cmp::Ordering;
+                let (h, v) = match delta {
+                    MouseScrollDelta::LineDelta(h, v) => (h, v),
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        let pos = pos.to_logical::<f64>(self.platform.hidpi_factor);
+                        let h = match pos.x.partial_cmp(&0.0) {
+                            Some(Ordering::Greater) => 1.0,
+                            Some(Ordering::Less) => -1.0,
+                            _ => 0.0,
+                        };
+                        let v = match pos.y.partial_cmp(&0.0) {
+                            Some(Ordering::Greater) => 1.0,
+                            Some(Ordering::Less) => -1.0,
+                            _ => 0.0,
+                        };
+                        (h, v)
+                    }
+                };
+                self.imgui.io_mut().add_mouse_wheel_event([h, v]);
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if let Some(mb) = to_imgui_mouse_button(button) {
+                    let pressed = state == ElementState::Pressed;
+                    self.imgui.io_mut().add_mouse_button_event(mb, pressed);
+                }
+            }
+            WindowEvent::Focused(newly_focused) => {
+                if !newly_focused {
+                    // Set focus-lost to avoid stuck keys (like 'alt'
+                    // when alt-tabbing)
+                    self.imgui.io_mut().app_focus_lost = true;
+                }
+            }
+            _ => (),
+        }
     }
 }

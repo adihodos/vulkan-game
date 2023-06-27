@@ -120,9 +120,9 @@ impl MainWindow {
                     control_flow.set_exit();
                 }
 
-                Event::WindowEvent { event, .. } => {
-                    game_main.handle_event(&event);
-                }
+                // Event::WindowEvent { .. } => {
+                //     game_main.handle_event(&window, &event);
+                // }
 
                 Event::MainEventsCleared => {
                     while let Some(event) = gilrs.next_event() {
@@ -245,7 +245,9 @@ impl MainWindow {
                     gilrs.inc();
                 }
 
-                _ => (),
+                _ => {
+		    game_main.handle_event(&window, &event);
+		},
             }
         });
     }
@@ -299,25 +301,25 @@ impl GameMain {
         }
     }
 
-    fn handle_event(&mut self, event: &winit::event::WindowEvent) {
-        match event {
-            WindowEvent::Resized(new_size) => {
+    fn handle_event(&mut self, window: &winit::window::Window, event: &winit::event::Event<()>) {
+        match *event {
+	    Event::WindowEvent { event : WindowEvent::Resized(new_size), .. } => {
                 self.framebuffer_size = IVec2::new(new_size.width as i32, new_size.height as i32);
             }
 
             _ => {}
         }
 
-        self.game_world.borrow().input_event(event);
+        // self.game_world.borrow().input_event(event);
         // self.test_world.borrow().input_event(event);
-        self.ui.input_event(event);
+        self.ui.handle_event(window, event);
     }
 
     fn gamepad_input(&mut self, input_state: &InputState) {
         self.game_world.borrow().gamepad_input(input_state);
     }
 
-    fn do_ui(&self) {
+    fn do_ui(&mut self) {
         let mut ui = self.ui.new_frame();
         self.game_world.borrow().ui(&mut ui);
         // self.test_world.borrow().ui(&mut ui);

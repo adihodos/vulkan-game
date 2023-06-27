@@ -9,7 +9,7 @@ edition = "2021"
 ash = { version = "*", features = ["linked"] }
 log = { version = "*"}
 flexi_logger = { version = "*"}
-imgui = "*"
+imgui = "0.11.0"
 mmap-rs = "*"
 nalgebra = { version = "*", features = ["serde-serialize"] }
 nalgebra-glm = { version = "*", features = ["serde-serialize"] }

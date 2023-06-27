@@ -1020,7 +1020,7 @@ impl UniqueSwapchain {
         vk_surface: SurfaceKHR,
         surface_format: SurfaceFormatKHR,
         presentation_mode: PresentModeKHR,
-	old_swapchain: Option<SwapchainKHR>
+        old_swapchain: Option<SwapchainKHR>,
     ) -> Option<(UniqueSwapchain, u32)> {
         let image_count = (surface_caps.min_image_count + 1)
             .clamp(surface_caps.min_image_count, surface_caps.max_image_count);
@@ -2464,7 +2464,7 @@ impl VulkanRenderer {
             vk_surface,
             surface_fmt,
             presentation_mode,
-	    None
+            None,
         )?;
 
         let swapchain_images =
@@ -2910,7 +2910,7 @@ impl VulkanRenderer {
             self.vk_surface,
             self.surface_format,
             self.present_mode,
-	    Some(self.swapchain.swapchain)
+            Some(self.swapchain.swapchain),
         )
         .expect("Failed to re-create swapchain");
 
@@ -2958,12 +2958,7 @@ impl VulkanRenderer {
 
         self.max_inflight_frames = max_inflight_frames;
         self.current_frame_id = 0;
-    }
-}
-
-impl std::ops::Drop for VulkanRenderer {
-    fn drop(&mut self) {
-        self.wait_idle();
+	self.framebuffer_extents = surface_caps.current_extent;
     }
 }
 
