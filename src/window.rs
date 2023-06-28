@@ -42,6 +42,7 @@ pub struct GamepadInputState {
     pub ltrigger: GamepadButton,
     pub rtrigger: GamepadButton,
     pub counter: u64,
+    pub btn_lock_target: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -123,7 +124,6 @@ impl MainWindow {
                 // Event::WindowEvent { .. } => {
                 //     game_main.handle_event(&window, &event);
                 // }
-
                 Event::MainEventsCleared => {
                     while let Some(event) = gilrs.next_event() {
                         if gamepad_input_state.is_none() {
@@ -190,6 +190,8 @@ impl MainWindow {
                                     },
 
                                     counter: gilrs.counter(),
+
+                                    btn_lock_target: false,
                                 },
                             })
                         }
@@ -198,6 +200,13 @@ impl MainWindow {
                     gamepad_input_state.as_mut().map(|in_st| {
                         in_st.gamepad.counter = gilrs.counter();
                         let gamepad = gilrs.gamepad(in_st.gamepad.id);
+
+                        gamepad
+                            .button_code(gilrs::ev::Button::North)
+                            .map(|btn_code| {
+                                in_st.gamepad.btn_lock_target =
+                                    gamepad.state().is_pressed(btn_code);
+                            });
 
                         in_st.gamepad.left_stick_x.axis_data = gamepad
                             .state()
@@ -246,8 +255,8 @@ impl MainWindow {
                 }
 
                 _ => {
-		    game_main.handle_event(&window, &event);
-		},
+                    game_main.handle_event(&window, &event);
+                }
             }
         });
     }
@@ -277,7 +286,8 @@ impl GameMain {
         let renderer = VulkanRenderer::create(&window).expect("Failed to create renderer!");
         renderer.begin_resource_loading();
 
-        let ui = UiBackend::new(&renderer, &window, &app_config).expect("Failed to create ui backend");
+        let ui =
+            UiBackend::new(&renderer, &window, &app_config).expect("Failed to create ui backend");
         let game_world =
             GameWorld::new(&renderer, &app_config).expect("Failed to create game world");
 
@@ -303,7 +313,10 @@ impl GameMain {
 
     fn handle_event(&mut self, window: &winit::window::Window, event: &winit::event::Event<()>) {
         match *event {
-	    Event::WindowEvent { event : WindowEvent::Resized(new_size), .. } => {
+            Event::WindowEvent {
+                event: WindowEvent::Resized(new_size),
+                ..
+            } => {
                 self.framebuffer_size = IVec2::new(new_size.width as i32, new_size.height as i32);
             }
 
@@ -340,7 +353,7 @@ impl GameMain {
         self.game_world.borrow().draw(&frame_context);
         // self.test_world.borrow().draw(&frame_context);
 
-	self.ui.apply_cursor_before_render(window);
+        self.ui.apply_cursor_before_render(window);
         self.ui.draw_frame(&frame_context);
 
         self.renderer.end_frame();

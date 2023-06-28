@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{borrow::Borrow, cell::RefCell, rc::Rc};
 
 use ash::vk::{
     BorderColor, BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
@@ -12,7 +12,7 @@ use nalgebra_glm::Vec4;
 
 use nalgebra_glm as glm;
 
-use rapier3d::prelude::RigidBodyHandle;
+use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 use smallvec::SmallVec;
 
 use crate::{
@@ -264,6 +264,7 @@ pub struct GameWorld {
     sprite_batch: RefCell<SpriteBatch>,
     player_opts: PlayerShipOptions,
     stats: RefCell<Statistics>,
+    locked_target: RefCell<Option<(ColliderHandle, RigidBodyHandle)>>,
 }
 
 impl GameWorld {
@@ -524,6 +525,7 @@ impl GameWorld {
                 total_instances: 0,
                 visible_instances: 0,
             }),
+            locked_target: RefCell::new(None),
         })
     }
 
@@ -558,8 +560,8 @@ impl GameWorld {
             };
 
             self.draw_objects(&draw_context);
-
             self.draw_crosshair(&draw_context);
+            self.draw_locked_target(&draw_context);
             // self.draw_lead_indicator(&draw_context);
             self.sprite_batch.borrow_mut().render(&draw_context);
         }
@@ -956,6 +958,14 @@ impl GameWorld {
                         });
                 }
 
+                let (right, up, dir) = self.camera.borrow().right_up_dir();
+                ui.separator();
+                ui.text("Camera");
+                ui.text(format!("Position: {}", self.camera.borrow().position));
+                ui.text(format!("X: {}", right));
+                ui.text(format!("Y: {}", up));
+                ui.text(format!("Z: {}", dir));
+
                 ui.separator();
                 ui.text("Instancing:");
                 ui.text(format!(
@@ -1105,7 +1115,51 @@ impl GameWorld {
     }
 
     pub fn gamepad_input(&self, input_state: &InputState) {
+        if input_state.gamepad.btn_lock_target {
+            self.physics_engine
+                .borrow()
+                .rigid_body_set
+                .get(self.starfury.rigid_body_handle)
+                .map(|rigid_body| {
+                    let ship_isometry = *rigid_body.position();
+
+                    let (ray_origin, ray_dir) = (
+                        ship_isometry.translation.vector,
+                        (ship_isometry.rotation * glm::Vec3::z_axis()).xyz(),
+                    );
+
+                    let query_filter = rapier3d::prelude::QueryFilter::new()
+                        .exclude_sensors()
+                        .exclude_rigid_body(self.starfury.rigid_body_handle)
+                        .groups(PhysicsObjectCollisionGroups::ships());
+
+                    const MAX_RAY_DIST: f32 = 1000f32;
+
+                    if let Some(target_info) = self
+                        .physics_engine
+                        .borrow()
+                        .cast_ray(ray_origin.into(), ray_dir, MAX_RAY_DIST, query_filter)
+                        .and_then(|(collider_handle, _)| {
+                            self.physics_engine
+                                .borrow()
+                                .collider_set
+                                .get(collider_handle)
+                                .and_then(|collider| {
+                                    collider.parent().map(|body| (collider_handle, body))
+                                })
+                        })
+                    {
+                        *self.locked_target.borrow_mut() = Some(target_info);
+                    } else {
+                        *self.locked_target.borrow_mut() = None;
+                    }
+                });
+        }
         self.starfury.gamepad_input(input_state);
+    }
+
+    fn draw_locked_target(&self, draw_ctx: &DrawContext) {
+        self.draw_lead_indicator(draw_ctx);
     }
 
     fn draw_crosshair(&self, draw_context: &DrawContext) {
@@ -1197,83 +1251,88 @@ impl GameWorld {
 
     fn draw_lead_indicator(&self, draw_context: &DrawContext) {
         let physics_engine = self.physics_engine.borrow();
-        self.shadows_swarm.instances().iter().for_each(|inst| {
-            physics_engine
-                .rigid_body_set
-                .get(inst.rigid_body_handle)
-                .map(|enemy_ship| {
-                    let current_position = *enemy_ship.position();
+        self.locked_target
+            .borrow()
+            .and_then(|(collider_handle, locked_target_phys_handle)| {
+                physics_engine
+                    .rigid_body_set
+                    .get(locked_target_phys_handle)
+                    .map(|phys_body| (collider_handle, phys_body))
+            })
+            .map(|(collider_handle, locked_target)| {
+                let current_position = *locked_target.position();
 
-                    let ship_centermass_world = current_position.translation.vector;
+                let ship_centermass_world = current_position.translation.vector;
 
-                    let predicted_pos = enemy_ship.predict_position_using_velocity_and_forces(1f32);
+                let predicted_pos = locked_target.predict_position_using_velocity_and_forces(1f32);
 
-                    let position_vec = predicted_pos.translation.vector - ship_centermass_world;
+                let position_vec = predicted_pos.translation.vector - ship_centermass_world;
 
-                    let lead_ind_circle_pos = if position_vec.norm_squared() > 1.0e-4f32 {
-                        //
-                        // also draw a line from the centermass to the predicted position
-                        math::world_coords_to_screen_coords(
-                            Point3::from_slice(predicted_pos.translation.vector.as_slice()),
-                            &draw_context.projection_view,
-                            draw_context.viewport.width,
-                            draw_context.viewport.height,
-                        )
-                    } else {
-                        math::world_coords_to_screen_coords(
-                            Point3::from_slice(ship_centermass_world.as_slice()),
-                            &draw_context.projection_view,
-                            draw_context.viewport.width,
-                            draw_context.viewport.height,
-                        )
-                    };
+                let lead_ind_circle_pos = if position_vec.norm_squared() > 1.0e-4f32 {
+                    //
+                    // also draw a line from the centermass to the predicted position
+                    math::world_coords_to_screen_coords(
+                        Point3::from_slice(predicted_pos.translation.vector.as_slice()),
+                        &draw_context.projection_view,
+                        draw_context.viewport.width,
+                        draw_context.viewport.height,
+                    )
+                } else {
+                    math::world_coords_to_screen_coords(
+                        Point3::from_slice(ship_centermass_world.as_slice()),
+                        &draw_context.projection_view,
+                        draw_context.viewport.width,
+                        draw_context.viewport.height,
+                    )
+                };
 
-                    self.sprite_batch.borrow_mut().draw_with_origin(
-                        lead_ind_circle_pos.x,
-                        lead_ind_circle_pos.y,
-                        64f32,
-                        64f32,
-                        self.player_opts.spr_obj_centermass,
-                        Some(self.player_opts.enemy_outline_color),
-                    );
-                });
+                self.sprite_batch.borrow_mut().draw_with_origin(
+                    lead_ind_circle_pos.x,
+                    lead_ind_circle_pos.y,
+                    64f32,
+                    64f32,
+                    self.player_opts.spr_obj_centermass,
+                    Some(self.player_opts.enemy_outline_color),
+                );
 
-            physics_engine
-                .collider_set
-                .get(inst.collider_handle)
-                .map(|collider| {
-                    let aabb = collider.compute_aabb();
+                physics_engine
+                    .collider_set
+                    .get(collider_handle)
+                    .map(|collider| {
+                        let aabb = collider.compute_aabb();
 
-                    let (pmin, pmax) = aabb
-                        .vertices()
-                        .iter()
-                        .map(|&aabb_vertex| {
-                            math::world_coords_to_screen_coords(
-                                aabb_vertex,
-                                &draw_context.projection_view,
-                                draw_context.viewport.width,
-                                draw_context.viewport.height,
-                            )
-                        })
-                        .fold(
-                            (
-                                glm::vec2(std::f32::MAX, std::f32::MAX),
-                                glm::vec2(std::f32::MIN, std::f32::MIN),
-                            ),
-                            |(min_p, max_p), pt| (glm::min2(&min_p, &pt), glm::max2(&max_p, &pt)),
+                        let (pmin, pmax) = aabb
+                            .vertices()
+                            .iter()
+                            .map(|&aabb_vertex| {
+                                math::world_coords_to_screen_coords(
+                                    aabb_vertex,
+                                    &draw_context.projection_view,
+                                    draw_context.viewport.width,
+                                    draw_context.viewport.height,
+                                )
+                            })
+                            .fold(
+                                (
+                                    glm::vec2(std::f32::MAX, std::f32::MAX),
+                                    glm::vec2(std::f32::MIN, std::f32::MIN),
+                                ),
+                                |(min_p, max_p), pt| {
+                                    (glm::min2(&min_p, &pt), glm::max2(&max_p, &pt))
+                                },
+                            );
+
+                        let size = (pmax - pmin).abs();
+
+                        self.sprite_batch.borrow_mut().draw(
+                            pmin.x,
+                            pmin.y,
+                            size.x,
+                            size.y,
+                            self.player_opts.spr_obj_outline,
+                            Some(self.player_opts.enemy_outline_color),
                         );
-
-                    let size = (pmax - pmin).abs();
-
-                    self.sprite_batch.borrow_mut().draw(
-                        pmin.x,
-                        pmin.y,
-                        size.x,
-                        size.y,
-                        self.player_opts.spr_obj_outline,
-                        Some(self.player_opts.enemy_outline_color),
-                    );
-                });
-        });
+                    });
+            });
     }
 }

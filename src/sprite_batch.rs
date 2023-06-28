@@ -522,7 +522,7 @@ impl SpriteBatch {
 
         //
         // rotate
-        let (cost, sint) = rotation.sin_cos();
+        let (sint, cost) = rotation.sin_cos();
         let v0 = glm::vec2(v0.x * cost - v0.y * sint, v0.x * sint + v0.y * cost);
         let v1 = glm::vec2(v1.x * cost - v1.y * sint, v1.x * sint + v1.y * cost);
         let v2 = glm::vec2(v2.x * cost - v2.y * sint, v2.x * sint + v2.y * cost);
