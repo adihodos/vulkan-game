@@ -63,6 +63,7 @@ pub struct EngineConfig {
     pub textures: PathBuf,
     pub models: PathBuf,
     pub shaders: PathBuf,
+    pub fonts: PathBuf,
 }
 
 impl EngineConfig {
@@ -72,5 +73,9 @@ impl EngineConfig {
 
     pub fn texture_path<P: AsRef<std::path::Path>>(&self, texture_file: P) -> PathBuf {
         self.textures.clone().join(texture_file)
+    }
+
+    pub fn fonts_path<P: AsRef<std::path::Path>>(&self, font_file: P) -> PathBuf {
+	self.fonts.clone().join(font_file)
     }
 }

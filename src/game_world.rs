@@ -61,6 +61,10 @@ struct DebugDrawOptions {
     world_axis_length: f32,
 }
 
+impl DebugDrawOptions {
+    const WORLD_AXIS_MAX_LEN: f32 = 128f32;
+}
+
 impl std::default::Default for DebugDrawOptions {
     fn default() -> Self {
         Self {
@@ -560,10 +564,6 @@ impl GameWorld {
             self.sprite_batch.borrow_mut().render(&draw_context);
         }
 
-        self.debug_draw_overlay
-            .borrow_mut()
-            .world_space_coord_sys(32f32);
-
         if self.draw_options().debug_draw_physics {
             self.physics_engine
                 .borrow_mut()
@@ -578,12 +578,9 @@ impl GameWorld {
 
     fn draw_objects(&self, draw_context: &DrawContext) {
         if self.draw_options().debug_draw_world_axis {
-            self.debug_draw_overlay.borrow_mut().add_axes(
-                Vec3::zeros(),
-                self.draw_opts.borrow().world_axis_length,
-                &glm::Mat3::identity(),
-                None,
-            );
+            self.debug_draw_overlay
+                .borrow_mut()
+                .world_space_coord_sys(self.draw_opts.borrow().world_axis_length);
         }
 
         // let test_cam = self.camera.borrow().
@@ -922,7 +919,7 @@ impl GameWorld {
                     ui.slider(
                         "World axis length",
                         0.1f32,
-                        4f32,
+                        DebugDrawOptions::WORLD_AXIS_MAX_LEN,
                         &mut dbg_draw.world_axis_length,
                     );
 

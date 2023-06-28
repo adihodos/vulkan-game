@@ -4,4 +4,5 @@
     textures: "data/textures",
     models: "data/models",
     shaders: "data/shaders",
+    fonts: "data/fonts",
 )

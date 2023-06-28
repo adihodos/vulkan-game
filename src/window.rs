@@ -241,7 +241,7 @@ impl MainWindow {
                         game_main.gamepad_input(in_st);
                     });
 
-                    game_main.main();
+                    game_main.main(&window);
                     gilrs.inc();
                 }
 
@@ -277,7 +277,7 @@ impl GameMain {
         let renderer = VulkanRenderer::create(&window).expect("Failed to create renderer!");
         renderer.begin_resource_loading();
 
-        let ui = UiBackend::new(&renderer, &window).expect("Failed to create ui backend");
+        let ui = UiBackend::new(&renderer, &window, &app_config).expect("Failed to create ui backend");
         let game_world =
             GameWorld::new(&renderer, &app_config).expect("Failed to create game world");
 
@@ -319,13 +319,13 @@ impl GameMain {
         self.game_world.borrow().gamepad_input(input_state);
     }
 
-    fn do_ui(&mut self) {
-        let mut ui = self.ui.new_frame();
+    fn do_ui(&mut self, window: &winit::window::Window) {
+        let mut ui = self.ui.new_frame(window);
         self.game_world.borrow().ui(&mut ui);
         // self.test_world.borrow().ui(&mut ui);
     }
 
-    fn draw_frame(&mut self) {
+    fn draw_frame(&mut self, window: &winit::window::Window) {
         self.renderer.begin_frame();
 
         let frame_context = FrameRenderContext {
@@ -339,12 +339,14 @@ impl GameMain {
 
         self.game_world.borrow().draw(&frame_context);
         // self.test_world.borrow().draw(&frame_context);
+
+	self.ui.apply_cursor_before_render(window);
         self.ui.draw_frame(&frame_context);
 
         self.renderer.end_frame();
     }
 
-    fn main(&mut self) {
+    fn main(&mut self, window: &winit::window::Window) {
         let elapsed = self.timestamp.get().elapsed();
         self.timestamp.set(Instant::now());
 
@@ -352,7 +354,7 @@ impl GameMain {
 
         self.game_world.borrow().update(frame_time);
         // self.test_world.borrow().update(frame_time);
-        self.do_ui();
-        self.draw_frame();
+        self.do_ui(window);
+        self.draw_frame(window);
     }
 }

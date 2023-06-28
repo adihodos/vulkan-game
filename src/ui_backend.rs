@@ -14,7 +14,7 @@ use ash::vk::{
 use log::{error, info};
 use memoffset::offset_of;
 
-use imgui::{self, BackendFlags, DrawCmd, FontConfig, FontSource, Io, Key};
+use imgui::{self, BackendFlags, ConfigFlags, DrawCmd, FontConfig, FontSource, Io, Key};
 
 use winit::{
     dpi::{LogicalPosition, LogicalSize},
@@ -26,6 +26,7 @@ use winit::{
 };
 
 use crate::{
+    app_config::AppConfig,
     draw_context::FrameRenderContext,
     vk_renderer::{
         GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ImageCopySource,
@@ -34,10 +35,7 @@ use crate::{
     },
 };
 
-use std::{
-    mem::size_of,
-    path::Path,
-};
+use std::{mem::size_of, path::Path};
 
 type UiVertex = imgui::DrawVert;
 type UiIndex = imgui::DrawIdx;
@@ -165,7 +163,6 @@ fn to_imgui_key(keycode: VirtualKeyCode) -> Option<Key> {
         VirtualKeyCode::RShift => Some(Key::RightShift),
         VirtualKeyCode::RAlt => Some(Key::RightAlt),
         VirtualKeyCode::RWin => Some(Key::RightSuper),
-        //VirtualKeyCode::Menu => Some(Key::Menu), // TODO: find out if there is a Menu key in winit
         VirtualKeyCode::Key0 => Some(Key::Alpha0),
         VirtualKeyCode::Key1 => Some(Key::Alpha1),
         VirtualKeyCode::Key2 => Some(Key::Alpha2),
@@ -251,33 +248,6 @@ fn to_imgui_key(keycode: VirtualKeyCode) -> Option<Key> {
     }
 }
 
-fn translate_winit_key(key: winit::event::VirtualKeyCode) -> imgui::Key {
-    match key {
-        VirtualKeyCode::Tab => imgui::Key::Tab,
-        VirtualKeyCode::Left => imgui::Key::LeftArrow,
-        VirtualKeyCode::Right => imgui::Key::RightArrow,
-        VirtualKeyCode::Up => imgui::Key::UpArrow,
-        VirtualKeyCode::Down => imgui::Key::DownArrow,
-        VirtualKeyCode::PageUp => imgui::Key::PageUp,
-        VirtualKeyCode::PageDown => imgui::Key::PageDown,
-        VirtualKeyCode::Home => imgui::Key::Home,
-        VirtualKeyCode::End => imgui::Key::End,
-        VirtualKeyCode::Insert => imgui::Key::Insert,
-        VirtualKeyCode::Delete => imgui::Key::Delete,
-        VirtualKeyCode::Back => imgui::Key::Backspace,
-        VirtualKeyCode::Space => imgui::Key::Space,
-        VirtualKeyCode::Return => imgui::Key::Enter,
-        VirtualKeyCode::Escape => imgui::Key::Escape,
-        VirtualKeyCode::A => imgui::Key::A,
-        VirtualKeyCode::C => imgui::Key::C,
-        VirtualKeyCode::V => imgui::Key::V,
-        VirtualKeyCode::X => imgui::Key::X,
-        VirtualKeyCode::Y => imgui::Key::Y,
-        VirtualKeyCode::Z => imgui::Key::Z,
-        _ => imgui::Key::Escape,
-    }
-}
-
 pub struct UiBackend {
     imgui: imgui::Context,
     vertex_bytes_one_frame: DeviceSize,
@@ -360,7 +330,11 @@ impl UiBackend {
         imgui
     }
 
-    pub fn new(renderer: &VulkanRenderer, window: &winit::window::Window) -> Option<UiBackend> {
+    pub fn new(
+        renderer: &VulkanRenderer,
+        window: &winit::window::Window,
+        cfg: &AppConfig,
+    ) -> Option<UiBackend> {
         info!(
             "UI vertex type size = {}, index type size = {}",
             std::mem::size_of::<UiVertex>(),
@@ -421,20 +395,38 @@ impl UiBackend {
         let logical_size = Self::scale_size_from_winit(&platform, window, logical_size);
         imgui.io_mut().display_size = [logical_size.width as f32, logical_size.height as f32];
 
-        let font_files = [
-            "data/fonts/iosevka-ss03-regular.ttf",
-            "data/fonts/iosevka-ss03-medium.ttf",
-            "data/fonts/RobotoMono-Medium.ttf",
-            "data/fonts/RobotoMono-Regular.ttf",
-        ];
+        let font_files = ["iosevka-ss03-regular.ttf", "iosevka-ss03-medium.ttf"];
 
-        if let Ok(mut font_file) = std::fs::File::open(font_files[0]) {
-            let mut ttf_bytes = Vec::<u8>::new();
-            use std::io::Read;
-
-            if let Ok(_) = font_file.read_to_end(&mut ttf_bytes) {
+        font_files
+            .iter()
+            .filter_map(|font_file| {
+                let full_path = cfg.engine.fonts_path(font_file);
+                std::fs::File::open(&full_path)
+                    .map_err(|e| {
+                        log::error!(
+                            "Failed to load font file: {}, error: {}",
+                            full_path.display(),
+                            e
+                        );
+                    })
+                    .ok()
+                    .and_then(|f| {
+                        if let Some(metadata) = f.metadata().ok() {
+                            Some((metadata, f))
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|(file_metadata, file)| unsafe {
+                        mmap_rs::MmapOptions::new(file_metadata.len() as usize)
+                            .with_file(file, 0)
+                            .map()
+                            .ok()
+                    })
+            })
+            .for_each(|mapped_font_file| {
                 imgui.fonts().add_font(&[FontSource::TtfData {
-                    data: &ttf_bytes,
+                    data: mapped_font_file.as_slice(),
                     size_pixels: 18f32,
                     config: Some(FontConfig {
                         oversample_h: 4,
@@ -443,8 +435,7 @@ impl UiBackend {
                         ..FontConfig::default()
                     }),
                 }]);
-            }
-        }
+            });
 
         let font_atlas_image = imgui.fonts().build_alpha8_texture();
 
@@ -903,8 +894,36 @@ impl UiBackend {
         }
     }
 
-    pub fn new_frame(&mut self) -> &mut imgui::Ui {
+    pub fn new_frame(&mut self, window: &winit::window::Window) -> &mut imgui::Ui {
+        if self.imgui.io().want_set_mouse_pos {
+            let logical_pos = Self::scale_pos_for_winit(
+                &self.platform,
+                window,
+                LogicalPosition {
+                    x: self.imgui.io().mouse_pos[0] as f64,
+                    y: self.imgui.io().mouse_pos[1] as f64,
+                },
+            );
+            let _ = window.set_cursor_position(logical_pos);
+        }
         self.imgui.new_frame()
+    }
+
+    pub fn apply_cursor_before_render(&mut self, window: &winit::window::Window) {
+        let io = self.imgui.io();
+        if !io
+            .config_flags
+            .contains(ConfigFlags::NO_MOUSE_CURSOR_CHANGE)
+        {
+            let cursor = CursorSettings {
+                cursor: self.imgui.mouse_cursor(),
+                draw_cursor: io.mouse_draw_cursor,
+            };
+            if self.platform.cursor_cache != Some(cursor) {
+                cursor.apply(window);
+                self.platform.cursor_cache = Some(cursor);
+            }
+        }
     }
 
     fn handle_key_modifier(io: &mut Io, key: VirtualKeyCode, down: bool) {
