@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use ash::vk::{
     BorderColor, BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
@@ -6,10 +6,8 @@ use ash::vk::{
     PipelineBindPoint, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode,
     WriteDescriptorSet,
 };
-use glm::Vec3;
 use nalgebra::Point3;
 use nalgebra_glm::Vec4;
-
 use nalgebra_glm as glm;
 
 use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
@@ -561,8 +559,7 @@ impl GameWorld {
 
             self.draw_objects(&draw_context);
             self.draw_crosshair(&draw_context);
-            self.draw_locked_target(&draw_context);
-            // self.draw_lead_indicator(&draw_context);
+            self.draw_locked_target_indicator(&draw_context);
             self.sprite_batch.borrow_mut().render(&draw_context);
         }
 
@@ -934,9 +931,7 @@ impl GameWorld {
                 }
 
                 ui.separator();
-                ui.text("Starfury:");
-
-                {
+                if ui.collapsing_header("Starfury:", imgui::TreeNodeFlags::FRAMED) {
                     let phys_eng = self.physics_engine.borrow();
 
                     phys_eng
@@ -958,13 +953,14 @@ impl GameWorld {
                         });
                 }
 
-                let (right, up, dir) = self.camera.borrow().right_up_dir();
                 ui.separator();
-                ui.text("Camera");
-                ui.text(format!("Position: {}", self.camera.borrow().position));
-                ui.text(format!("X: {}", right));
-                ui.text(format!("Y: {}", up));
-                ui.text(format!("Z: {}", dir));
+                if ui.collapsing_header("Camera", imgui::TreeNodeFlags::FRAMED) {
+                    let (right, up, dir) = self.camera.borrow().right_up_dir();
+                    ui.text(format!("Position: {}", self.camera.borrow().position));
+                    ui.text(format!("X: {}", right));
+                    ui.text(format!("Y: {}", up));
+                    ui.text(format!("Z: {}", dir));
+                }
 
                 ui.separator();
                 ui.text("Instancing:");
@@ -1158,10 +1154,6 @@ impl GameWorld {
         self.starfury.gamepad_input(input_state);
     }
 
-    fn draw_locked_target(&self, draw_ctx: &DrawContext) {
-        self.draw_lead_indicator(draw_ctx);
-    }
-
     fn draw_crosshair(&self, draw_context: &DrawContext) {
         let player_ship_transform = *self
             .physics_engine
@@ -1249,7 +1241,7 @@ impl GameWorld {
             });
     }
 
-    fn draw_lead_indicator(&self, draw_context: &DrawContext) {
+    fn draw_locked_target_indicator(&self, draw_context: &DrawContext) {
         let physics_engine = self.physics_engine.borrow();
         self.locked_target
             .borrow()
