@@ -3,6 +3,7 @@ use nalgebra_glm as glm;
 use crate::math::AABB3;
 
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct Plane {
     pub normal: glm::Vec3,
     pub offset: f32,

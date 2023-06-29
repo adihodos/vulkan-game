@@ -7,19 +7,19 @@ use ash::vk::{
     WriteDescriptorSet,
 };
 use nalgebra::Point3;
-use nalgebra_glm::Vec4;
 use nalgebra_glm as glm;
+use nalgebra_glm::Vec4;
 
 use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 use smallvec::SmallVec;
 
 use crate::{
     app_config::{AppConfig, PlayerShipConfig},
-    camera::Camera,
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, FrameRenderContext, UpdateContext},
     flight_cam::FlightCamera,
-    frustrum::Frustrum,
+    fps_camera::FirstPersonCamera,
+    frustrum::{Frustrum, FrustrumPlane},
     math,
     particles::{ImpactSpark, SparksSystem},
     physics_engine::{ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups},
@@ -30,7 +30,7 @@ use crate::{
     sprite_batch::{SpriteBatch, TextureRegion},
     starfury::Starfury,
     vk_renderer::{Cpu2GpuBuffer, UniqueSampler, VulkanRenderer},
-    window::InputState,
+    window::{GamepadInputState, InputState},
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -48,7 +48,7 @@ pub struct GameObjectCommonData {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct DebugDrawOptions {
+struct DebugOptions {
     wireframe_color: Vec4,
     draw_normals: bool,
     normals_color: Vec4,
@@ -57,13 +57,16 @@ struct DebugDrawOptions {
     debug_draw_mesh: bool,
     debug_draw_world_axis: bool,
     world_axis_length: f32,
+    frustrum_planes: enumflags2::BitFlags<FrustrumPlane>,
+    debug_camera: bool,
+    draw_frustrum_planes: bool,
 }
 
-impl DebugDrawOptions {
+impl DebugOptions {
     const WORLD_AXIS_MAX_LEN: f32 = 128f32;
 }
 
-impl std::default::Default for DebugDrawOptions {
+impl std::default::Default for DebugOptions {
     fn default() -> Self {
         Self {
             wireframe_color: glm::vec4(1f32, 0f32, 0f32, 1f32),
@@ -74,6 +77,9 @@ impl std::default::Default for DebugDrawOptions {
             debug_draw_mesh: false,
             debug_draw_world_axis: false,
             world_axis_length: 1f32,
+            frustrum_planes: enumflags2::BitFlags::empty(),
+            debug_camera: false,
+            draw_frustrum_planes: false,
         }
     }
 }
@@ -244,7 +250,7 @@ struct Statistics {
 }
 
 pub struct GameWorld {
-    draw_opts: RefCell<DebugDrawOptions>,
+    draw_opts: RefCell<DebugOptions>,
     resource_cache: ResourceHolder,
     skybox: Skybox,
     single_inst_renderdata: SingleInstanceRenderingData,
@@ -255,7 +261,7 @@ pub struct GameWorld {
     frame_times: RefCell<Vec<f32>>,
     physics_engine: RefCell<PhysicsEngine>,
     camera: RefCell<FlightCamera>,
-    dbg_camera: FlightCamera,
+    dbg_camera: RefCell<FirstPersonCamera>,
     debug_draw_overlay: Rc<RefCell<DebugDrawOverlay>>,
     projectiles_sys: RefCell<ProjectileSystem>,
     sparks_sys: RefCell<SparksSystem>,
@@ -269,11 +275,11 @@ impl GameWorld {
     const PHYSICS_TIME_STEP: f64 = 1f64 / 240f64;
     const MAX_HISTOGRAM_VALUES: usize = 32;
 
-    fn draw_options(&self) -> std::cell::Ref<DebugDrawOptions> {
+    fn draw_options(&self) -> std::cell::Ref<DebugOptions> {
         self.draw_opts.borrow()
     }
 
-    fn draw_options_mut(&self) -> std::cell::RefMut<DebugDrawOptions> {
+    fn draw_options_mut(&self) -> std::cell::RefMut<DebugOptions> {
         self.draw_opts.borrow_mut()
     }
 
@@ -494,7 +500,7 @@ impl GameWorld {
             / renderer.framebuffer_extents().height as f32;
 
         Some(GameWorld {
-            draw_opts: RefCell::new(DebugDrawOptions::default()),
+            draw_opts: RefCell::new(DebugOptions::default()),
             resource_cache,
             skybox,
             single_inst_renderdata: SingleInstanceRenderingData {
@@ -511,7 +517,7 @@ impl GameWorld {
             frame_times: RefCell::new(Vec::with_capacity(Self::MAX_HISTOGRAM_VALUES)),
             physics_engine: RefCell::new(physics_engine),
             camera: RefCell::new(FlightCamera::new(75f32, aspect, 0.1f32, 5000f32)),
-            dbg_camera: FlightCamera::new(75f32, aspect, 0.1f32, 5000f32),
+            dbg_camera: RefCell::new(FirstPersonCamera::new(75f32, aspect, 0.1f32, 5000f32)),
             debug_draw_overlay: std::rc::Rc::new(RefCell::new(
                 DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
             )),
@@ -542,26 +548,46 @@ impl GameWorld {
         self.camera.borrow_mut().aspect =
             frame_context.framebuffer_size.x as f32 / frame_context.framebuffer_size.y as f32;
 
-        {
-            let cam_ref = self.camera.borrow();
-            let draw_context = DrawContext {
-                renderer: frame_context.renderer,
-                cmd_buff: frame_context.cmd_buff,
-                frame_id: frame_context.frame_id,
-                viewport: frame_context.viewport,
-                scissor: frame_context.scissor,
-                camera: &*cam_ref,
-                projection,
-                inverse_projection,
-                projection_view: projection * cam_ref.view_transform(),
-                debug_draw: self.debug_draw_overlay.clone(),
-            };
-
-            self.draw_objects(&draw_context);
-            self.draw_crosshair(&draw_context);
-            self.draw_locked_target_indicator(&draw_context);
-            self.sprite_batch.borrow_mut().render(&draw_context);
+        if self.draw_options().debug_camera {
+            self.dbg_camera.borrow_mut().set_lens(
+                75f32,
+                frame_context.framebuffer_size.x as f32 / frame_context.framebuffer_size.y as f32,
+                0.1f32,
+                5000f32,
+            );
         }
+
+        let (view_matrix, cam_position) = {
+            let flight_cam = self.camera.borrow();
+
+            if self.draw_options().debug_camera {
+                (
+                    self.dbg_camera.borrow().view_matrix,
+                    self.dbg_camera.borrow().position,
+                )
+            } else {
+                (flight_cam.view_matrix, flight_cam.position)
+            }
+        };
+
+        let draw_context = DrawContext {
+            renderer: frame_context.renderer,
+            cmd_buff: frame_context.cmd_buff,
+            frame_id: frame_context.frame_id,
+            viewport: frame_context.viewport,
+            scissor: frame_context.scissor,
+            view_matrix,
+            cam_position,
+            projection,
+            inverse_projection,
+            projection_view: projection * view_matrix,
+            debug_draw: self.debug_draw_overlay.clone(),
+        };
+
+        self.draw_objects(&draw_context);
+        self.draw_crosshair(&draw_context);
+        self.draw_locked_target_indicator(&draw_context);
+        self.sprite_batch.borrow_mut().render(&draw_context);
 
         if self.draw_options().debug_draw_physics {
             self.physics_engine
@@ -569,10 +595,9 @@ impl GameWorld {
                 .debug_draw(&mut self.debug_draw_overlay.borrow_mut());
         }
 
-        self.debug_draw_overlay.borrow_mut().draw(
-            frame_context.renderer,
-            &(projection * self.camera.borrow().view_transform()),
-        );
+        self.debug_draw_overlay
+            .borrow_mut()
+            .draw(frame_context.renderer, &draw_context.projection_view);
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {
@@ -582,11 +607,7 @@ impl GameWorld {
                 .world_space_coord_sys(self.draw_opts.borrow().world_axis_length);
         }
 
-        // let test_cam = self.camera.borrow().
-        // Frustrum::draw_cam_frustrum(&self.dbg_camera, &mut self.debug_draw_overlay.borrow_mut());
-
         self.skybox.draw(&draw_context);
-
         let device = draw_context.renderer.graphics_device();
 
         self.single_inst_renderdata
@@ -600,7 +621,7 @@ impl GameWorld {
                     .map(|rigid_body| {
                         let transforms = PbrTransformDataSingleInstanceUBO {
                             world: rigid_body.position().to_homogeneous(),
-                            view: draw_context.camera.view_transform(),
+                            view: draw_context.view_matrix,
                             projection: draw_context.projection,
                         };
 
@@ -616,7 +637,7 @@ impl GameWorld {
             });
 
         let pbr_light_data = PbrLightingData {
-            eye_pos: draw_context.camera.position(),
+            eye_pos: draw_context.cam_position,
         };
 
         self.single_inst_renderdata
@@ -740,6 +761,29 @@ impl GameWorld {
     fn draw_instanced_objects(&self, draw_context: &DrawContext) {
         let frustrum = Frustrum::from_flight_cam(&self.camera.borrow());
 
+        if self.draw_options().debug_camera {
+            use crate::color_palettes::StdColors;
+            let cam = self.camera.borrow();
+
+            if self.draw_options().draw_frustrum_planes {
+                self.debug_draw_overlay.borrow_mut().add_frustrum(
+                    &frustrum,
+                    &cam.position,
+                    self.draw_options().frustrum_planes,
+                );
+            } else {
+                self.debug_draw_overlay.borrow_mut().add_frustrum_pyramid(
+                    cam.fovy,
+                    cam.near,
+                    500f32,
+                    cam.aspect,
+                    cam.right_up_dir(),
+                    cam.position,
+                    StdColors::SEA_GREEN,
+                );
+            }
+        }
+
         let inst_aabb = self
             .resource_cache
             .get_geometry_info(self.shadows_swarm.renderable)
@@ -759,17 +803,19 @@ impl GameWorld {
                         let transformed_aabb = inst_transform.to_matrix() * inst_aabb;
 
                         use crate::color_palettes::StdColors;
-                        self.debug_draw_overlay.borrow_mut().add_aabb(
-                            &transformed_aabb.min,
-                            &transformed_aabb.max,
-                            StdColors::RED,
-                        );
 
-                        // if is_aabb_on_frustrum(&frustrum, &inst_aabb, &inst_transform) {
-                        Some((inst_data.rigid_body_handle, inst_transform))
-                        // } else {
-                        // None
-                        // }
+                        use crate::frustrum::is_aabb_on_frustrum;
+
+                        if is_aabb_on_frustrum(&frustrum, &inst_aabb, &inst_transform) {
+                            Some((inst_data.rigid_body_handle, inst_transform))
+                        } else {
+                            self.debug_draw_overlay.borrow_mut().add_aabb(
+                                &transformed_aabb.min,
+                                &transformed_aabb.max,
+                                StdColors::HONEYDEW,
+                            );
+                            None
+                        }
                     })
             })
             .flatten()
@@ -785,7 +831,7 @@ impl GameWorld {
         }
 
         let global_uniforms = PbrTransformDataMultiInstanceUBO {
-            view: draw_context.camera.view_transform(),
+            view: draw_context.view_matrix,
             projection: draw_context.projection,
         };
 
@@ -889,7 +935,7 @@ impl GameWorld {
         }
     }
 
-    pub fn ui(&self, ui: &mut imgui::Ui) {
+    pub fn ui(&mut self, ui: &mut imgui::Ui) {
         ui.window("Options")
             .size([400.0, 110.0], imgui::Condition::FirstUseEver)
             .build(|| {
@@ -909,16 +955,14 @@ impl GameWorld {
                 }
 
                 ui.separator();
-                ui.text("Debug draw:");
-
-                {
+                if ui.collapsing_header("Debug draw:", imgui::TreeNodeFlags::FRAMED) {
                     let mut dbg_draw = self.draw_options_mut();
                     ui.checkbox("World axis", &mut dbg_draw.debug_draw_world_axis);
                     ui.same_line();
                     ui.slider(
                         "World axis length",
                         0.1f32,
-                        DebugDrawOptions::WORLD_AXIS_MAX_LEN,
+                        DebugOptions::WORLD_AXIS_MAX_LEN,
                         &mut dbg_draw.world_axis_length,
                     );
 
@@ -955,6 +999,17 @@ impl GameWorld {
 
                 ui.separator();
                 if ui.collapsing_header("Camera", imgui::TreeNodeFlags::FRAMED) {
+                    ui.checkbox("Activate debug camera", &mut self.draw_options_mut().debug_camera);
+		    ui.checkbox("Draw frustrum as planes/pyramid", &mut self.draw_options_mut().draw_frustrum_planes);
+                    use enumflags2::BitFlags;
+
+                    BitFlags::<FrustrumPlane>::all().iter().for_each(|f| {
+                        let mut value = self.draw_options().frustrum_planes.intersects(f);
+                        if ui.checkbox(format!("{:?}", f), &mut value) {
+                            self.draw_options_mut().frustrum_planes.toggle(f);
+                        }
+                    });
+
                     let (right, up, dir) = self.camera.borrow().right_up_dir();
                     ui.text(format!("Position: {}", self.camera.borrow().position));
                     ui.text(format!("X: {}", right));
@@ -1064,6 +1119,10 @@ impl GameWorld {
                 .get(self.starfury.rigid_body_handle)
                 .map(|starfury_phys_obj| self.camera.borrow_mut().update(starfury_phys_obj));
         });
+
+        if self.draw_options().debug_camera {
+            self.dbg_camera.borrow_mut().update_view_matrix();
+        }
     }
 
     fn projectile_impacted_event(&self, proj_collider_data: ColliderUserData) {
@@ -1151,7 +1210,12 @@ impl GameWorld {
                     }
                 });
         }
-        self.starfury.gamepad_input(input_state);
+
+        if self.draw_options().debug_camera {
+            Self::dbg_cam_gamepad_input(&mut self.dbg_camera.borrow_mut(), &input_state.gamepad);
+        } else {
+            self.starfury.gamepad_input(input_state);
+        }
     }
 
     fn draw_crosshair(&self, draw_context: &DrawContext) {
@@ -1326,5 +1390,50 @@ impl GameWorld {
                         );
                     });
             });
+    }
+
+    fn dbg_cam_gamepad_input(cam: &mut FirstPersonCamera, input: &GamepadInputState) {
+        const CAM_SPD: f32 = 0.025f32;
+        const CAM_ROT_SPD: f32 = 0.5f32;
+
+        input.left_stick_x.axis_data.map(|data| {
+            if data.value().abs() > input.left_stick_x.deadzone {
+                cam.strafe(CAM_SPD * data.value());
+            }
+        });
+
+        input.left_stick_y.axis_data.map(|data| {
+            if data.value().abs() > input.left_stick_y.deadzone {
+                cam.walk(CAM_SPD * data.value());
+            }
+        });
+
+        input.right_stick_x.axis_data.map(|data| {
+            if data.value().abs() > input.right_stick_x.deadzone {
+                cam.yaw(CAM_ROT_SPD * data.value());
+            }
+        });
+
+        input.right_stick_y.axis_data.map(|data| {
+            if data.value().abs() > input.right_stick_y.deadzone {
+                cam.pitch(CAM_ROT_SPD * data.value());
+            }
+        });
+
+        input.rtrigger.data.map(|data| {
+            if data.is_pressed() {
+                cam.jump(CAM_SPD);
+            }
+        });
+
+        input.ltrigger.data.map(|data| {
+            if data.is_pressed() {
+                cam.jump(-CAM_SPD);
+            }
+        });
+
+        if input.btn_lock_target {
+            cam.reset();
+        }
     }
 }

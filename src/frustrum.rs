@@ -1,10 +1,27 @@
+use enumflags2::bitflags;
+
 use crate::{
-    color_palettes::StdColors, debug_draw_overlay::DebugDrawOverlay, flight_cam::FlightCamera,
-    fps_camera::FpsCamera, math::AABB3, plane::Plane,
+    flight_cam::FlightCamera,
+    fps_camera::FirstPersonCamera,
+    math::{PlaneAabbClassification, AABB3},
+    plane::Plane,
 };
 use nalgebra_glm as glm;
 
+#[bitflags]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum FrustrumPlane {
+    Top = 1 << 0,
+    Bottom = 1 << 1,
+    Left = 1 << 2,
+    Right = 1 << 3,
+    Far = 1 << 4,
+    Near = 1 << 5,
+}
+
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct Frustrum {
     pub top_face: Plane,
     pub bottom_face: Plane,
@@ -15,55 +32,7 @@ pub struct Frustrum {
 }
 
 impl Frustrum {
-    pub fn draw_cam_frustrum(cam: &FlightCamera, dbg: &mut DebugDrawOverlay) {
-        let hnear = 2f32 * (cam.fovy * 0.5f32).tan() * cam.near;
-        let wnear = hnear * cam.aspect;
-
-        let hfar = 2f32 * (cam.fovy * 0.5f32).tan() * cam.far;
-        let wfar = hfar * cam.aspect;
-
-        let (right, up, dir) = cam.right_up_dir();
-
-        let plane_idx = [0, 1, 1, 2, 2, 3, 3, 0];
-
-        let points_near = [
-            cam.position + cam.near * dir + right * wnear * 0.5f32 - up * hnear * 0.5f32,
-            cam.position + cam.near * dir + right * wnear * 0.5f32 + up * hnear * 0.5f32,
-            cam.position + cam.near * dir - right * wnear * 0.5f32 + up * hnear * 0.5f32,
-            cam.position + cam.near * dir - right * wnear * 0.5f32 - up * hnear * 0.5f32,
-        ];
-
-        let points_far = [
-            cam.position + cam.far * dir + right * wfar * 0.5f32 - up * hfar * 0.5f32,
-            cam.position + cam.far * dir + right * wfar * 0.5f32 + up * hfar * 0.5f32,
-            cam.position + cam.far * dir - right * wfar * 0.5f32 + up * hfar * 0.5f32,
-            cam.position + cam.far * dir - right * wfar * 0.5f32 - up * hfar * 0.5f32,
-        ];
-
-        plane_idx.windows(2).for_each(|idx| {
-            dbg.add_line(
-                points_near[idx[0]],
-                points_near[idx[1]],
-                StdColors::RED,
-                StdColors::RED,
-            );
-        });
-
-        plane_idx.windows(2).for_each(|idx| {
-            dbg.add_line(
-                points_far[idx[0]],
-                points_far[idx[1]],
-                StdColors::RED,
-                StdColors::RED,
-            );
-        });
-
-        [0, 1, 2, 3].iter().for_each(|i| {
-            dbg.add_line(cam.position, points_far[*i], StdColors::RED, StdColors::RED);
-        });
-    }
-
-    pub fn from_fpscam(cam: &FpsCamera) -> Frustrum {
+    pub fn from_fpscam(cam: &FirstPersonCamera) -> Frustrum {
         let half_v_side = cam.far * (cam.fovy * 0.5f32).tan();
         let half_h_side = half_v_side * cam.aspect;
         let front_mul_far = cam.look * cam.far;
@@ -138,10 +107,10 @@ pub fn is_aabb_on_frustrum(
     let mtx = transform.to_homogeneous();
     let aabb = mtx * (*aabb);
 
-    aabb.is_on_or_forward_plane(&f.left_face)
-        && aabb.is_on_or_forward_plane(&f.right_face)
-        && aabb.is_on_or_forward_plane(&f.top_face)
-        && aabb.is_on_or_forward_plane(&f.bottom_face)
-        && aabb.is_on_or_forward_plane(&f.near_face)
-        && aabb.is_on_or_forward_plane(&f.far_face)
+    aabb.classify(&f.top_face) != PlaneAabbClassification::NegativeSide
+        && aabb.classify(&f.bottom_face) != PlaneAabbClassification::NegativeSide
+        && aabb.classify(&f.near_face) != PlaneAabbClassification::NegativeSide
+        && aabb.classify(&f.far_face) != PlaneAabbClassification::NegativeSide
+        && aabb.classify(&f.left_face) != PlaneAabbClassification::NegativeSide
+        && aabb.classify(&f.right_face) != PlaneAabbClassification::NegativeSide
 }

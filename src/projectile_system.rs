@@ -75,12 +75,6 @@ impl Projectile {
             &mut physics_engine.rigid_body_set,
         );
 
-        // log::info!(
-        //     "spawned projectile {:#?}, {:#?}",
-        //     rigid_body_handle,
-        //     collider_handle,
-        // );
-
         Projectile {
             data: projectile_data,
             direction,
@@ -299,7 +293,7 @@ impl ProjectileSystem {
             .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
             .map(|ubo_mapping| {
                 let transforms = GpuProjectileTransformData {
-                    projection_view: draw_context.projection * draw_context.camera.view_transform(),
+                    projection_view: draw_context.projection_view,
                     //
                     // TODO: hardcoded value, move to config file
                     extents: glm::vec3(0.15f32, 0.15f32, 1f32),

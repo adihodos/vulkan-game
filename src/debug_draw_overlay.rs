@@ -12,7 +12,7 @@ use nalgebra_glm as glm;
 
 use crate::{
     color_palettes::StdColors,
-    frustrum::Frustrum,
+    frustrum::{Frustrum, FrustrumPlane},
     plane::Plane,
     vk_renderer::{
         GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
@@ -321,15 +321,84 @@ impl DebugDrawOverlay {
         });
     }
 
-    pub fn add_frustrum(&mut self, f: &Frustrum) {
-        let origin = glm::Vec3::zeros();
+    pub fn add_frustrum(
+        &mut self,
+        f: &Frustrum,
+        origin: &glm::Vec3,
+        faces: enumflags2::BitFlags<FrustrumPlane>,
+    ) {
         const PLANE_SIZE: f32 = 32f32;
 
-        self.add_plane(&f.near_face, &origin, PLANE_SIZE, StdColors::GREEN);
-        self.add_plane(&f.top_face, &origin, PLANE_SIZE, StdColors::CORNFLOWER_BLUE);
-        self.add_plane(&f.bottom_face, &origin, PLANE_SIZE, StdColors::DARK_ORANGE);
-        self.add_plane(&f.left_face, &origin, PLANE_SIZE, StdColors::BLUE_VIOLET);
-        self.add_plane(&f.right_face, &origin, PLANE_SIZE, StdColors::INDIAN_RED);
+        if faces.intersects(FrustrumPlane::Near) {
+            self.add_plane(&f.near_face, &origin, PLANE_SIZE, StdColors::GREEN);
+        }
+
+        if faces.intersects(FrustrumPlane::Far) {
+            self.add_plane(&f.far_face, &origin, PLANE_SIZE, StdColors::CORNFLOWER_BLUE);
+        }
+
+        if faces.intersects(FrustrumPlane::Bottom) {
+            self.add_plane(&f.bottom_face, &origin, PLANE_SIZE, StdColors::DARK_ORANGE);
+        }
+
+        if faces.intersects(FrustrumPlane::Left) {
+            self.add_plane(&f.left_face, &origin, PLANE_SIZE, StdColors::BLUE_VIOLET);
+        }
+
+        if faces.intersects(FrustrumPlane::Right) {
+            self.add_plane(&f.right_face, &origin, PLANE_SIZE, StdColors::INDIAN_RED);
+        }
+
+        if faces.intersects(FrustrumPlane::Top) {
+            self.add_plane(&f.top_face, &origin, PLANE_SIZE, StdColors::DARK_ORANGE);
+        }
+    }
+
+    pub fn add_frustrum_pyramid(
+        &mut self,
+        fovy: f32,
+        near: f32,
+        far: f32,
+        aspect: f32,
+        cam_frame: (glm::Vec3, glm::Vec3, glm::Vec3),
+        origin: glm::Vec3,
+        color: u32,
+    ) {
+        let (right, up, dir) = cam_frame;
+
+        let hnear = 2f32 * (fovy * 0.5f32).tan() * near;
+        let wnear = hnear * aspect;
+
+        let hfar = 2f32 * (fovy * 0.5f32).tan() * far;
+        let wfar = hfar * aspect;
+
+        let plane_idx = [0, 1, 1, 2, 2, 3, 3, 0];
+
+        let points_near = [
+            origin + near * dir + right * wnear * 0.5f32 - up * hnear * 0.5f32,
+            origin + near * dir + right * wnear * 0.5f32 + up * hnear * 0.5f32,
+            origin + near * dir - right * wnear * 0.5f32 + up * hnear * 0.5f32,
+            origin + near * dir - right * wnear * 0.5f32 - up * hnear * 0.5f32,
+        ];
+
+        let points_far = [
+            origin + far * dir + right * wfar * 0.5f32 - up * hfar * 0.5f32,
+            origin + far * dir + right * wfar * 0.5f32 + up * hfar * 0.5f32,
+            origin + far * dir - right * wfar * 0.5f32 + up * hfar * 0.5f32,
+            origin + far * dir - right * wfar * 0.5f32 - up * hfar * 0.5f32,
+        ];
+
+        plane_idx.windows(2).for_each(|idx| {
+            self.add_line(points_near[idx[0]], points_near[idx[1]], color, color);
+        });
+
+        plane_idx.windows(2).for_each(|idx| {
+            self.add_line(points_far[idx[0]], points_far[idx[1]], color, color);
+        });
+
+        [0, 1, 2, 3].iter().for_each(|i| {
+            self.add_line(origin, points_far[*i], color, color);
+        });
     }
 
     pub fn clear(&mut self) {

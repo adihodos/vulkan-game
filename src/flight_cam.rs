@@ -90,10 +90,14 @@ impl FlightCamera {
     }
 
     pub fn right_up_dir(&self) -> (glm::Vec3, glm::Vec3, glm::Vec3) {
+        let right = self.view_matrix.row(0);
+        let up = self.view_matrix.row(1);
+        let dir = self.view_matrix.row(2);
+
         (
-            self.view_matrix.column(0).xyz(),
-            self.view_matrix.column(1).xyz(),
-            self.view_matrix.column(2).xyz(),
+            glm::vec3(right[0], right[1], right[2]),
+            glm::vec3(up[0], up[1], up[2]),
+            glm::vec3(dir[0], dir[1], dir[2]),
         )
     }
 }

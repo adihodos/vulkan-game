@@ -334,7 +334,7 @@ impl GameMain {
 
     fn do_ui(&mut self, window: &winit::window::Window) {
         let mut ui = self.ui.new_frame(window);
-        self.game_world.borrow().ui(&mut ui);
+        self.game_world.borrow_mut().ui(&mut ui);
         // self.test_world.borrow().ui(&mut ui);
     }
 

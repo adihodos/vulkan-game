@@ -21,7 +21,7 @@ use crate::{
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, FrameRenderContext, UpdateContext},
     flight_cam::FlightCamera,
-    fps_camera::FpsCamera,
+    fps_camera::FirstPersonCamera,
     frustrum::{is_aabb_on_frustrum, Frustrum},
     math::{self, AABB3},
     particles::{ImpactSpark, SparksSystem},
@@ -65,7 +65,7 @@ impl std::default::Default for DebugDrawOptions {
 }
 
 pub struct TestWorld {
-    camera: RefCell<FpsCamera>,
+    camera: RefCell<FirstPersonCamera>,
     debug_draw_overlay: Rc<RefCell<DebugDrawOverlay>>,
     f: Frustrum,
     org: glm::Vec3,
@@ -83,7 +83,7 @@ impl TestWorld {
         let a = Isometry3::new(glm::vec3(-5f32, -5f32, -5f32), glm::Vec3::y());
         let b = Isometry3::new(glm::vec3(5f32, 5f32, 5f32), glm::Vec3::y());
 
-        let camera = FpsCamera::new(65f32, 1.333f32, 0.1f32, 1000f32);
+        let camera = FirstPersonCamera::new(65f32, 1.333f32, 0.1f32, 1000f32);
         Some(TestWorld {
             camera: RefCell::new(camera),
             debug_draw_overlay: std::rc::Rc::new(RefCell::new(
@@ -216,7 +216,7 @@ impl TestWorld {
 }
 
 struct FpsCameraController<'a> {
-    cam: &'a mut FpsCamera,
+    cam: &'a mut FirstPersonCamera,
 }
 
 impl<'a> FpsCameraController<'a> {

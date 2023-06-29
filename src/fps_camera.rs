@@ -2,7 +2,7 @@ use crate::{camera::Camera, math::perspective};
 use nalgebra_glm as glm;
 
 #[derive(Copy, Clone)]
-pub struct FpsCamera {
+pub struct FirstPersonCamera {
     pub position: glm::Vec3,
     pub right: glm::Vec3,
     pub up: glm::Vec3,
@@ -18,7 +18,7 @@ pub struct FpsCamera {
     pub projection_matrix: glm::Mat4,
 }
 
-impl Camera for FpsCamera {
+impl Camera for FirstPersonCamera {
     fn view_transform(&self) -> glm::Mat4 {
         self.view_matrix
     }
@@ -32,7 +32,7 @@ impl Camera for FpsCamera {
     }
 }
 
-impl FpsCamera {
+impl FirstPersonCamera {
     pub fn new(fovy: f32, aspect: f32, znear: f32, zfar: f32) -> Self {
         let view_matrix = Self::default_view();
 
@@ -40,9 +40,10 @@ impl FpsCamera {
         let up = view_matrix.column(1).xyz();
         let look = view_matrix.column(2).xyz();
         let position = view_matrix.column(3).xyz();
+        log::info!("R {} U {} D {} O {}", right, up, look, position);
         let (projection_matrix, _) = perspective(fovy, aspect, znear, zfar);
 
-        FpsCamera {
+        FirstPersonCamera {
             position,
             right,
             up,
@@ -85,12 +86,10 @@ impl FpsCamera {
     }
 
     pub fn yaw(&mut self, angle: f32) {
-        let rotation =
-            glm::Mat4::new_rotation(glm::Vec3::new(0f32, 1f32, 0f32) * angle.to_radians());
+        let rotation = glm::Mat4::new_rotation(self.up * angle.to_radians());
 
         self.right = rotation.transform_vector(&self.right);
         self.look = rotation.transform_vector(&self.look);
-        self.up = rotation.transform_vector(&self.up);
         self.view_synced = false;
     }
 
@@ -111,11 +110,23 @@ impl FpsCamera {
         self.look = look;
         self.right = right;
 
-        self.view_matrix = glm::Mat4::from_columns(&[
-            glm::Vec4::new(right.x, right.y, right.z, 0f32),
-            glm::Vec4::new(up.x, up.y, up.z, 0f32),
-            glm::Vec4::new(look.x, look.y, look.z, 0f32),
-            glm::Vec4::new(tx, ty, tz, 1f32),
+        self.view_matrix = glm::Mat4::from_row_slice(&[
+            self.right.x,
+            self.right.y,
+            self.right.z,
+            tx,
+            self.up.x,
+            self.up.y,
+            self.up.z,
+            ty,
+            self.look.x,
+            self.look.y,
+            self.look.z,
+            tz,
+            0f32,
+            0f32,
+            0f32,
+            1f32,
         ]);
 
         self.view_synced = true;

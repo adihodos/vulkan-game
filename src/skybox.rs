@@ -216,7 +216,7 @@ impl Skybox {
                 IndexType::UINT32,
             );
 
-            let world_view_proj = draw_context.camera.view_transform();
+            let world_view_proj = draw_context.view_matrix;
             let world_view_proj = from_raw_parts(
                 world_view_proj.as_ptr() as *const u8,
                 world_view_proj.len() * size_of::<f32>(),

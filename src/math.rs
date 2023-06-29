@@ -203,6 +203,40 @@ impl AABB3 {
 
         (s - e) >= 0f32
     }
+
+    pub fn classify(&self, p: &Plane) -> PlaneAabbClassification {
+        let mut diag_min = glm::Vec3::zeros();
+        let mut diag_max = glm::Vec3::zeros();
+
+        for i in 0..3 {
+            if p.normal[i] >= 0f32 {
+                diag_min[i] = self.min[i];
+                diag_max[i] = self.max[i];
+            } else {
+                diag_min[i] = self.max[i];
+                diag_max[i] = self.min[i];
+            }
+        }
+
+        //
+        // minimum on positive side of plane, box on positive side
+        let test = p.signed_distance(&diag_min);
+        if test > 0f32 {
+            return PlaneAabbClassification::PositiveSide;
+        }
+
+        let test = p.signed_distance(&diag_max);
+
+        if test >= 0f32 {
+            //
+            // min on negative side, max on positive side -> intersection
+            PlaneAabbClassification::Intersecting
+        } else {
+            //
+            // max on negative side, AABB on negative side
+            PlaneAabbClassification::NegativeSide
+        }
+    }
 }
 
 impl std::ops::Mul<AABB3> for glm::Mat4 {
@@ -255,6 +289,13 @@ impl std::convert::From<[f32; 6]> for AABB3 {
 
 pub fn aabb_merge(a: &AABB3, b: &AABB3) -> AABB3 {
     AABB3::new(glm::min2(&a.min, &b.min), glm::max2(&a.max, &b.max))
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum PlaneAabbClassification {
+    PositiveSide,
+    NegativeSide,
+    Intersecting,
 }
 
 pub fn orthonormal_basis_from_vec(n: &glm::Vec3) -> (glm::Vec3, glm::Vec3, glm::Vec3) {
