@@ -19,7 +19,8 @@ use crate::{
     draw_context::{DrawContext, FrameRenderContext, UpdateContext},
     flight_cam::FlightCamera,
     fps_camera::FirstPersonCamera,
-    frustrum::{Frustrum, FrustrumPlane},
+    frustrum::{is_aabb_on_frustrum, Frustrum, FrustrumPlane},
+    game_object::GameObjectPhysicsData,
     math,
     particles::{ImpactSpark, SparksSystem},
     physics_engine::{ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups},
@@ -269,6 +270,7 @@ pub struct GameWorld {
     player_opts: PlayerShipOptions,
     stats: RefCell<Statistics>,
     locked_target: RefCell<Option<(ColliderHandle, RigidBodyHandle)>>,
+    rt: tokio::runtime::Runtime,
 }
 
 impl GameWorld {
@@ -284,6 +286,13 @@ impl GameWorld {
     }
 
     pub fn new(renderer: &VulkanRenderer, app_cfg: &AppConfig) -> Option<GameWorld> {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .thread_name("vkgame-thread-pool")
+            .thread_stack_size(4 * 1024 * 1024)
+            .build()
+            .expect("Failed to create Tokio runtime");
+
         ShadowFighterSwarm::write_default_config();
 
         let _debug_draw_overlay = DebugDrawOverlay::create(renderer)?;
@@ -530,10 +539,73 @@ impl GameWorld {
                 visible_instances: 0,
             }),
             locked_target: RefCell::new(None),
+            rt,
         })
     }
 
+    fn object_visibility_check(
+        &self,
+    ) -> tokio::task::JoinHandle<Vec<(GameObjectPhysicsData, nalgebra::Isometry3<f32>)>> {
+        let frustrum = Frustrum::from_flight_cam(&self.camera.borrow());
+
+        if self.debug_options().debug_camera {
+            use crate::color_palettes::StdColors;
+            let cam = self.camera.borrow();
+
+            if self.debug_options().draw_frustrum_planes {
+                self.debug_draw_overlay.borrow_mut().add_frustrum(
+                    &frustrum,
+                    &cam.position,
+                    self.debug_options().frustrum_planes,
+                );
+            } else {
+                self.debug_draw_overlay.borrow_mut().add_frustrum_pyramid(
+                    cam.fovy,
+                    cam.near,
+                    500f32,
+                    cam.aspect,
+                    cam.right_up_dir(),
+                    cam.position,
+                    StdColors::SEA_GREEN,
+                );
+            }
+        }
+
+        let inst_aabb = self
+            .resource_cache
+            .get_geometry_info(self.shadows_swarm.renderable)
+            .aabb;
+
+        let all_instances = self
+            .shadows_swarm
+            .instances()
+            .iter()
+            .filter_map(|i| {
+                self.physics_engine
+                    .borrow()
+                    .rigid_body_set
+                    .get(i.rigid_body_handle)
+                    .and_then(|rbody| {
+                        let inst_transform = *rbody.position();
+                        Some((*i, inst_transform))
+                    })
+            })
+            .collect::<Vec<_>>();
+
+	self.rt.spawn(async move {
+	    all_instances.iter().filter_map(|(i, mtx)| {
+        	if is_aabb_on_frustrum(&frustrum, &inst_aabb, &mtx) {
+		    Some((*i, *mtx))
+		} else {
+		    None
+		}
+            }).collect::<Vec<_>>()
+	})
+    }
+
     pub fn draw(&self, frame_context: &FrameRenderContext) {
+	//
+	// start a visibility check early
         self.debug_draw_overlay.borrow_mut().clear();
 
         let (projection, inverse_projection) = math::perspective(
@@ -601,6 +673,8 @@ impl GameWorld {
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {
+	let visible_objects_future = self.object_visibility_check();
+	
         if self.debug_options().debug_draw_world_axis {
             self.debug_draw_overlay
                 .borrow_mut()
@@ -750,7 +824,7 @@ impl GameWorld {
             });
         }
 
-        self.draw_instanced_objects(draw_context);
+        self.draw_instanced_objects(visible_objects_future, draw_context);
 
         self.projectiles_sys
             .borrow()
@@ -758,68 +832,12 @@ impl GameWorld {
         self.sparks_sys.borrow().render(draw_context);
     }
 
-    fn draw_instanced_objects(&self, draw_context: &DrawContext) {
-        let frustrum = Frustrum::from_flight_cam(&self.camera.borrow());
+    fn draw_instanced_objects(
+	&self,
+	vis_objects_future: tokio::task::JoinHandle<Vec<(GameObjectPhysicsData, nalgebra::Isometry3<f32>)>>,
+	draw_context: &DrawContext) {
 
-        if self.debug_options().debug_camera {
-            use crate::color_palettes::StdColors;
-            let cam = self.camera.borrow();
-
-            if self.debug_options().draw_frustrum_planes {
-                self.debug_draw_overlay.borrow_mut().add_frustrum(
-                    &frustrum,
-                    &cam.position,
-                    self.debug_options().frustrum_planes,
-                );
-            } else {
-                self.debug_draw_overlay.borrow_mut().add_frustrum_pyramid(
-                    cam.fovy,
-                    cam.near,
-                    500f32,
-                    cam.aspect,
-                    cam.right_up_dir(),
-                    cam.position,
-                    StdColors::SEA_GREEN,
-                );
-            }
-        }
-
-        let inst_aabb = self
-            .resource_cache
-            .get_geometry_info(self.shadows_swarm.renderable)
-            .aabb;
-
-        let visible_instances: SmallVec<[(RigidBodyHandle, nalgebra::Isometry3<f32>); 8]> = self
-            .shadows_swarm
-            .instances_physics_data
-            .iter()
-            .filter_map(|inst_data| {
-                self.physics_engine
-                    .borrow()
-                    .rigid_body_set
-                    .get(inst_data.rigid_body_handle)
-                    .map(|rbody| {
-                        let inst_transform = *rbody.position();
-                        let transformed_aabb = inst_transform.to_matrix() * inst_aabb;
-
-                        use crate::color_palettes::StdColors;
-
-                        use crate::frustrum::is_aabb_on_frustrum;
-
-                        if is_aabb_on_frustrum(&frustrum, &inst_aabb, &inst_transform) {
-                            Some((inst_data.rigid_body_handle, inst_transform))
-                        } else {
-                            self.debug_draw_overlay.borrow_mut().add_aabb(
-                                &transformed_aabb.min,
-                                &transformed_aabb.max,
-                                StdColors::HONEYDEW,
-                            );
-                            None
-                        }
-                    })
-            })
-            .flatten()
-            .collect();
+	let visible_instances = self.rt.block_on(vis_objects_future).expect("Failed to wait async visibility check task");
 
         *self.stats.borrow_mut() = Statistics {
             visible_instances: visible_instances.len() as u32,
