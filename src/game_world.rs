@@ -592,20 +592,23 @@ impl GameWorld {
             })
             .collect::<Vec<_>>();
 
-	self.rt.spawn(async move {
-	    all_instances.iter().filter_map(|(i, mtx)| {
-        	if is_aabb_on_frustrum(&frustrum, &inst_aabb, &mtx) {
-		    Some((*i, *mtx))
-		} else {
-		    None
-		}
-            }).collect::<Vec<_>>()
-	})
+        self.rt.spawn(async move {
+            all_instances
+                .iter()
+                .filter_map(|(i, mtx)| {
+                    if is_aabb_on_frustrum(&frustrum, &inst_aabb, &mtx) {
+                        Some((*i, *mtx))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
     }
 
     pub fn draw(&self, frame_context: &FrameRenderContext) {
-	//
-	// start a visibility check early
+        //
+        // start a visibility check early
         self.debug_draw_overlay.borrow_mut().clear();
 
         let (projection, inverse_projection) = math::perspective(
@@ -673,8 +676,8 @@ impl GameWorld {
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {
-	let visible_objects_future = self.object_visibility_check();
-	
+        let visible_objects_future = self.object_visibility_check();
+
         if self.debug_options().debug_draw_world_axis {
             self.debug_draw_overlay
                 .borrow_mut()
@@ -833,11 +836,16 @@ impl GameWorld {
     }
 
     fn draw_instanced_objects(
-	&self,
-	vis_objects_future: tokio::task::JoinHandle<Vec<(GameObjectPhysicsData, nalgebra::Isometry3<f32>)>>,
-	draw_context: &DrawContext) {
-
-	let visible_instances = self.rt.block_on(vis_objects_future).expect("Failed to wait async visibility check task");
+        &self,
+        vis_objects_future: tokio::task::JoinHandle<
+            Vec<(GameObjectPhysicsData, nalgebra::Isometry3<f32>)>,
+        >,
+        draw_context: &DrawContext,
+    ) {
+        let visible_instances = self
+            .rt
+            .block_on(vis_objects_future)
+            .expect("Failed to wait async visibility check task");
 
         *self.stats.borrow_mut() = Statistics {
             visible_instances: visible_instances.len() as u32,
