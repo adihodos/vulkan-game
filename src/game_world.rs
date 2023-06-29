@@ -275,11 +275,11 @@ impl GameWorld {
     const PHYSICS_TIME_STEP: f64 = 1f64 / 240f64;
     const MAX_HISTOGRAM_VALUES: usize = 32;
 
-    fn draw_options(&self) -> std::cell::Ref<DebugOptions> {
+    fn debug_options(&self) -> std::cell::Ref<DebugOptions> {
         self.draw_opts.borrow()
     }
 
-    fn draw_options_mut(&self) -> std::cell::RefMut<DebugOptions> {
+    fn debug_options_mut(&self) -> std::cell::RefMut<DebugOptions> {
         self.draw_opts.borrow_mut()
     }
 
@@ -548,7 +548,7 @@ impl GameWorld {
         self.camera.borrow_mut().aspect =
             frame_context.framebuffer_size.x as f32 / frame_context.framebuffer_size.y as f32;
 
-        if self.draw_options().debug_camera {
+        if self.debug_options().debug_camera {
             self.dbg_camera.borrow_mut().set_lens(
                 75f32,
                 frame_context.framebuffer_size.x as f32 / frame_context.framebuffer_size.y as f32,
@@ -560,7 +560,7 @@ impl GameWorld {
         let (view_matrix, cam_position) = {
             let flight_cam = self.camera.borrow();
 
-            if self.draw_options().debug_camera {
+            if self.debug_options().debug_camera {
                 (
                     self.dbg_camera.borrow().view_matrix,
                     self.dbg_camera.borrow().position,
@@ -589,7 +589,7 @@ impl GameWorld {
         self.draw_locked_target_indicator(&draw_context);
         self.sprite_batch.borrow_mut().render(&draw_context);
 
-        if self.draw_options().debug_draw_physics {
+        if self.debug_options().debug_draw_physics {
             self.physics_engine
                 .borrow_mut()
                 .debug_draw(&mut self.debug_draw_overlay.borrow_mut());
@@ -601,7 +601,7 @@ impl GameWorld {
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {
-        if self.draw_options().debug_draw_world_axis {
+        if self.debug_options().debug_draw_world_axis {
             self.debug_draw_overlay
                 .borrow_mut()
                 .world_space_coord_sys(self.draw_opts.borrow().world_axis_length);
@@ -718,7 +718,7 @@ impl GameWorld {
                     0,
                 );
 
-                if self.draw_options().debug_draw_mesh {
+                if self.debug_options().debug_draw_mesh {
                     // let aabb = self.render_state.borrow()[game_object.handle.0 as usize]
                     //     .render_pos
                     //     .to_homogeneous()
@@ -731,7 +731,7 @@ impl GameWorld {
                     // );
                 }
 
-                if self.draw_options().debug_draw_nodes_bounding {
+                if self.debug_options().debug_draw_nodes_bounding {
                     // let object_transform = self.render_state.borrow()
                     //     [game_object.handle.0 as usize]
                     //     .render_pos
@@ -761,15 +761,15 @@ impl GameWorld {
     fn draw_instanced_objects(&self, draw_context: &DrawContext) {
         let frustrum = Frustrum::from_flight_cam(&self.camera.borrow());
 
-        if self.draw_options().debug_camera {
+        if self.debug_options().debug_camera {
             use crate::color_palettes::StdColors;
             let cam = self.camera.borrow();
 
-            if self.draw_options().draw_frustrum_planes {
+            if self.debug_options().draw_frustrum_planes {
                 self.debug_draw_overlay.borrow_mut().add_frustrum(
                     &frustrum,
                     &cam.position,
-                    self.draw_options().frustrum_planes,
+                    self.debug_options().frustrum_planes,
                 );
             } else {
                 self.debug_draw_overlay.borrow_mut().add_frustrum_pyramid(
@@ -956,7 +956,7 @@ impl GameWorld {
 
                 ui.separator();
                 if ui.collapsing_header("Debug draw:", imgui::TreeNodeFlags::FRAMED) {
-                    let mut dbg_draw = self.draw_options_mut();
+                    let mut dbg_draw = self.debug_options_mut();
                     ui.checkbox("World axis", &mut dbg_draw.debug_draw_world_axis);
                     ui.same_line();
                     ui.slider(
@@ -999,22 +999,30 @@ impl GameWorld {
 
                 ui.separator();
                 if ui.collapsing_header("Camera", imgui::TreeNodeFlags::FRAMED) {
-                    ui.checkbox("Activate debug camera", &mut self.draw_options_mut().debug_camera);
-		    ui.checkbox("Draw frustrum as planes/pyramid", &mut self.draw_options_mut().draw_frustrum_planes);
+                    ui.checkbox(
+                        "Activate debug camera",
+                        &mut self.debug_options_mut().debug_camera,
+                    );
+                    ui.checkbox(
+                        "Draw frustrum as planes/pyramid",
+                        &mut self.debug_options_mut().draw_frustrum_planes,
+                    );
                     use enumflags2::BitFlags;
 
                     BitFlags::<FrustrumPlane>::all().iter().for_each(|f| {
-                        let mut value = self.draw_options().frustrum_planes.intersects(f);
+                        let mut value = self.debug_options().frustrum_planes.intersects(f);
                         if ui.checkbox(format!("{:?}", f), &mut value) {
-                            self.draw_options_mut().frustrum_planes.toggle(f);
+                            self.debug_options_mut().frustrum_planes.toggle(f);
                         }
                     });
 
-                    let (right, up, dir) = self.camera.borrow().right_up_dir();
-                    ui.text(format!("Position: {}", self.camera.borrow().position));
-                    ui.text(format!("X: {}", right));
-                    ui.text(format!("Y: {}", up));
-                    ui.text(format!("Z: {}", dir));
+                    if ui.collapsing_header("Camera frame", imgui::TreeNodeFlags::FRAMED) {
+                        let (right, up, dir) = self.camera.borrow().right_up_dir();
+                        ui.text(format!("Position: {}", self.camera.borrow().position));
+                        ui.text(format!("X: {}", right));
+                        ui.text(format!("Y: {}", up));
+                        ui.text(format!("Z: {}", dir));
+                    }
                 }
 
                 ui.separator();
@@ -1120,7 +1128,7 @@ impl GameWorld {
                 .map(|starfury_phys_obj| self.camera.borrow_mut().update(starfury_phys_obj));
         });
 
-        if self.draw_options().debug_camera {
+        if self.debug_options().debug_camera {
             self.dbg_camera.borrow_mut().update_view_matrix();
         }
     }
@@ -1211,7 +1219,7 @@ impl GameWorld {
                 });
         }
 
-        if self.draw_options().debug_camera {
+        if self.debug_options().debug_camera {
             Self::dbg_cam_gamepad_input(&mut self.dbg_camera.borrow_mut(), &input_state.gamepad);
         } else {
             self.starfury.gamepad_input(input_state);
