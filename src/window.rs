@@ -13,7 +13,7 @@ use winit::{
 
 use crate::{
     app_config::AppConfig, draw_context::FrameRenderContext, game_world::GameWorld,
-    test_world::TestWorld, ui_backend::UiBackend, vk_renderer::VulkanRenderer,
+    ui_backend::UiBackend, vk_renderer::VulkanRenderer,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -65,13 +65,7 @@ impl MainWindow {
             panic!("Failed to start the logger {}", e);
         });
 
-        let _app_config = crate::app_config::AppConfig::load();
-
-        log::info!("uraaa this be info!");
-        log::warn!("urraa! this be warn cyka!");
-        log::error!("urrra! this be error pierdole!");
-        log::trace!("urrraa ! this be trace blyat!");
-        log::debug!("urraa! this be debug, kurwa jebane !");
+        let app_config = crate::app_config::AppConfig::load();
 
         let event_loop = event_loop::EventLoop::new();
         let pmon = event_loop
@@ -83,13 +77,13 @@ impl MainWindow {
 
         let window = winit::window::Window::new(&event_loop).expect("Failed to create window");
 
-        if _app_config.engine.full_screen {
+        if app_config.engine.full_screen {
             window.set_decorations(false);
         }
         window.set_visible(true);
         window.set_inner_size(vidmode.size());
 
-        if _app_config.engine.full_screen {
+        if app_config.engine.full_screen {
             window.set_fullscreen(Some(Fullscreen::Exclusive(vidmode)));
         } else {
             let wnd_pos = pmon.position();
@@ -121,9 +115,6 @@ impl MainWindow {
                     control_flow.set_exit();
                 }
 
-                // Event::WindowEvent { .. } => {
-                //     game_main.handle_event(&window, &event);
-                // }
                 Event::MainEventsCleared => {
                     while let Some(event) = gilrs.next_event() {
                         if gamepad_input_state.is_none() {
@@ -265,7 +256,6 @@ impl MainWindow {
 struct GameMain {
     ui: UiBackend,
     game_world: RefCell<GameWorld>,
-    test_world: RefCell<TestWorld>,
     timestamp: Cell<Instant>,
     app_config: AppConfig,
     renderer: VulkanRenderer,
@@ -301,9 +291,6 @@ impl GameMain {
         GameMain {
             ui,
             game_world: RefCell::new(game_world),
-            test_world: RefCell::new(
-                TestWorld::new(&renderer, &app_config).expect("Failed to create test world"),
-            ),
             timestamp: Cell::new(Instant::now()),
             app_config,
             renderer,
@@ -324,7 +311,6 @@ impl GameMain {
         }
 
         // self.game_world.borrow().input_event(event);
-        // self.test_world.borrow().input_event(event);
         self.ui.handle_event(window, event);
     }
 
@@ -335,7 +321,6 @@ impl GameMain {
     fn do_ui(&mut self, window: &winit::window::Window) {
         let mut ui = self.ui.new_frame(window);
         self.game_world.borrow_mut().ui(&mut ui);
-        // self.test_world.borrow().ui(&mut ui);
     }
 
     fn draw_frame(&mut self, window: &winit::window::Window) {
@@ -351,11 +336,8 @@ impl GameMain {
         };
 
         self.game_world.borrow().draw(&frame_context);
-        // self.test_world.borrow().draw(&frame_context);
-
         self.ui.apply_cursor_before_render(window);
         self.ui.draw_frame(&frame_context);
-
         self.renderer.end_frame();
     }
 
@@ -366,7 +348,6 @@ impl GameMain {
         let frame_time = elapsed.as_secs_f64().clamp(0f64, 0.25f64);
 
         self.game_world.borrow().update(frame_time);
-        // self.test_world.borrow().update(frame_time);
         self.do_ui(window);
         self.draw_frame(window);
     }

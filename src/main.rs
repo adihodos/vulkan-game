@@ -22,7 +22,6 @@ mod ui_backend;
 mod vk_renderer;
 mod window;
 mod plane;
-mod test_world;
 mod fps_camera;
 mod frustrum;
 

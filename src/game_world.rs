@@ -295,7 +295,6 @@ impl GameWorld {
 
         ShadowFighterSwarm::write_default_config();
 
-        let _debug_draw_overlay = DebugDrawOverlay::create(renderer)?;
         let skybox = Skybox::create(renderer, &app_cfg.scene, &app_cfg.engine)?;
 
         let resource_cache = ResourceHolder::create(renderer, app_cfg)?;
@@ -1189,19 +1188,19 @@ impl GameWorld {
             .remove_rigid_body(proj_collider_data.rigid_body());
     }
 
-    pub fn input_event(&self, event: &winit::event::WindowEvent) {
-        use winit::event::WindowEvent;
-        match event {
-            WindowEvent::KeyboardInput {
-                device_id: _,
-                input,
-                is_synthetic: _,
-            } => {
-                self.starfury.input_event(input);
-            }
-            _ => {}
-        }
-    }
+    // pub fn input_event(&self, event: &winit::event::WindowEvent) {
+    //     use winit::event::WindowEvent;
+    //     match event {
+    //         WindowEvent::KeyboardInput {
+    //             device_id: _,
+    //             input,
+    //             is_synthetic: _,
+    //         } => {
+    //             self.starfury.input_event(input);
+    //         }
+    //         _ => {}
+    //     }
+    // }
 
     pub fn gamepad_input(&self, input_state: &InputState) {
         if input_state.gamepad.btn_lock_target {

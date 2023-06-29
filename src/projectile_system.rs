@@ -285,7 +285,7 @@ impl ProjectileSystem {
     }
 
     pub fn render(&self, draw_context: &DrawContext, phys_engine: &PhysicsEngine) {
-        if self.projectiles.len() == 0 {
+        if self.projectiles.is_empty() {
             return;
         }
 
