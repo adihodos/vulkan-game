@@ -255,7 +255,7 @@ impl MainWindow {
 
 struct GameMain {
     ui: UiBackend,
-    game_world: RefCell<GameWorld>,
+    game_world: GameWorld,
     timestamp: Cell<Instant>,
     app_config: AppConfig,
     renderer: VulkanRenderer,
@@ -290,7 +290,7 @@ impl GameMain {
 
         GameMain {
             ui,
-            game_world: RefCell::new(game_world),
+            game_world,
             timestamp: Cell::new(Instant::now()),
             app_config,
             renderer,
@@ -315,12 +315,12 @@ impl GameMain {
     }
 
     fn gamepad_input(&mut self, input_state: &InputState) {
-        self.game_world.borrow().gamepad_input(input_state);
+        self.game_world.gamepad_input(input_state);
     }
 
     fn do_ui(&mut self, window: &winit::window::Window) {
         let mut ui = self.ui.new_frame(window);
-        self.game_world.borrow_mut().ui(&mut ui);
+        self.game_world.ui(&mut ui);
     }
 
     fn draw_frame(&mut self, window: &winit::window::Window) {
@@ -335,7 +335,7 @@ impl GameMain {
             framebuffer_size: self.framebuffer_size,
         };
 
-        self.game_world.borrow().draw(&frame_context);
+        self.game_world.draw(&frame_context);
         self.ui.apply_cursor_before_render(window);
         self.ui.draw_frame(&frame_context);
         self.renderer.end_frame();
@@ -347,7 +347,7 @@ impl GameMain {
 
         let frame_time = elapsed.as_secs_f64().clamp(0f64, 0.25f64);
 
-        self.game_world.borrow().update(frame_time);
+        self.game_world.update(frame_time);
         self.do_ui(window);
         self.draw_frame(window);
     }

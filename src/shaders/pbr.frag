@@ -140,8 +140,8 @@ void main() {
     float ao        = 1.0;
 
     vec3 N = 
-	// normalize(fs_in.normal);
-	getNormalFromMap(texture(s_normal_map, vec3(fs_in.uv, pbr.normal_id)).rgb);
+	normalize(fs_in.normal);
+	//getNormalFromMap(texture(s_normal_map, vec3(fs_in.uv, pbr.normal_id)).rgb);
 
     vec3 V = normalize(lighting_data.eye_pos - fs_in.pos);
     vec3 R = reflect(-V, N);

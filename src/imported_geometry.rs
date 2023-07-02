@@ -22,6 +22,9 @@ pub struct GeometryNode {
     pub name: String,
     pub transform: Mat4,
     pub aabb: AABB3,
+    pub vertex_offset: u32,
+    pub index_offset: u32,
+    pub index_count: u32,
 }
 
 impl std::default::Default for GeometryNode {
@@ -31,6 +34,9 @@ impl std::default::Default for GeometryNode {
             name: String::new(),
             transform: glm::identity::<f32, 4>(),
             aabb: AABB3::identity(),
+            vertex_offset: 0,
+            index_offset: 0,
+            index_count: 0,
         }
     }
 }
@@ -163,11 +169,16 @@ impl ImportedGeometry {
     fn process_materials(&mut self, gltf_doc: &gltf::Document) {
         let materials = gltf_doc
             .materials()
-            .map(|mtl| {
+            .filter_map(|mtl| {
                 let name = mtl
                     .name()
                     .expect("Unnamed materials are not supported!")
                     .to_string();
+
+                if mtl.pbr_metallic_roughness().base_color_texture().is_none() {
+                    return None;
+                }
+
                 let base_color_src = mtl
                     .pbr_metallic_roughness()
                     .base_color_texture()
@@ -191,7 +202,7 @@ impl ImportedGeometry {
                     .source()
                     .index() as u32;
 
-                MaterialDef {
+                Some(MaterialDef {
                     name,
                     base_color_src,
                     metallic_src: metalic_roughness_src,
@@ -201,9 +212,13 @@ impl ImportedGeometry {
                     ),
                     metallic_factor: mtl.pbr_metallic_roughness().metallic_factor(),
                     roughness_factor: mtl.pbr_metallic_roughness().roughness_factor(),
-                }
+                })
             })
             .collect::<Vec<_>>();
+
+        if materials.is_empty() {
+            return;
+        }
 
         let mut base_color_images = materials
             .iter()
@@ -317,6 +332,9 @@ impl ImportedGeometry {
             name: node.name().unwrap_or("unknown").into(),
             transform: node_matrix,
             aabb: AABB3::identity(),
+            vertex_offset: self.vertices.len() as u32,
+            index_offset: self.indices.len() as u32,
+            index_count: 0,
         });
 
         node.children()
@@ -333,10 +351,7 @@ impl ImportedGeometry {
             }
 
             self.nodes[node_id as usize].transform = matrix;
-
-            let normals_matrix =
-		//matrix;
-            glm::transpose(&glm::inverse(&matrix));
+            let normals_matrix = glm::transpose(&glm::inverse(&matrix));
 
             for primitive in mesh.primitives() {
                 let _first_index = self.indices.len() as u32;
@@ -347,14 +362,10 @@ impl ImportedGeometry {
                     .name()
                     .expect("Materials without names are not supported chief ...");
 
-                let material_index =
-                    *self
-                        .gltf_mat_2_pbr_mat_mapping
-                        .get(mtl_name)
-                        .expect(&format!(
-                            "Fatal error: material {} not found in PBR materials buffer.",
-                            mtl_name
-                        ));
+                let material_index = *self
+                    .gltf_mat_2_pbr_mat_mapping
+                    .get(mtl_name)
+                    .unwrap_or(&std::u32::MAX);
 
                 let reader = primitive.reader(|buf| Some(&self.buffers[buf.index()]));
 
@@ -381,10 +392,9 @@ impl ImportedGeometry {
 
                 reader.read_normals().map(|normals| {
                     for (idx, normal) in normals.enumerate() {
-                        let n = Vec3::from_column_slice(&normal);
-                        let n = glm::normalize(
-                            &(normals_matrix * Vec4::new(n.x, n.y, n.z, 0f32)).xyz(),
-                        );
+                        let n = (normals_matrix *  glm::vec4(normal[0], normal[1], normal[2], 0f32)).xyz();
+                        let n = glm::normalize(&n);
+
                         self.vertices[vertex_start + idx].normal = n;
                     }
                 });
@@ -408,6 +418,7 @@ impl ImportedGeometry {
                     }
                 });
 
+                let indices = self.indices.len();
                 self.indices.extend(
                     reader
                         .read_indices()
@@ -419,6 +430,7 @@ impl ImportedGeometry {
                         .into_u32()
                         .map(|idx| idx + vertex_start as u32),
                 );
+                self.nodes[node_id as usize].index_count += (self.indices.len() - indices) as u32;
             }
         }
     }
@@ -494,5 +506,9 @@ impl ImportedGeometry {
             .fold(AABB3::identity(), |aabb, current_node| {
                 crate::math::aabb_merge(&aabb, &current_node.aabb)
             });
+    }
+
+    pub fn has_materials(&self) -> bool {
+        !self.pbr_materials.is_empty()
     }
 }

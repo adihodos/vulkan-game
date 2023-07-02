@@ -46,8 +46,8 @@ impl ShadowFighterSwarm {
         )
         .expect("Invalid shadow swam config file.");
 
-        let geometry_handle = resource_cache.get_geometry_handle(&"shadow.fighter");
-        let geometry = resource_cache.get_geometry_info(geometry_handle);
+        let geometry_handle = resource_cache.get_pbr_geometry_handle(&"shadow.fighter");
+        let geometry = resource_cache.get_pbr_geometry_info(geometry_handle);
 
         let aabb = geometry.aabb;
 

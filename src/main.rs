@@ -24,6 +24,7 @@ mod window;
 mod plane;
 mod fps_camera;
 mod frustrum;
+mod missile_sys;
 
 pub fn main() {
     self::window::MainWindow::run();

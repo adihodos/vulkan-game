@@ -2,7 +2,7 @@ use ash::vk::{CommandBuffer, Rect2D, Viewport};
 
 use crate::{
     camera::Camera, debug_draw_overlay::DebugDrawOverlay, game_world::QueuedCommand,
-    physics_engine::PhysicsEngine, vk_renderer::VulkanRenderer,
+    physics_engine::PhysicsEngine, vk_renderer::VulkanRenderer, resource_cache::ResourceHolder,
 };
 
 pub struct FrameRenderContext<'a> {
@@ -16,6 +16,7 @@ pub struct FrameRenderContext<'a> {
 
 pub struct DrawContext<'a> {
     pub renderer: &'a VulkanRenderer,
+    pub rcache: &'a ResourceHolder,
     pub cmd_buff: CommandBuffer,
     pub frame_id: u32,
     pub viewport: Viewport,

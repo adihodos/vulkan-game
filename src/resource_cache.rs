@@ -35,8 +35,20 @@ pub struct GeometryRenderInfo {
     pub aabb: AABB3,
 }
 
+impl GeometryRenderInfo {
+    pub fn get_node_by_name(&self, id: &str) -> &GeometryNode {
+        self.nodes
+            .iter()
+            .find(|n| n.name == id)
+            .expect(&format!("Node {id} not found"))
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
 pub struct PbrRenderableHandle(u32);
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
+pub struct NonPbrRenderableHandle(u32);
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -57,6 +69,20 @@ pub struct PbrRenderable {
     pub descriptor_sets: Vec<DescriptorSet>,
 }
 
+pub struct NonPbrRenderable {
+    pub geometry: GeometryRenderInfo,
+    // pub descriptor_sets: Vec<DescriptorSet>,
+}
+
+struct NonPbrResources {
+    vertex_buffer: UniqueBuffer,
+    index_buffer: UniqueBuffer,
+    pipeline_single: UniqueGraphicsPipeline,
+    pipeline_instanced: UniqueGraphicsPipeline,
+    handles: HashMap<String, NonPbrRenderableHandle>,
+    geometries: Vec<NonPbrRenderable>,
+}
+
 pub struct ResourceHolder {
     vertex_buffer: UniqueBuffer,
     index_buffer: UniqueBuffer,
@@ -66,18 +92,27 @@ pub struct ResourceHolder {
     pipeline_instanced: UniqueGraphicsPipeline,
     handles: HashMap<String, PbrRenderableHandle>,
     geometries: Vec<PbrRenderable>,
+    non_pbr: NonPbrResources,
 }
 
 impl ResourceHolder {
+    pub fn non_pbr_pipeline_single(&self) -> &UniqueGraphicsPipeline {
+        &self.non_pbr.pipeline_single
+    }
+
+    pub fn non_pbr_pipeline_instanced(&self) -> &UniqueGraphicsPipeline {
+        &self.non_pbr.pipeline_instanced
+    }
+
     pub fn pbr_pipeline(&self) -> &UniqueGraphicsPipeline {
         &self.pipeline
     }
 
-    pub fn get_geometry_handle(&self, name: &str) -> PbrRenderableHandle {
+    pub fn get_pbr_geometry_handle(&self, name: &str) -> PbrRenderableHandle {
         *self.handles.get(name).unwrap()
     }
 
-    pub fn get_geometry_info(&self, handle: PbrRenderableHandle) -> &GeometryRenderInfo {
+    pub fn get_pbr_geometry_info(&self, handle: PbrRenderableHandle) -> &GeometryRenderInfo {
         &self.geometries[handle.0 as usize].geometry
     }
 
@@ -85,12 +120,116 @@ impl ResourceHolder {
         &self.geometries[handle.0 as usize]
     }
 
-    pub fn vertex_buffer(&self) -> ash::vk::Buffer {
+    pub fn vertex_buffer_pbr(&self) -> ash::vk::Buffer {
         self.vertex_buffer.buffer
     }
 
-    pub fn index_buffer(&self) -> ash::vk::Buffer {
+    pub fn index_buffer_pbr(&self) -> ash::vk::Buffer {
         self.index_buffer.buffer
+    }
+
+    pub fn get_non_pbr_geometry_handle(&self, name: &str) -> NonPbrRenderableHandle {
+        *self
+            .non_pbr
+            .handles
+            .get(name)
+            .expect(&format!("Non-pbr geometry {name} not found"))
+    }
+
+    pub fn get_non_pbr_geometry_info(&self, handle: NonPbrRenderableHandle) -> &GeometryRenderInfo {
+        &self.non_pbr.geometries[handle.0 as usize].geometry
+    }
+
+    pub fn get_non_pbr_renderable(&self, handle: NonPbrRenderableHandle) -> &NonPbrRenderable {
+        &self.non_pbr.geometries[handle.0 as usize]
+    }
+
+    pub fn vertex_buffer_non_pbr(&self) -> ash::vk::Buffer {
+        self.non_pbr.vertex_buffer.buffer
+    }
+
+    pub fn index_buffer_non_pbr(&self) -> ash::vk::Buffer {
+        self.non_pbr.index_buffer.buffer
+    }
+
+    fn create_non_pbr_resources(
+        renderer: &VulkanRenderer,
+        app_config: &AppConfig,
+        resources: &[(&String, ImportedGeometry)],
+    ) -> Option<NonPbrResources> {
+        let mut handles = HashMap::<String, NonPbrRenderableHandle>::new();
+        let mut geometry = Vec::<GeometryRenderInfo>::new();
+        let (mut vertex_offset, mut index_offset) = (0u32, 0u32);
+
+        resources
+            .iter()
+            .filter(|(_, geom)| !geom.has_materials())
+            .for_each(|(tag, geom)| {
+                log::info!("{} -> {}", tag, geom.aabb.extents());
+
+                let geometry_handle = NonPbrRenderableHandle(geometry.len() as u32);
+
+                geometry.push(GeometryRenderInfo {
+                    vertex_offset,
+                    index_offset,
+                    index_count: geom.index_count(),
+                    pbr_data_offset: 0,
+                    pbr_data_range: 0,
+                    nodes: geom.nodes().to_vec(),
+                    aabb: geom.aabb,
+                });
+
+                vertex_offset += geom.vertex_count();
+                index_offset += geom.index_count();
+
+                handles.insert((*tag).clone(), geometry_handle);
+            });
+
+        let _vertex_bytes = vertex_offset as DeviceSize * size_of::<GeometryVertex>() as DeviceSize;
+        let vertex_data: SmallVec<[&[GeometryVertex]; 8]> = resources
+            .iter()
+            .filter(|(_, geom)| !geom.has_materials())
+            .map(|(_, geom)| geom.vertices())
+            .collect();
+
+        let vertex_buffer = UniqueBuffer::gpu_only_buffer(
+            renderer,
+            BufferUsageFlags::VERTEX_BUFFER | BufferUsageFlags::TRANSFER_DST,
+            MemoryPropertyFlags::DEVICE_LOCAL,
+            &vertex_data,
+            None,
+        )?;
+
+        let _index_bytes = index_offset as DeviceSize * size_of::<u32>() as DeviceSize;
+        let indices_data: SmallVec<[&[u32]; 8]> = resources
+            .iter()
+            .filter(|(_, geom)| !geom.has_materials())
+            .map(|(_, geom)| geom.indices())
+            .collect();
+
+        let index_buffer = UniqueBuffer::gpu_only_buffer(
+            renderer,
+            BufferUsageFlags::INDEX_BUFFER | BufferUsageFlags::TRANSFER_DST,
+            MemoryPropertyFlags::DEVICE_LOCAL,
+            &indices_data,
+            None,
+        )?;
+
+        let geometries = geometry
+            .into_iter()
+            .map(|geom| NonPbrRenderable { geometry: geom })
+            .collect::<Vec<_>>();
+
+        Some(NonPbrResources {
+            vertex_buffer,
+            index_buffer,
+            handles,
+            geometries,
+            pipeline_single: Self::create_non_pbr_rendering_pipeline(renderer, app_config)?,
+            pipeline_instanced: Self::create_non_pbr_instanced_rendering_pipeline(
+                renderer, app_config,
+            )?,
+        })
     }
 
     pub fn create(renderer: &VulkanRenderer, app_config: &AppConfig) -> Option<ResourceHolder> {
@@ -128,44 +267,48 @@ impl ResourceHolder {
             renderer.device_properties().limits.non_coherent_atom_size,
         );
 
-        imported_geometries.iter().for_each(|(tag, geom)| {
-            log::info!("{} -> {}", tag, geom.aabb.extents());
-            let texture_cpu2gpu_copy_work_package = renderer
-                .create_work_package()
-                .expect("Failed to create work package");
+        imported_geometries
+            .iter()
+            .filter(|(_, geom)| geom.has_materials())
+            .for_each(|(tag, geom)| {
+                log::info!("{} -> {}", tag, geom.aabb.extents());
 
-            let pbr_mtl_tex = PbrMaterialTextureCollection::create(
-                renderer,
-                geom.pbr_base_color_images(),
-                geom.pbr_metallic_roughness_images(),
-                geom.pbr_normal_images(),
-                &texture_cpu2gpu_copy_work_package,
-            )
-            .expect("Failed to create pbr materials");
+                let texture_cpu2gpu_copy_work_package = renderer
+                    .create_work_package()
+                    .expect("Failed to create work package");
 
-            renderer.push_work_package(texture_cpu2gpu_copy_work_package);
+                let pbr_mtl_tex = PbrMaterialTextureCollection::create(
+                    renderer,
+                    geom.pbr_base_color_images(),
+                    geom.pbr_metallic_roughness_images(),
+                    geom.pbr_normal_images(),
+                    &texture_cpu2gpu_copy_work_package,
+                )
+                .expect("Failed to create pbr materials");
 
-            let geometry_handle = PbrRenderableHandle(geometry.len() as u32);
-            let pbr_data_offset =
-                (size_of::<PbrMaterial>() as DeviceSize * (pbr_data.len() as DeviceSize)) as u32;
+                renderer.push_work_package(texture_cpu2gpu_copy_work_package);
 
-            pbr_textures.push(pbr_mtl_tex);
-            geometry.push(GeometryRenderInfo {
-                vertex_offset,
-                index_offset,
-                index_count: geom.index_count(),
-                pbr_data_offset,
-                pbr_data_range: (geom.pbr_materials().len() * size_of::<PbrMaterial>()) as u32,
-                nodes: geom.nodes().to_vec(),
-                aabb: geom.aabb,
+                let geometry_handle = PbrRenderableHandle(geometry.len() as u32);
+                let pbr_data_offset = (size_of::<PbrMaterial>() as DeviceSize
+                    * (pbr_data.len() as DeviceSize)) as u32;
+
+                pbr_textures.push(pbr_mtl_tex);
+                geometry.push(GeometryRenderInfo {
+                    vertex_offset,
+                    index_offset,
+                    index_count: geom.index_count(),
+                    pbr_data_offset,
+                    pbr_data_range: (geom.pbr_materials().len() * size_of::<PbrMaterial>()) as u32,
+                    nodes: geom.nodes().to_vec(),
+                    aabb: geom.aabb,
+                });
+                pbr_data.extend(geom.pbr_materials().iter());
+
+                vertex_offset += geom.vertex_count();
+                index_offset += geom.index_count();
+
+                handles.insert((*tag).clone(), geometry_handle);
             });
-            pbr_data.extend(geom.pbr_materials().iter());
-
-            vertex_offset += geom.vertex_count();
-            index_offset += geom.index_count();
-
-            handles.insert((*tag).clone(), geometry_handle);
-        });
 
         let _vertex_bytes = vertex_offset as DeviceSize * size_of::<GeometryVertex>() as DeviceSize;
         let vertex_data: SmallVec<[&[GeometryVertex]; 8]> = imported_geometries
@@ -318,6 +461,7 @@ impl ResourceHolder {
             pipeline_instanced: Self::create_instanced_rendering_pipeline(renderer, app_config)?,
             handles,
             geometries,
+            non_pbr: Self::create_non_pbr_resources(renderer, app_config, &imported_geometries)?,
         })
     }
 
@@ -657,5 +801,223 @@ impl ResourceHolder {
 
     pub fn pbr_pipeline_instanced(&self) -> &UniqueGraphicsPipeline {
         &self.pipeline_instanced
+    }
+
+    fn create_non_pbr_rendering_pipeline(
+        renderer: &VulkanRenderer,
+        app_config: &AppConfig,
+    ) -> Option<UniqueGraphicsPipeline> {
+        GraphicsPipelineBuilder::new()
+            .add_vertex_input_attribute_descriptions(&[
+                VertexInputAttributeDescription {
+                    location: 0,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, pos) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 1,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, normal) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 2,
+                    binding: 0,
+                    format: Format::R32G32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, uv) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 3,
+                    binding: 0,
+                    format: Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, color) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 4,
+                    binding: 0,
+                    format: Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, tangent) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 5,
+                    binding: 0,
+                    format: Format::R32_UINT,
+                    offset: offset_of!(GeometryVertex, pbr_buf_id) as u32,
+                },
+            ])
+            .add_vertex_input_attribute_binding(
+                VertexInputBindingDescription::builder()
+                    .binding(0)
+                    .stride(size_of::<GeometryVertex>() as u32)
+                    .input_rate(VertexInputRate::VERTEX)
+                    .build(),
+            )
+            .shader_stages(&[
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::VERTEX,
+                    source: ShaderModuleSource::File(
+                        &app_config.engine.shader_path("pbr.vert.spv"),
+                    ),
+                    entry_point: "main",
+                },
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::FRAGMENT,
+                    source: ShaderModuleSource::File(
+                        &app_config.engine.shader_path("nonpbr.frag.spv"),
+                    ),
+                    entry_point: "main",
+                },
+            ])
+            .set_raster_state(
+                PipelineRasterizationStateCreateInfo::builder()
+                    .cull_mode(CullModeFlags::BACK)
+                    .front_face(FrontFace::CLOCKWISE)
+                    .line_width(1f32)
+                    .polygon_mode(PolygonMode::FILL)
+                    .build(),
+            )
+            .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
+            .build(
+                renderer.graphics_device(),
+                renderer.pipeline_cache(),
+                GraphicsPipelineLayoutBuilder::new()
+                    //
+                    // set 0
+                    .set(
+                        0,
+                        &[DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::VERTEX)
+                            .build()],
+                    )
+                    //
+                    //set 1
+                    .set(
+                        1,
+                        &[*DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)],
+                    )
+                    .build(renderer.graphics_device())?,
+                renderer.renderpass(),
+                0,
+            )
+    }
+
+    fn create_non_pbr_instanced_rendering_pipeline(
+        renderer: &VulkanRenderer,
+        app_config: &AppConfig,
+    ) -> Option<UniqueGraphicsPipeline> {
+        GraphicsPipelineBuilder::new()
+            .add_vertex_input_attribute_descriptions(&[
+                VertexInputAttributeDescription {
+                    location: 0,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, pos) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 1,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, normal) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 2,
+                    binding: 0,
+                    format: Format::R32G32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, uv) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 3,
+                    binding: 0,
+                    format: Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, color) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 4,
+                    binding: 0,
+                    format: Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, tangent) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 5,
+                    binding: 0,
+                    format: Format::R32_UINT,
+                    offset: offset_of!(GeometryVertex, pbr_buf_id) as u32,
+                },
+            ])
+            .add_vertex_input_attribute_binding(
+                VertexInputBindingDescription::builder()
+                    .binding(0)
+                    .stride(size_of::<GeometryVertex>() as u32)
+                    .input_rate(VertexInputRate::VERTEX)
+                    .build(),
+            )
+            .shader_stages(&[
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::VERTEX,
+                    source: ShaderModuleSource::File(
+                        &app_config.engine.shader_path("pbr.instanced.vert.spv"),
+                    ),
+                    entry_point: "main",
+                },
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::FRAGMENT,
+                    source: ShaderModuleSource::File(
+                        &app_config.engine.shader_path("nonpbr.frag.spv"),
+                    ),
+                    entry_point: "main",
+                },
+            ])
+            .set_raster_state(
+                PipelineRasterizationStateCreateInfo::builder()
+                    .cull_mode(CullModeFlags::BACK)
+                    .front_face(FrontFace::CLOCKWISE)
+                    .line_width(1f32)
+                    .polygon_mode(PolygonMode::FILL)
+                    .build(),
+            )
+            .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
+            .build(
+                renderer.graphics_device(),
+                renderer.pipeline_cache(),
+                GraphicsPipelineLayoutBuilder::new()
+                    //
+                    // set 0
+                    .set(
+                        0,
+                        &[
+                            *DescriptorSetLayoutBinding::builder()
+                                .binding(0)
+                                .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::VERTEX),
+                            *DescriptorSetLayoutBinding::builder()
+                                .binding(1)
+                                .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                                .descriptor_count(1)
+                                .stage_flags(ShaderStageFlags::VERTEX),
+                        ],
+                    )
+                    //
+                    //set 1
+                    .set(
+                        1,
+                        &[*DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::FRAGMENT)],
+                    )
+                    .build(renderer.graphics_device())?,
+                renderer.renderpass(),
+                0,
+            )
     }
 }

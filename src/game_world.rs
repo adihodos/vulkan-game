@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{borrow::Borrow, cell::RefCell, rc::Rc};
 
 use ash::vk::{
     BorderColor, BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
@@ -12,6 +12,7 @@ use nalgebra_glm::Vec4;
 
 use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 use smallvec::SmallVec;
+use strum::EnumProperty;
 
 use crate::{
     app_config::{AppConfig, PlayerShipConfig},
@@ -22,6 +23,7 @@ use crate::{
     frustrum::{is_aabb_on_frustrum, Frustrum, FrustrumPlane},
     game_object::GameObjectPhysicsData,
     math,
+    missile_sys::{Missile, MissileKind, MissileSys},
     particles::{ImpactSpark, SparksSystem},
     physics_engine::{ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups},
     projectile_system::{ProjectileSpawnData, ProjectileSystem},
@@ -37,7 +39,9 @@ use crate::{
 #[derive(Copy, Clone, Debug)]
 pub enum QueuedCommand {
     SpawnProjectile(ProjectileSpawnData),
-    ProcessProjectileImpact(ColliderUserData),
+    SpawnMissile(MissileKind, nalgebra::Isometry3<f32>),
+    ProcessProjectileImpact(RigidBodyHandle),
+    DrawMissile(Missile),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -270,6 +274,7 @@ pub struct GameWorld {
     player_opts: PlayerShipOptions,
     stats: RefCell<Statistics>,
     locked_target: RefCell<Option<(ColliderHandle, RigidBodyHandle)>>,
+    missile_sys: RefCell<MissileSys>,
     rt: tokio::runtime::Runtime,
 }
 
@@ -293,7 +298,7 @@ impl GameWorld {
             .build()
             .expect("Failed to create Tokio runtime");
 
-        ShadowFighterSwarm::write_default_config();
+        // ShadowFighterSwarm::write_default_config();
 
         let skybox = Skybox::create(renderer, &app_cfg.scene, &app_cfg.engine)?;
 
@@ -487,13 +492,12 @@ impl GameWorld {
         samplers_ibl.push(sampler_brdf_lut);
         let objects = vec![GameObjectData {
             handle: GameObjectHandle(0),
-            renderable: resource_cache.get_geometry_handle(&"sa23"),
+            renderable: resource_cache.get_pbr_geometry_handle(&"sa23"),
         }];
 
         let mut physics_engine = PhysicsEngine::new();
 
         let starfury = Starfury::new(objects[0].handle, &mut physics_engine, &resource_cache);
-
         let shadows_swarm = ShadowFighterSwarm::new(&mut physics_engine, &resource_cache);
 
         let shadows_swarm_inst_render_data = InstancedRenderingData::create(
@@ -503,6 +507,7 @@ impl GameWorld {
         )?;
 
         let sprites = SpriteBatch::create(renderer, app_cfg)?;
+        let missile_sys = MissileSys::new(renderer, &resource_cache, app_cfg)?;
 
         let aspect = renderer.framebuffer_extents().width as f32
             / renderer.framebuffer_extents().height as f32;
@@ -530,6 +535,7 @@ impl GameWorld {
                 DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
             )),
             projectiles_sys: RefCell::new(ProjectileSystem::create(renderer, app_cfg)?),
+            missile_sys: RefCell::new(missile_sys),
             sparks_sys: RefCell::new(SparksSystem::create(renderer, app_cfg)?),
             player_opts: PlayerShipOptions::new(&app_cfg.player, &sprites),
             sprite_batch: RefCell::new(sprites),
@@ -572,7 +578,7 @@ impl GameWorld {
 
         let inst_aabb = self
             .resource_cache
-            .get_geometry_info(self.shadows_swarm.renderable)
+            .get_pbr_geometry_info(self.shadows_swarm.renderable)
             .aabb;
 
         let all_instances = self
@@ -608,7 +614,6 @@ impl GameWorld {
     pub fn draw(&self, frame_context: &FrameRenderContext) {
         //
         // start a visibility check early
-        self.debug_draw_overlay.borrow_mut().clear();
 
         let (projection, inverse_projection) = math::perspective(
             75f32,
@@ -644,7 +649,10 @@ impl GameWorld {
             }
         };
 
+        let rcache = self.resource_cache.borrow();
+
         let draw_context = DrawContext {
+            rcache: &rcache,
             renderer: frame_context.renderer,
             cmd_buff: frame_context.cmd_buff,
             frame_id: frame_context.frame_id,
@@ -672,6 +680,8 @@ impl GameWorld {
         self.debug_draw_overlay
             .borrow_mut()
             .draw(frame_context.renderer, &draw_context.projection_view);
+
+        self.debug_draw_overlay.borrow_mut().clear();
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {
@@ -739,12 +749,12 @@ impl GameWorld {
             device.cmd_bind_vertex_buffers(
                 draw_context.cmd_buff,
                 0,
-                &[self.resource_cache.vertex_buffer()],
+                &[self.resource_cache.vertex_buffer_pbr()],
                 &[0u64],
             );
             device.cmd_bind_index_buffer(
                 draw_context.cmd_buff,
-                self.resource_cache.index_buffer(),
+                self.resource_cache.index_buffer_pbr(),
                 0,
                 IndexType::UINT32,
             );
@@ -799,7 +809,7 @@ impl GameWorld {
                     //     .render_pos
                     //     .to_homogeneous()
                     //     * object_renderable.geometry.aabb;
-                    //
+
                     // draw_context.debug_draw.borrow_mut().add_aabb(
                     //     &aabb.min,
                     //     &aabb.max,
@@ -808,25 +818,33 @@ impl GameWorld {
                 }
 
                 if self.debug_options().debug_draw_nodes_bounding {
-                    // let object_transform = self.render_state.borrow()
-                    //     [game_object.handle.0 as usize]
-                    //     .render_pos
-                    //     .to_homogeneous();
-                    //
-                    // object_renderable.geometry.nodes.iter().for_each(|node| {
-                    //     let transformed_aabb = object_transform * node.aabb;
-                    //
-                    //     draw_context.debug_draw.borrow_mut().add_aabb(
-                    //         &transformed_aabb.min,
-                    //         &transformed_aabb.max,
-                    //         0xFF_00_FF_00,
-                    //     );
-                    // });
+                    let geometry = self
+                        .resource_cache
+                        .get_pbr_geometry_info(self.starfury.renderable);
+
+                    let transform = self
+                        .physics_engine
+                        .borrow()
+                        .get_rigid_body(self.starfury.rigid_body_handle)
+                        .position()
+                        .to_homogeneous();
+
+                    geometry.nodes.iter().for_each(|node| {
+                        let aabb = transform * node.aabb;
+
+                        use crate::color_palettes::StdColors;
+                        draw_context.debug_draw.borrow_mut().add_aabb(
+                            &aabb.min,
+                            &aabb.max,
+                            StdColors::RED,
+                        );
+                    });
                 }
             });
         }
 
         self.draw_instanced_objects(visible_objects_future, draw_context);
+        self.missile_sys.borrow_mut().draw(draw_context);
 
         self.projectiles_sys
             .borrow()
@@ -906,12 +924,12 @@ impl GameWorld {
             graphics_device.cmd_bind_vertex_buffers(
                 draw_context.cmd_buff,
                 0,
-                &[self.resource_cache.vertex_buffer()],
+                &[self.resource_cache.vertex_buffer_pbr()],
                 &[0],
             );
             graphics_device.cmd_bind_index_buffer(
                 draw_context.cmd_buff,
-                self.resource_cache.index_buffer(),
+                self.resource_cache.index_buffer_pbr(),
                 0,
                 IndexType::UINT32,
             );
@@ -1089,7 +1107,7 @@ impl GameWorld {
         }
     }
 
-    pub fn update(&self, frame_time: f64) {
+    pub fn update(&mut self, frame_time: f64) {
         {
             let queued_commands = {
                 let mut phys_engine = self.physics_engine.borrow_mut();
@@ -1100,9 +1118,10 @@ impl GameWorld {
                 };
 
                 self.projectiles_sys.borrow_mut().update(&mut update_ctx);
+		self.missile_sys.borrow_mut().update(&mut update_ctx);
                 self.sparks_sys.borrow_mut().update(&mut update_ctx);
-
                 self.starfury.update(&mut update_ctx);
+
                 update_ctx.queued_commands
             };
 
@@ -1116,6 +1135,19 @@ impl GameWorld {
                                 .borrow_mut()
                                 .spawn_projectile(data, &mut phys_eng);
                         }
+
+                        QueuedCommand::SpawnMissile(msl_kind, msl_orientation) => {
+                            self.missile_sys.borrow_mut().add_live_missile(
+                                msl_kind,
+                                &msl_orientation,
+                                &mut phys_eng,
+                            );
+                        }
+
+                        QueuedCommand::DrawMissile(msl) => {
+                            self.missile_sys.borrow_mut().draw_inert_missile(msl);
+                        }
+
                         _ => {}
                     });
             }
@@ -1158,23 +1190,15 @@ impl GameWorld {
         }
     }
 
-    fn projectile_impacted_event(&self, proj_collider_data: ColliderUserData) {
-        let impacted_proj = self
-            .projectiles_sys
-            .borrow()
-            .get_projectile(proj_collider_data);
-
+    fn projectile_impacted_event(&self, proj_handle: RigidBodyHandle) {
+	log::info!("Impact for {:?}", proj_handle);
         let projectile_isometry = *self
-            .physics_engine
-            .borrow()
-            .rigid_body_set
-            .get(impacted_proj.rigid_body_handle)
-            .unwrap()
+            .physics_engine.borrow().get_rigid_body(proj_handle)
             .position();
 
         self.sparks_sys.borrow_mut().spawn_sparks(ImpactSpark {
             pos: Point3::from_slice(projectile_isometry.translation.vector.as_slice()),
-            dir: impacted_proj.direction,
+            dir: projectile_isometry * glm::Vec3::z(),
             color: glm::vec3(1f32, 0f32, 0f32),
             speed: 2.0f32,
             life: 2f32,
@@ -1182,10 +1206,12 @@ impl GameWorld {
 
         self.projectiles_sys
             .borrow_mut()
-            .despawn_projectile(proj_collider_data);
+            .despawn_projectile(proj_handle);
         self.physics_engine
             .borrow_mut()
-            .remove_rigid_body(proj_collider_data.rigid_body());
+            .remove_rigid_body(proj_handle);
+
+	log::info!("Removed {:?}", proj_handle);
     }
 
     // pub fn input_event(&self, event: &winit::event::WindowEvent) {
@@ -1202,7 +1228,7 @@ impl GameWorld {
     //     }
     // }
 
-    pub fn gamepad_input(&self, input_state: &InputState) {
+    pub fn gamepad_input(&mut self, input_state: &InputState) {
         if input_state.gamepad.btn_lock_target {
             self.physics_engine
                 .borrow()

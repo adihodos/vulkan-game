@@ -1,9 +1,9 @@
-use std::cell::{Cell, RefCell};
 
 use crate::{
     draw_context::UpdateContext,
     game_world::{GameObjectHandle, QueuedCommand},
     math::AABB3,
+    missile_sys::{Missile, MissileKind, MissileState},
     physics_engine::PhysicsEngine,
     projectile_system::ProjectileSpawnData,
     resource_cache::{PbrRenderableHandle, ResourceHolder},
@@ -11,11 +11,53 @@ use crate::{
 };
 
 use glm::Vec3;
-use nalgebra::Point3;
+use nalgebra::{Isometry3, Point3};
 use nalgebra_glm as glm;
+use rand_distr::num_traits::Zero;
 use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, RigidBodyType};
 use serde::{Deserialize, Serialize};
 use strum_macros;
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    strum_macros::EnumIter,
+    strum_macros::EnumProperty,
+    strum_macros::Display,
+    Serialize,
+    Deserialize,
+)]
+#[repr(u8)]
+pub enum WeaponPylonId {
+    #[strum(props(pylon_id = "pylon.upper.left.0",))]
+    UpperWingLeft0,
+
+    #[strum(props(pylon_id = "pylon.upper.left.1",))]
+    UpperWingLeft1,
+
+    #[strum(props(pylon_id = "pylon.upper.left.2",))]
+    UpperWingLeft2,
+
+    #[strum(props(pylon_id = "pylon.upper.right.0",))]
+    UpperWingRight0,
+
+    #[strum(props(pylon_id = "pylon.upper.right.1",))]
+    UpperWingRight1,
+
+    #[strum(props(pylon_id = "pylon.upper.right.2",))]
+    UpperWingRight2,
+}
+
+const PYLON_ATTACHMENT_POINTS: [[f32; 3]; 6] = [
+    [0.940288f32, 0.307043f32, 0.065791f32],
+    [0.694851f32, 0.185932f32, 0.21051f32],
+    [0.48396f32, 0.07659f32, 0.293167f32],
+    [-0.940288f32, 0.307043f32, 0.065791f32],
+    [-0.694851f32, 0.185932f32, 0.21051f32],
+    [-0.48396f32, 0.07659f32, 0.293167f32],
+];
+const Y_OFFSET_BY_MISSILE: [f32; 2] = [-0.03f32, -0.03f32];
 
 #[derive(
     Copy, Clone, Debug, strum_macros::EnumIter, strum_macros::EnumProperty, Serialize, Deserialize,
@@ -222,12 +264,19 @@ struct StarfuryParameters {
     weapons: Weapons,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 enum QueuedOp {
     ApplyForce(glm::Vec3),
     ApplyTorque(glm::Vec3),
     FireGuns,
+    FireMissile(WeaponPylonId),
     Reset,
+}
+
+struct SuspendedWeaponry {
+    id: WeaponPylonId,
+    kind: MissileKind,
+    weapon_attached: bool,
 }
 
 pub struct Starfury {
@@ -237,8 +286,11 @@ pub struct Starfury {
     pub collider_handle: rapier3d::prelude::ColliderHandle,
     params: StarfuryParameters,
     thrusters: Vec<EngineThruster>,
-    queued_ops: RefCell<Vec<QueuedOp>>,
-    guns_cooldown: Cell<f32>,
+    pylons_weaponry: Vec<SuspendedWeaponry>,
+    queued_ops: Vec<QueuedOp>,
+    guns_cooldown: f32,
+    missile_respawn_cooldown: f32,
+    missile_fire_cooldown: f32,
 }
 
 impl Starfury {
@@ -247,16 +299,14 @@ impl Starfury {
         physics_engine: &mut PhysicsEngine,
         resource_cache: &ResourceHolder,
     ) -> Starfury {
-        // StarfuryParameters::write_default_config();
-
         let params: StarfuryParameters = ron::de::from_reader(
             std::fs::File::open("config/starfury.flightmodel.cfg.ron")
                 .expect("Failed to read Starfury flight model configuration file."),
         )
         .expect("Invalid configuration file");
 
-        let geometry_handle = resource_cache.get_geometry_handle(&"sa23");
-        let geometry = resource_cache.get_geometry_info(geometry_handle);
+        let geometry_handle = resource_cache.get_pbr_geometry_handle(&"sa23");
+        let geometry = resource_cache.get_pbr_geometry_info(geometry_handle);
 
         use strum::{EnumProperty, IntoEnumIterator};
         let thrusters = EngineThrusterId::iter()
@@ -306,67 +356,101 @@ impl Starfury {
             collider_handle,
             params,
             thrusters,
-            queued_ops: RefCell::new(Vec::new()),
-            guns_cooldown: Cell::new(0f32),
+            queued_ops: Vec::new(),
+            guns_cooldown: 0f32,
+            missile_respawn_cooldown: 0f32,
+            missile_fire_cooldown: 0f32,
+            pylons_weaponry: WeaponPylonId::iter()
+                .map(|pylon_id| {
+                    let kind = if (pylon_id as u8) % 2 == 0 {
+                        MissileKind::R27
+                    } else {
+                        MissileKind::R73
+                    };
+
+                    SuspendedWeaponry {
+                        id: pylon_id,
+                        kind,
+                        weapon_attached: true,
+                    }
+                })
+                .collect(),
         }
     }
 
-    pub fn input_event(&self, event: &winit::event::KeyboardInput) {
-        use winit::event::VirtualKeyCode;
+    // pub fn input_event(&self, event: &winit::event::KeyboardInput) {
+    //     use winit::event::VirtualKeyCode;
 
-        let physics_op = event.virtual_keycode.and_then(|key_code| match key_code {
-            VirtualKeyCode::F10 => Some(QueuedOp::Reset),
+    //     let physics_op = event.virtual_keycode.and_then(|key_code| match key_code {
+    //         VirtualKeyCode::F10 => Some(QueuedOp::Reset),
 
-            VirtualKeyCode::Q => Some(QueuedOp::ApplyTorque(
-                self.params.fm.thruster_force_secondary
-                    * self.params.fm.thruster_force_vectors
-                        [self.params.fm.maneuver.roll.left[0] as usize],
-            )),
+    //         VirtualKeyCode::Q => Some(QueuedOp::ApplyTorque(
+    //             self.params.fm.thruster_force_secondary
+    //                 * self.params.fm.thruster_force_vectors
+    //                     [self.params.fm.maneuver.roll.left[0] as usize],
+    //         )),
 
-            VirtualKeyCode::E => Some(QueuedOp::ApplyTorque(
-                self.params.fm.thruster_force_secondary
-                    * self.params.fm.thruster_force_vectors
-                        [self.params.fm.maneuver.roll.right[0] as usize],
-            )),
+    //         VirtualKeyCode::E => Some(QueuedOp::ApplyTorque(
+    //             self.params.fm.thruster_force_secondary
+    //                 * self.params.fm.thruster_force_vectors
+    //                     [self.params.fm.maneuver.roll.right[0] as usize],
+    //         )),
 
-            VirtualKeyCode::W => Some(QueuedOp::ApplyTorque(
-                self.params.fm.thruster_force_secondary
-                    * self.params.fm.thruster_force_vectors
-                        [self.params.fm.maneuver.pitch.down[0] as usize],
-            )),
+    //         VirtualKeyCode::W => Some(QueuedOp::ApplyTorque(
+    //             self.params.fm.thruster_force_secondary
+    //                 * self.params.fm.thruster_force_vectors
+    //                     [self.params.fm.maneuver.pitch.down[0] as usize],
+    //         )),
 
-            VirtualKeyCode::S => Some(QueuedOp::ApplyTorque(
-                self.params.fm.thruster_force_secondary
-                    * self.params.fm.thruster_force_vectors
-                        [self.params.fm.maneuver.pitch.up[0] as usize],
-            )),
+    //         VirtualKeyCode::S => Some(QueuedOp::ApplyTorque(
+    //             self.params.fm.thruster_force_secondary
+    //                 * self.params.fm.thruster_force_vectors
+    //                     [self.params.fm.maneuver.pitch.up[0] as usize],
+    //         )),
 
-            VirtualKeyCode::A => Some(QueuedOp::ApplyTorque(
-                self.params.fm.thruster_force_secondary
-                    * self
-                        .params
-                        .fm
-                        .thruster_force_vector(self.params.fm.maneuver.yaw.left[0]),
-            )),
+    //         VirtualKeyCode::A => Some(QueuedOp::ApplyTorque(
+    //             self.params.fm.thruster_force_secondary
+    //                 * self
+    //                     .params
+    //                     .fm
+    //                     .thruster_force_vector(self.params.fm.maneuver.yaw.left[0]),
+    //         )),
 
-            VirtualKeyCode::D => Some(QueuedOp::ApplyTorque(
-                self.params.fm.thruster_force_secondary
-                    * self
-                        .params
-                        .fm
-                        .thruster_force_vector(self.params.fm.maneuver.yaw.right[0]),
-            )),
-            _ => None,
-        });
+    //         VirtualKeyCode::D => Some(QueuedOp::ApplyTorque(
+    //             self.params.fm.thruster_force_secondary
+    //                 * self
+    //                     .params
+    //                     .fm
+    //                     .thruster_force_vector(self.params.fm.maneuver.yaw.right[0]),
+    //         )),
+    //         _ => None,
+    //     });
 
-        physics_op.map(|i| {
-            self.queued_ops.borrow_mut().push(i);
-        });
-    }
+    //     physics_op.map(|i| {
+    //         self.queued_ops.borrow_mut().push(i);
+    //     });
+    // }
 
-    pub fn update(&self, update_context: &mut UpdateContext) {
-        self.guns_cooldown
-            .set((self.guns_cooldown.get() - update_context.frame_time as f32).max(0f32));
+    pub fn update(&mut self, update_context: &mut UpdateContext) {
+        self.physics_update(&mut update_context.physics_engine);
+
+        self.guns_cooldown = (self.guns_cooldown - update_context.frame_time as f32).max(0f32);
+
+        self.missile_fire_cooldown =
+            (self.missile_fire_cooldown - update_context.frame_time as f32).max(0f32);
+
+        if self.missile_respawn_cooldown > 0f32 {
+            self.missile_respawn_cooldown =
+                (self.missile_respawn_cooldown - update_context.frame_time as f32).max(0f32);
+            //
+            // cooldown expired, respawn pylon attachments
+            if self.missile_respawn_cooldown.is_zero() {
+                self.pylons_weaponry.iter_mut().for_each(|p| {
+                    p.weapon_attached = true;
+                });
+                self.missile_fire_cooldown = 0f32;
+            }
+        }
 
         {
             let _rigid_body = update_context
@@ -375,7 +459,47 @@ impl Starfury {
                 .get_mut(self.rigid_body_handle)
                 .unwrap();
 
-            self.queued_ops.borrow().iter().for_each(|op| match op {
+            self.queued_ops.iter().for_each(|&op| match op {
+                QueuedOp::FireMissile(pylon_id) => {
+                    //
+                    // if out of missiles start the cooldown timer
+                    if self.missile_respawn_cooldown.is_zero()
+                        && self
+                            .pylons_weaponry
+                            .iter()
+                            .all(|p| p.weapon_attached == false)
+                    {
+                        self.missile_respawn_cooldown = 10f32;
+                    }
+
+                    let object2world = update_context
+                        .physics_engine
+                        .get_rigid_body(self.rigid_body_handle)
+                        .position();
+
+                    let msl_kind = self.pylons_weaponry[pylon_id as usize].kind;
+
+                    let pylon_attachment_point = PYLON_ATTACHMENT_POINTS[pylon_id as usize];
+                    let pylon_attachment_point = [
+                        pylon_attachment_point[0],
+                        pylon_attachment_point[1] + Y_OFFSET_BY_MISSILE[msl_kind as usize],
+                        pylon_attachment_point[2],
+                    ];
+
+                    //
+                    // rotate missile 45 degrees then move it to pylon center
+                    use nalgebra::{Rotation3, Translation3};
+                    let missile2pylon = Isometry3::from_parts(
+                        Translation3::from(pylon_attachment_point),
+                        Rotation3::from_euler_angles(0f32, 0f32, 45f32.to_radians()).into(),
+                    );
+                    let iso = object2world * missile2pylon;
+
+                    update_context
+                        .queued_commands
+                        .push(QueuedCommand::SpawnMissile(msl_kind, iso));
+                }
+
                 QueuedOp::FireGuns => {
                     update_context.queued_commands.extend(
                         [
@@ -396,17 +520,19 @@ impl Starfury {
                         ]
                         .iter(),
                     );
-                    // }
                 }
                 _ => {}
             });
         }
 
-        self.physics_update(&mut update_context.physics_engine);
+        //
+        // add remaining missiles to draw sys
+        self.draw_suspended_weaponry(update_context);
+        self.queued_ops.clear();
     }
 
-    pub fn physics_update(&self, phys_engine: &mut PhysicsEngine) {
-        if self.queued_ops.borrow().is_empty() {
+    pub fn physics_update(&mut self, phys_engine: &mut PhysicsEngine) {
+        if self.queued_ops.is_empty() {
             return;
         }
 
@@ -417,37 +543,58 @@ impl Starfury {
 
         let isometry = *rigid_body.position();
 
-        self.queued_ops
-            .borrow()
-            .iter()
-            .for_each(|&impulse| match impulse {
-                QueuedOp::ApplyForce(f) => {
-                    rigid_body.apply_impulse(isometry * f, true);
-                }
+        self.queued_ops.iter().for_each(|&impulse| match impulse {
+            QueuedOp::ApplyForce(f) => {
+                rigid_body.apply_impulse(isometry * f, true);
+            }
 
-                QueuedOp::ApplyTorque(t) => {
-                    rigid_body.apply_torque_impulse(isometry * t, true);
-                }
+            QueuedOp::ApplyTorque(t) => {
+                rigid_body.apply_torque_impulse(isometry * t, true);
+            }
 
-                QueuedOp::Reset => {
-                    rigid_body.reset_forces(true);
-                    rigid_body.reset_torques(true);
-                    rigid_body.set_linvel(Vec3::zeros(), true);
-                    rigid_body.set_angvel(Vec3::zeros(), true);
-                    rigid_body.set_position(nalgebra::Isometry::identity(), true);
-                }
+            QueuedOp::Reset => {
+                rigid_body.reset_forces(true);
+                rigid_body.reset_torques(true);
+                rigid_body.set_linvel(Vec3::zeros(), true);
+                rigid_body.set_angvel(Vec3::zeros(), true);
+                rigid_body.set_position(nalgebra::Isometry::identity(), true);
+            }
 
-                _ => (),
-            });
-
-        self.queued_ops.borrow_mut().clear();
+            _ => (),
+        });
     }
 
-    pub fn gamepad_input(&self, input_state: &InputState) {
+    pub fn gamepad_input(&mut self, input_state: &InputState) {
         input_state.gamepad.ltrigger.data.map(|btn| {
-            if btn.is_pressed() && !(self.guns_cooldown.get() > 0f32) {
-                self.queued_ops.borrow_mut().push(QueuedOp::FireGuns);
-                self.guns_cooldown.set(self.params.weapons.guns_cooldown);
+            if btn.is_pressed() && self.guns_cooldown.is_zero() {
+                self.queued_ops.push(QueuedOp::FireGuns);
+                self.guns_cooldown = self.params.weapons.guns_cooldown;
+            }
+        });
+
+        input_state.gamepad.rtrigger.data.map(|btn| {
+            if btn.is_pressed()
+                && self.missile_respawn_cooldown.is_zero()
+                && self.missile_fire_cooldown.is_zero()
+            {
+                const FIRING_SEQUENCE: [WeaponPylonId; 6] = [
+                    WeaponPylonId::UpperWingLeft0,
+                    WeaponPylonId::UpperWingRight0,
+                    WeaponPylonId::UpperWingLeft1,
+                    WeaponPylonId::UpperWingRight1,
+                    WeaponPylonId::UpperWingLeft2,
+                    WeaponPylonId::UpperWingRight2,
+                ];
+
+                for pylon in FIRING_SEQUENCE {
+                    if self.pylons_weaponry[pylon as usize].weapon_attached {
+                        self.pylons_weaponry[pylon as usize].weapon_attached = false;
+                        self.queued_ops.push(QueuedOp::FireMissile(pylon));
+                        break;
+                    }
+                }
+
+                self.missile_fire_cooldown = 5f32;
             }
         });
 
@@ -495,7 +642,7 @@ impl Starfury {
                         )
                     };
 
-                    self.queued_ops.borrow_mut().push(phys_op);
+                    self.queued_ops.push(phys_op);
                 });
             },
         );
@@ -537,7 +684,7 @@ impl Starfury {
                         )
                     };
 
-                    self.queued_ops.borrow_mut().push(phys_op);
+                    self.queued_ops.push(phys_op);
                 });
             });
 
@@ -560,7 +707,7 @@ impl Starfury {
 
                 let throttle_factor = button_data.value() * self.params.fm.throttle_sensitivity;
 
-                self.queued_ops.borrow_mut().push(QueuedOp::ApplyTorque(
+                self.queued_ops.push(QueuedOp::ApplyTorque(
                     throttle_factor
                         * self.params.fm.thruster_force_secondary
                         * self.params.fm.thruster_force_vector(thruster_id),
@@ -575,5 +722,41 @@ impl Starfury {
 
     pub fn lower_right_gun(&self) -> Point3<f32> {
         self.params.weapons.gun_ports.lower_right
+    }
+
+    fn draw_suspended_weaponry(&self, update_ctx: &mut UpdateContext) {
+        let object2world = update_ctx
+            .physics_engine
+            .get_rigid_body(self.rigid_body_handle)
+            .position();
+
+        self.pylons_weaponry
+            .iter()
+            .filter(|p| p.weapon_attached)
+            .for_each(|pylon| {
+                let pylon_attachment_point = PYLON_ATTACHMENT_POINTS[pylon.id as usize];
+                let pylon_attachment_point = [
+                    pylon_attachment_point[0],
+                    pylon_attachment_point[1] + Y_OFFSET_BY_MISSILE[pylon.kind as usize],
+                    pylon_attachment_point[2],
+                ];
+
+                //
+                // rotate missile 45 degrees then move it to pylon center
+                use nalgebra::{Rotation3, Translation3};
+                let missile2pylon = Isometry3::from_parts(
+                    Translation3::from(pylon_attachment_point),
+                    Rotation3::from_euler_angles(0f32, 0f32, 45f32.to_radians()).into(),
+                );
+                let iso = object2world * missile2pylon;
+
+                update_ctx
+                    .queued_commands
+                    .push(QueuedCommand::DrawMissile(Missile {
+                        kind: pylon.kind,
+                        state: MissileState::Inactive,
+                        transform: iso.to_matrix(),
+                    }));
+            });
     }
 }

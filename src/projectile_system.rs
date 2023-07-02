@@ -66,7 +66,7 @@ impl Projectile {
             .active_events(rapier3d::prelude::ActiveEvents::COLLISION_EVENTS)
             .collision_groups(PhysicsObjectCollisionGroups::projectiles())
             .sensor(true)
-            .user_data(ColliderUserData::new(rigid_body_handle).into())
+            // .user_data(ColliderUserData::new(rigid_body_handle).into())
             .build();
 
         let collider_handle = physics_engine.collider_set.insert_with_parent(
@@ -265,8 +265,7 @@ impl ProjectileSystem {
         self.projectiles.push(Projectile::new(data, phys_engine));
     }
 
-    pub fn despawn_projectile(&mut self, data: ColliderUserData) {
-        let proj_body = data.rigid_body();
+    pub fn despawn_projectile(&mut self, proj_body: RigidBodyHandle) {
         self.projectiles
             .iter()
             .position(|projectile| projectile.rigid_body_handle == proj_body)
@@ -276,13 +275,13 @@ impl ProjectileSystem {
             });
     }
 
-    pub fn get_projectile(&self, data: ColliderUserData) -> Projectile {
-        *self
-            .projectiles
-            .iter()
-            .find(|p| p.rigid_body_handle == data.rigid_body())
-            .unwrap()
-    }
+    // pub fn get_projectile(&self, data: ColliderUserData) -> Projectile {
+    //     *self
+    //         .projectiles
+    //         .iter()
+    //         .find(|p| p.rigid_body_handle == data.rigid_body())
+    //         .unwrap()
+    // }
 
     pub fn render(&self, draw_context: &DrawContext, phys_engine: &PhysicsEngine) {
         if self.projectiles.is_empty() {

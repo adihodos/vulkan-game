@@ -2,9 +2,7 @@ use crossbeam::channel::Receiver;
 use nalgebra_glm as glm;
 use rapier3d::prelude::*;
 
-use crate::{
-    debug_draw_overlay::DebugDrawOverlay, game_world::QueuedCommand,
-};
+use crate::{debug_draw_overlay::DebugDrawOverlay, game_world::QueuedCommand};
 
 #[derive(Copy, Clone, Debug)]
 pub struct ColliderUserData(u128);
@@ -169,8 +167,24 @@ impl PhysicsEngine {
                             && collider.is_sensor()
                     })
                     .map(|(_collider_handle, collider)| {
-                        let collider_user_data = ColliderUserData(collider.user_data);
-                        cmds.push(QueuedCommand::ProcessProjectileImpact(collider_user_data));
+                        //
+                        // check what exactly collided (bullet/missile)
+                        if collider
+                            .collision_groups()
+                            .memberships
+                            .intersects(PhysicsObjectGroups::MISSILES)
+                        {
+                        } else if collider
+                            .collision_groups()
+                            .memberships
+                            .intersects(PhysicsObjectGroups::PROJECTILES)
+                        {
+                            cmds.push(QueuedCommand::ProcessProjectileImpact(
+                                collider
+                                    .parent()
+                                    .expect("Collider does not have a rigid body attached"),
+                            ));
+                        }
                     });
             }
         }
@@ -202,6 +216,24 @@ impl PhysicsEngine {
             &self.multibody_joint_set,
             &self.narrow_phase,
         );
+    }
+
+    pub fn get_collider(&self, handle: ColliderHandle) -> &Collider {
+        self.collider_set
+            .get(handle)
+            .expect(&format!("collider {:?} not found", handle))
+    }
+
+    pub fn get_rigid_body(&self, handle: RigidBodyHandle) -> &RigidBody {
+        self.rigid_body_set
+            .get(handle)
+            .expect(&format!("rigid body {:?} not found", handle))
+    }
+
+    pub fn get_rigid_body_mut(&mut self, handle: RigidBodyHandle) -> &mut RigidBody {
+        self.rigid_body_set
+            .get_mut(handle)
+            .expect(&format!("rigid body {:?} not found", handle))
     }
 
     pub fn remove_rigid_body(&mut self, rigid_body_handle: RigidBodyHandle) {
