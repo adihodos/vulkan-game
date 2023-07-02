@@ -4,11 +4,9 @@ use crate::{
     app_config::AppConfig,
     draw_context::{DrawContext, UpdateContext},
     math::AABB3,
-    physics_engine::{PhysicsEngine},
+    physics_engine::PhysicsEngine,
     resource_cache::ResourceHolder,
-    vk_renderer::{
-        Cpu2GpuBuffer, UniqueImageWithView, UniqueSampler, VulkanRenderer,
-    },
+    vk_renderer::{Cpu2GpuBuffer, UniqueImageWithView, UniqueSampler, VulkanRenderer},
 };
 use ash::vk::{BufferUsageFlags, DeviceSize, DrawIndexedIndirectCommand};
 use nalgebra_glm as glm;
@@ -225,7 +223,7 @@ impl MissileSys {
                         mass: 500f32,
                         aabb: missile_node.aabb,
                         booster_life: 25f32,
-			thrust: 550f32,
+                        thrust: 550f32,
                     },
                 )
             })
@@ -440,7 +438,7 @@ impl MissileSys {
             booster_time: msl_class_sheet.booster_life,
             rigid_body: body_handle,
             collider: collider_handle,
-	    thrust: msl_class_sheet.thrust
+            thrust: msl_class_sheet.thrust,
         });
     }
 
@@ -470,7 +468,6 @@ impl MissileSys {
         //
         // add live missiles to draw list
         self.live_missiles.iter().for_each(|msl| {
-	    
             let m = Missile {
                 kind: msl.kind,
                 state: MissileState::Inactive,
@@ -482,7 +479,7 @@ impl MissileSys {
                 .and_modify(|e| e.push(m))
                 .or_insert(vec![m]);
 
-	    self.missiles_count += 1;
+            self.missiles_count += 1;
         });
     }
 }

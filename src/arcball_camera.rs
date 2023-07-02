@@ -1,4 +1,3 @@
-use crate::camera::Camera;
 use glm::{dot, inverse, normalize, Quat, Vec4};
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{IVec2, Mat4, Vec2, Vec3};
@@ -194,23 +193,5 @@ impl ArcballCamera {
 
             _ => (),
         }
-    }
-}
-
-impl Camera for ArcballCamera {
-    fn view_transform(&self) -> Mat4 {
-        self.view_transform
-    }
-
-    fn position(&self) -> Vec3 {
-        Vec3::new(
-            self.inverse_view_transform.m14,
-            self.inverse_view_transform.m24,
-            self.inverse_view_transform.m34,
-        )
-    }
-
-    fn inverse_view_transform(&self) -> glm::Mat4 {
-        self.inverse_view_transform
     }
 }

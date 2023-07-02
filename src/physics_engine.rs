@@ -151,7 +151,8 @@ impl PhysicsEngine {
         );
 
         while let Ok(collision_event) = self.collision_recv.try_recv() {
-            if !collision_event.sensor() || !collision_event.started() {
+            if !collision_event.sensor() || !collision_event.started() || collision_event.removed()
+            {
                 continue;
             }
 

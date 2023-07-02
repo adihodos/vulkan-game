@@ -1042,10 +1042,17 @@ impl GameWorld {
 
                 ui.separator();
                 if ui.collapsing_header("Camera", imgui::TreeNodeFlags::FRAMED) {
-                    ui.checkbox(
+                    if ui.checkbox(
                         "Activate debug camera",
                         &mut self.debug_options_mut().debug_camera,
-                    );
+                    ) {
+                        let camera_frame = self.camera.borrow().view_matrix;
+                        let camera_origin = self.camera.borrow().position;
+                        self.dbg_camera
+                            .borrow_mut()
+                            .set_frame(&camera_frame, camera_origin);
+                    }
+
                     ui.checkbox(
                         "Draw frustrum as planes/pyramid",
                         &mut self.debug_options_mut().draw_frustrum_planes,
@@ -1118,7 +1125,7 @@ impl GameWorld {
                 };
 
                 self.projectiles_sys.borrow_mut().update(&mut update_ctx);
-		self.missile_sys.borrow_mut().update(&mut update_ctx);
+                self.missile_sys.borrow_mut().update(&mut update_ctx);
                 self.sparks_sys.borrow_mut().update(&mut update_ctx);
                 self.starfury.update(&mut update_ctx);
 
@@ -1164,18 +1171,24 @@ impl GameWorld {
         }
 
         let mut cmds = Vec::<QueuedCommand>::with_capacity(16);
+        let mut removed_bodies: Vec<RigidBodyHandle> = Vec::new();
+
         (0..Self::num_physics_steps_240hz(frame_time)).for_each(|_| {
+            cmds.clear();
+            removed_bodies.clear();
+
             //
             // do physics step
-            cmds.clear();
             self.physics_engine.borrow_mut().update(&mut cmds);
 
             cmds.iter().for_each(|&cmd| match cmd {
                 QueuedCommand::ProcessProjectileImpact(cdata) => {
                     self.projectile_impacted_event(cdata);
+                    removed_bodies.push(cdata);
                 }
                 _ => {}
             });
+
             //
             // update flight camera
             self.physics_engine
@@ -1183,6 +1196,17 @@ impl GameWorld {
                 .rigid_body_set
                 .get(self.starfury.rigid_body_handle)
                 .map(|starfury_phys_obj| self.camera.borrow_mut().update(starfury_phys_obj));
+
+            //
+            // remove impacted bullets/missiles
+            {
+                let mut pe = self.physics_engine.borrow_mut();
+
+                removed_bodies.iter().for_each(|rbody| {
+                    self.projectiles_sys.borrow_mut().despawn_projectile(*rbody);
+                    pe.remove_rigid_body(*rbody);
+                });
+            }
         });
 
         if self.debug_options().debug_camera {
@@ -1191,9 +1215,11 @@ impl GameWorld {
     }
 
     fn projectile_impacted_event(&self, proj_handle: RigidBodyHandle) {
-	log::info!("Impact for {:?}", proj_handle);
+        log::info!("Impact for {:?}", proj_handle);
         let projectile_isometry = *self
-            .physics_engine.borrow().get_rigid_body(proj_handle)
+            .physics_engine
+            .borrow()
+            .get_rigid_body(proj_handle)
             .position();
 
         self.sparks_sys.borrow_mut().spawn_sparks(ImpactSpark {
@@ -1204,14 +1230,7 @@ impl GameWorld {
             life: 2f32,
         });
 
-        self.projectiles_sys
-            .borrow_mut()
-            .despawn_projectile(proj_handle);
-        self.physics_engine
-            .borrow_mut()
-            .remove_rigid_body(proj_handle);
-
-	log::info!("Removed {:?}", proj_handle);
+        log::info!("Removed {:?}", proj_handle);
     }
 
     // pub fn input_event(&self, event: &winit::event::WindowEvent) {

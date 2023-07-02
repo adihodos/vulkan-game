@@ -1,9 +1,7 @@
+use std::env;
+use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::{env};
-use std::{
-    ffi::{CString},
-};
 use std::{io::Error, io::ErrorKind};
 
 // use shaderc;

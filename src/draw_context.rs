@@ -1,8 +1,8 @@
 use ash::vk::{CommandBuffer, Rect2D, Viewport};
 
 use crate::{
-    camera::Camera, debug_draw_overlay::DebugDrawOverlay, game_world::QueuedCommand,
-    physics_engine::PhysicsEngine, vk_renderer::VulkanRenderer, resource_cache::ResourceHolder,
+    debug_draw_overlay::DebugDrawOverlay, game_world::QueuedCommand, physics_engine::PhysicsEngine,
+    resource_cache::ResourceHolder, vk_renderer::VulkanRenderer,
 };
 
 pub struct FrameRenderContext<'a> {

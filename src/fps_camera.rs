@@ -1,4 +1,4 @@
-use crate::{camera::Camera, math::perspective};
+use crate::math::perspective;
 use nalgebra_glm as glm;
 
 #[derive(Copy, Clone)]
@@ -18,20 +18,6 @@ pub struct FirstPersonCamera {
     pub projection_matrix: glm::Mat4,
 }
 
-impl Camera for FirstPersonCamera {
-    fn view_transform(&self) -> glm::Mat4 {
-        self.view_matrix
-    }
-
-    fn position(&self) -> glm::Vec3 {
-        self.position
-    }
-
-    fn inverse_view_transform(&self) -> glm::Mat4 {
-        glm::Mat4::identity()
-    }
-}
-
 impl FirstPersonCamera {
     pub fn new(fovy: f32, aspect: f32, znear: f32, zfar: f32) -> Self {
         let view_matrix = Self::default_view();
@@ -40,7 +26,7 @@ impl FirstPersonCamera {
         let up = view_matrix.column(1).xyz();
         let look = view_matrix.column(2).xyz();
         let position = view_matrix.column(3).xyz();
-        log::info!("R {} U {} D {} O {}", right, up, look, position);
+
         let (projection_matrix, _) = perspective(fovy, aspect, znear, zfar);
 
         FirstPersonCamera {
@@ -149,13 +135,20 @@ impl FirstPersonCamera {
         view_matrix
     }
 
-    pub fn reset(&mut self) {
-        let view_matrix = Self::default_view();
-        self.position = view_matrix.column(3).xyz();
-        self.right = view_matrix.column(0).xyz();
-        self.up = view_matrix.column(1).xyz();
-        self.look = view_matrix.column(2).xyz();
-        self.view_matrix = view_matrix;
+    pub fn set_frame(&mut self, frame: &glm::Mat4, origin: glm::Vec3) {
+        let right = frame.row(0);
+        let up = frame.row(1);
+        let look = frame.row(2);
+
+        self.position = origin;
+        self.right = glm::vec3(right[0], right[1], right[2]);
+        self.up = glm::vec3(up[0], up[1], up[2]);
+        self.look = glm::vec3(look[0], look[1], look[2]);
+        self.view_matrix = *frame;
         self.view_synced = true;
+    }
+
+    pub fn reset(&mut self) {
+        self.set_frame(&Self::default_view(), glm::Vec3::zeros());
     }
 }

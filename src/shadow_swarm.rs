@@ -1,8 +1,8 @@
 use nalgebra_glm as glm;
 
 use crate::{
-    game_object::{GameObjectPhysicsData},
-    physics_engine::{PhysicsEngine},
+    game_object::GameObjectPhysicsData,
+    physics_engine::PhysicsEngine,
     resource_cache::{PbrRenderableHandle, ResourceHolder},
 };
 

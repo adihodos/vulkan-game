@@ -392,7 +392,8 @@ impl ImportedGeometry {
 
                 reader.read_normals().map(|normals| {
                     for (idx, normal) in normals.enumerate() {
-                        let n = (normals_matrix *  glm::vec4(normal[0], normal[1], normal[2], 0f32)).xyz();
+                        let n = (normals_matrix * glm::vec4(normal[0], normal[1], normal[2], 0f32))
+                            .xyz();
                         let n = glm::normalize(&n);
 
                         self.vertices[vertex_start + idx].normal = n;

@@ -2860,6 +2860,21 @@ impl VulkanRenderer {
     }
 
     pub fn wait_idle(&self) {
+        let fences = self
+            .frame_render_data
+            .iter()
+            .map(|fr| fr.fence.fence)
+            .collect::<Vec<_>>();
+
+        unsafe {
+            let _ = self.graphics_device().wait_for_fences(
+                &fences,
+                true,
+                std::time::Duration::from_secs(5).as_nanos() as u64,
+            );
+        }
+
+        #[cfg(not(target_os = "linux"))]
         unsafe {
             let _ = self.graphics_device.queue_wait_idle(self.queue);
             let _ = self.graphics_device.device_wait_idle();
@@ -2958,7 +2973,7 @@ impl VulkanRenderer {
 
         self.max_inflight_frames = max_inflight_frames;
         self.current_frame_id = 0;
-	self.framebuffer_extents = surface_caps.current_extent;
+        self.framebuffer_extents = surface_caps.current_extent;
     }
 }
 

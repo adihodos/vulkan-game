@@ -9,7 +9,7 @@ use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 use crate::{
     app_config::AppConfig,
     draw_context::{DrawContext, UpdateContext},
-    physics_engine::{ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups},
+    physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
     vk_renderer::{
         Cpu2GpuBuffer, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
         ShaderModuleDescription, ShaderModuleSource, UniqueGraphicsPipeline, VulkanRenderer,
@@ -66,7 +66,6 @@ impl Projectile {
             .active_events(rapier3d::prelude::ActiveEvents::COLLISION_EVENTS)
             .collision_groups(PhysicsObjectCollisionGroups::projectiles())
             .sensor(true)
-            // .user_data(ColliderUserData::new(rigid_body_handle).into())
             .build();
 
         let collider_handle = physics_engine.collider_set.insert_with_parent(
@@ -270,18 +269,9 @@ impl ProjectileSystem {
             .iter()
             .position(|projectile| projectile.rigid_body_handle == proj_body)
             .map(|proj_pos| {
-                // log::info!("Despawning projectile {} @ position {}", data, proj_pos);
                 self.projectiles.swap_remove(proj_pos);
             });
     }
-
-    // pub fn get_projectile(&self, data: ColliderUserData) -> Projectile {
-    //     *self
-    //         .projectiles
-    //         .iter()
-    //         .find(|p| p.rigid_body_handle == data.rigid_body())
-    //         .unwrap()
-    // }
 
     pub fn render(&self, draw_context: &DrawContext, phys_engine: &PhysicsEngine) {
         if self.projectiles.is_empty() {

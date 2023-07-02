@@ -1,4 +1,4 @@
-use crate::{camera::Camera, math::perspective};
+use crate::math::perspective;
 use nalgebra_glm as glm;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -99,19 +99,5 @@ impl FlightCamera {
             glm::vec3(up[0], up[1], up[2]),
             glm::vec3(dir[0], dir[1], dir[2]),
         )
-    }
-}
-
-impl Camera for FlightCamera {
-    fn position(&self) -> glm::Vec3 {
-        self.position
-    }
-
-    fn view_transform(&self) -> glm::Mat4 {
-        self.view_matrix
-    }
-
-    fn inverse_view_transform(&self) -> glm::Mat4 {
-        self.inverse_view
     }
 }

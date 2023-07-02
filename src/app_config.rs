@@ -76,6 +76,6 @@ impl EngineConfig {
     }
 
     pub fn fonts_path<P: AsRef<std::path::Path>>(&self, font_file: P) -> PathBuf {
-	self.fonts.clone().join(font_file)
+        self.fonts.clone().join(font_file)
     }
 }
