@@ -1,6 +1,6 @@
 use ash::vk::{
     BufferUsageFlags, DescriptorBufferInfo, DescriptorSetAllocateInfo, DescriptorSetLayoutBinding,
-    DescriptorType, DeviceSize, DynamicState, PipelineBindPoint, ShaderStageFlags,
+    DescriptorType, DeviceSize, DynamicState, IndexType, PipelineBindPoint, ShaderStageFlags,
     WriteDescriptorSet,
 };
 use nalgebra_glm as glm;
@@ -10,6 +10,7 @@ use crate::{
     app_config::AppConfig,
     draw_context::{DrawContext, UpdateContext},
     physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
+    resource_cache::ResourceHolder,
     vk_renderer::{
         Cpu2GpuBuffer, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
         ShaderModuleDescription, ShaderModuleSource, UniqueGraphicsPipeline, VulkanRenderer,
@@ -34,21 +35,18 @@ pub struct Projectile {
 }
 
 impl Projectile {
-    fn new(projectile_data: ProjectileSpawnData, physics_engine: &mut PhysicsEngine) -> Projectile {
-        let shooter = physics_engine
-            .rigid_body_set
-            .get(projectile_data.emitter)
-            .unwrap();
+    fn new(
+        projectile_data: ProjectileSpawnData,
+        physics_engine: &mut PhysicsEngine,
+        collider_size: glm::Vec3,
+    ) -> Projectile {
+        let shooter = physics_engine.get_rigid_body(projectile_data.emitter);
 
         let projectile_origin = *shooter.position() * projectile_data.origin;
 
         let projectile_isometry = nalgebra::Isometry3::from_parts(
             nalgebra::Translation3::from(projectile_origin),
-            *physics_engine
-                .rigid_body_set
-                .get(projectile_data.emitter)
-                .unwrap()
-                .rotation(),
+            *shooter.rotation(),
         );
 
         let direction = (projectile_isometry * glm::Vec3::z_axis()).xyz();
@@ -62,11 +60,15 @@ impl Projectile {
         rigid_body.add_force(velocity, true);
         let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
 
-        let collider = rapier3d::prelude::ColliderBuilder::cuboid(0.01f32, 0.01f32, 0.5f32)
-            .active_events(rapier3d::prelude::ActiveEvents::COLLISION_EVENTS)
-            .collision_groups(PhysicsObjectCollisionGroups::projectiles())
-            .sensor(true)
-            .build();
+        let collider = rapier3d::prelude::ColliderBuilder::cuboid(
+            collider_size.x,
+            collider_size.y,
+            collider_size.z,
+        )
+        .active_events(rapier3d::prelude::ActiveEvents::COLLISION_EVENTS)
+        .collision_groups(PhysicsObjectCollisionGroups::projectiles())
+        .sensor(true)
+        .build();
 
         let collider_handle = physics_engine.collider_set.insert_with_parent(
             collider,
@@ -87,29 +89,66 @@ impl Projectile {
 #[repr(C)]
 struct GpuProjectileInstance {
     model_matrix: glm::Mat4,
+    inner_color: glm::Vec4,
+    outer_color: glm::Vec4,
 }
 
 #[derive(Copy, Clone, Debug)]
 #[repr(C, align(16))]
-struct GpuProjectileTransformData {
+struct UBOProjectileTransformData {
     projection_view: glm::Mat4,
-    extents: glm::Vec3,
 }
 
 pub struct ProjectileSystem {
     projectiles: Vec<Projectile>,
-    ubo_transforms: Cpu2GpuBuffer<GpuProjectileTransformData>,
+    ubo_transforms: Cpu2GpuBuffer<UBOProjectileTransformData>,
     gpu_instances: Cpu2GpuBuffer<GpuProjectileInstance>,
     descriptor_sets: Vec<ash::vk::DescriptorSet>,
     pipeline: UniqueGraphicsPipeline,
+    plasmabolt_collider_size: glm::Vec3,
+    vtx_buffer: ash::vk::Buffer,
+    idx_buffer: ash::vk::Buffer,
+    idx_offset: u32,
+    idx_count: u32,
 }
 
 impl ProjectileSystem {
     const MAX_PROJECTILES: usize = 1024;
 
-    pub fn create(renderer: &VulkanRenderer, app_cfg: &AppConfig) -> Option<Self> {
+    pub fn new(
+        renderer: &VulkanRenderer,
+        resource_cache: &ResourceHolder,
+        app_cfg: &AppConfig,
+    ) -> Option<Self> {
+        use crate::imported_geometry::GeometryVertex;
+        use ash::vk::{
+            Format, VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
+        };
+        use memoffset::offset_of;
+        use std::mem::size_of;
+
         let pipeline = GraphicsPipelineBuilder::new()
-            .set_input_assembly_state(ash::vk::PrimitiveTopology::POINT_LIST, false)
+            .add_vertex_input_attribute_descriptions(&[
+                VertexInputAttributeDescription {
+                    location: 0,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, pos) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 1,
+                    binding: 0,
+                    format: Format::R32G32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, uv) as u32,
+                },
+            ])
+            .add_vertex_input_attribute_binding(
+                VertexInputBindingDescription::builder()
+                    .binding(0)
+                    .stride(size_of::<GeometryVertex>() as u32)
+                    .input_rate(VertexInputRate::VERTEX)
+                    .build(),
+            )
             .shader_stages(&[
                 ShaderModuleDescription {
                     stage: ShaderStageFlags::VERTEX,
@@ -119,29 +158,14 @@ impl ProjectileSystem {
                     entry_point: "main",
                 },
                 ShaderModuleDescription {
-                    stage: ShaderStageFlags::GEOMETRY,
-                    source: ShaderModuleSource::File(
-                        &app_cfg.engine.shader_path("projectiles.geom.spv"),
-                    ),
-                    entry_point: "main",
-                },
-                ShaderModuleDescription {
                     stage: ShaderStageFlags::FRAGMENT,
                     source: ShaderModuleSource::File(
-                        &app_cfg.engine.shader_path("dbg.draw.frag.spv"),
+                        &app_cfg.engine.shader_path("projectile.frag.spv"),
                     ),
                     entry_point: "main",
                 },
             ])
             .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
-            .set_rasterization_state(
-                ash::vk::PipelineRasterizationStateCreateInfo::builder()
-                    .cull_mode(ash::vk::CullModeFlags::NONE)
-                    .line_width(1f32)
-                    .front_face(ash::vk::FrontFace::COUNTER_CLOCKWISE)
-                    .polygon_mode(ash::vk::PolygonMode::FILL)
-                    .build(),
-            )
             .build(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
@@ -149,18 +173,16 @@ impl ProjectileSystem {
                     .set(
                         0,
                         &[
-                            DescriptorSetLayoutBinding::builder()
+                            *DescriptorSetLayoutBinding::builder()
                                 .binding(0)
-                                .stage_flags(ShaderStageFlags::GEOMETRY)
+                                .stage_flags(ShaderStageFlags::VERTEX)
                                 .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                                .descriptor_count(1)
-                                .build(),
-                            DescriptorSetLayoutBinding::builder()
+                                .descriptor_count(1),
+                            *DescriptorSetLayoutBinding::builder()
                                 .binding(1)
-                                .stage_flags(ShaderStageFlags::GEOMETRY)
+                                .stage_flags(ShaderStageFlags::VERTEX)
                                 .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                                .descriptor_count(1)
-                                .build(),
+                                .descriptor_count(1),
                         ],
                     )
                     .build(renderer.graphics_device())?,
@@ -176,7 +198,7 @@ impl ProjectileSystem {
             renderer.max_inflight_frames() as DeviceSize,
         )?;
 
-        let ubo_transforms = Cpu2GpuBuffer::<GpuProjectileTransformData>::create(
+        let ubo_transforms = Cpu2GpuBuffer::<UBOProjectileTransformData>::create(
             renderer,
             BufferUsageFlags::UNIFORM_BUFFER,
             renderer
@@ -234,12 +256,22 @@ impl ProjectileSystem {
                 .update_descriptor_sets(&write_descriptor_set, &[]);
         }
 
+        let proj_mesh_handle = resource_cache.get_non_pbr_geometry_handle("r73r27");
+        let proj_mesh = resource_cache
+            .get_non_pbr_geometry_info(proj_mesh_handle)
+            .get_node_by_name("plasmabolt");
+
         Some(Self {
             projectiles: Vec::with_capacity(Self::MAX_PROJECTILES),
             ubo_transforms,
             gpu_instances,
             descriptor_sets,
             pipeline,
+            vtx_buffer: resource_cache.vertex_buffer_non_pbr(),
+            idx_buffer: resource_cache.index_buffer_non_pbr(),
+            idx_offset: proj_mesh.index_offset,
+            idx_count: proj_mesh.index_count,
+            plasmabolt_collider_size: proj_mesh.aabb.extents(),
         })
     }
 
@@ -261,7 +293,11 @@ impl ProjectileSystem {
         if self.projectiles.len() > Self::MAX_PROJECTILES {
             log::info!("Discarding projectile, max limit reached");
         }
-        self.projectiles.push(Projectile::new(data, phys_engine));
+        self.projectiles.push(Projectile::new(
+            data,
+            phys_engine,
+            self.plasmabolt_collider_size,
+        ));
     }
 
     pub fn despawn_projectile(&mut self, proj_body: RigidBodyHandle) {
@@ -281,17 +317,14 @@ impl ProjectileSystem {
         self.ubo_transforms
             .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
             .map(|ubo_mapping| {
-                let transforms = GpuProjectileTransformData {
+                let transforms = UBOProjectileTransformData {
                     projection_view: draw_context.projection_view,
-                    //
-                    // TODO: hardcoded value, move to config file
-                    extents: glm::vec3(0.15f32, 0.15f32, 1f32),
                 };
 
                 unsafe {
                     std::ptr::copy_nonoverlapping(
                         &transforms as *const _,
-                        ubo_mapping.memptr() as *mut GpuProjectileTransformData,
+                        ubo_mapping.memptr() as *mut UBOProjectileTransformData,
                         1,
                     );
                 }
@@ -309,9 +342,11 @@ impl ProjectileSystem {
                             .get(cpu_proj.rigid_body_handle)
                             .map(|proj_body| GpuProjectileInstance {
                                 model_matrix: proj_body.position().to_homogeneous(),
+                                inner_color: glm::vec4(1f32, 1f32, 1f32, 1f32),
+                                outer_color: glm::vec4(1f32, 0f32, 0f32, 1f32),
                             })
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<smallvec::SmallVec<[GpuProjectileInstance; 16]>>();
                 unsafe {
                     std::ptr::copy_nonoverlapping(
                         cpu_instances.as_ptr(),
@@ -321,12 +356,16 @@ impl ProjectileSystem {
                 }
             });
 
+        let dc = draw_context.renderer.graphics_device();
         unsafe {
-            draw_context.renderer.graphics_device().cmd_bind_pipeline(
+            dc.cmd_bind_pipeline(
                 draw_context.cmd_buff,
                 PipelineBindPoint::GRAPHICS,
                 self.pipeline.pipeline,
             );
+
+            dc.cmd_bind_vertex_buffers(draw_context.cmd_buff, 0, &[self.vtx_buffer], &[0]);
+            dc.cmd_bind_index_buffer(draw_context.cmd_buff, self.idx_buffer, 0, IndexType::UINT32);
 
             draw_context.renderer.graphics_device().cmd_set_viewport(
                 draw_context.cmd_buff,
@@ -358,10 +397,11 @@ impl ProjectileSystem {
                     ],
                 );
 
-            draw_context.renderer.graphics_device().cmd_draw(
+            draw_context.renderer.graphics_device().cmd_draw_indexed(
                 draw_context.cmd_buff,
+                self.idx_count,
                 self.projectiles.len() as u32,
-                1,
+                self.idx_offset,
                 0,
                 0,
             );

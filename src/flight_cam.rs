@@ -72,18 +72,18 @@ impl FlightCamera {
         }
     }
 
-    pub fn update(&mut self, object: &rapier3d::prelude::RigidBody) {
-        let ideal_cam_pos = object.position().rotation * self.params.position_relative_to_object
-            + object.position().translation.vector;
+    pub fn update(&mut self, object_orientation: &nalgebra::Isometry3<f32>) {
+        let ideal_cam_pos = object_orientation.rotation * self.params.position_relative_to_object
+            + object_orientation.translation.vector;
 
         let cam_velocity = (ideal_cam_pos - self.position) * self.params.follow_bias;
 
         self.position += cam_velocity;
 
-        let up_vec = object.position().rotation * glm::Vec3::y_axis();
-        let look_at = (object.position().rotation * glm::Vec3::z_axis()).xyz()
+        let up_vec = object_orientation.rotation * glm::Vec3::y_axis();
+        let look_at = (object_orientation.rotation * glm::Vec3::z_axis()).xyz()
             * self.params.lookahead_factor
-            + object.position().translation.vector.xyz();
+            + object_orientation.translation.vector.xyz();
 
         self.view_matrix = glm::look_at_lh(&self.position, &look_at, &up_vec);
         self.inverse_view = glm::inverse(&self.view_matrix);

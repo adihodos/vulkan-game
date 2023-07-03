@@ -5,7 +5,7 @@
         angular_damping: 1.0,
         throttle_sensitivity: 0.5,
         thruster_force_primary: 5750.0,
-        thruster_force_secondary: 100.0,
+        thruster_force_secondary: 500.0,
         thruster_force_vectors: (
             [
                 0.0,
@@ -136,7 +136,7 @@
             ],
         ),
        laser: (
-            speed: 0.25,
+            speed: 2.5,
             mass: 1.0,
             lifetime: 4.0,
         ),

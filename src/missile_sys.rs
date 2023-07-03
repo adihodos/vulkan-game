@@ -273,6 +273,9 @@ impl MissileSys {
             return;
         }
 
+        let mut gpu_instances = Vec::<glm::Mat4>::new();
+
+        let mut instance_offset = 0u32;
         self.missiles_cpu_by_type
             .iter()
             .for_each(|(missile_kind, missiles)| {
@@ -280,22 +283,19 @@ impl MissileSys {
                     .entry(*missile_kind)
                     .and_modify(|draw_call_data| {
                         draw_call_data.instance_count += missiles.len() as u32;
+                        draw_call_data.first_instance = instance_offset;
                     });
+
+                gpu_instances.extend(missiles.iter().map(|msl| msl.transform));
+                instance_offset += missiles.len() as u32;
             });
 
-        let mut instance_offset = 0u32;
         let indirect_draw_calls = self
             .draw_indirect_calls_data
             .values()
-            .filter_map(|indirect_draw_call| {
-                if indirect_draw_call.instance_count != 0 {
-                    let draw_call = DrawIndexedIndirectCommand {
-                        first_instance: instance_offset,
-                        ..*indirect_draw_call
-                    };
-                    instance_offset += indirect_draw_call.instance_count;
-
-                    Some(draw_call)
+            .filter_map(|draw_call| {
+                if draw_call.instance_count != 0 {
+                    Some(*draw_call)
                 } else {
                     None
                 }
@@ -316,16 +316,13 @@ impl MissileSys {
             .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
             .map(|mut missiles_gpu_buf| {
                 let dst_ptr = missiles_gpu_buf.as_mut_ptr() as *mut glm::Mat4;
-
-                let mut offset: isize = 0;
-                self.missiles_cpu_by_type.iter().for_each(|(_, v)| {
-                    v.iter().for_each(|ms| {
-                        unsafe {
-                            dst_ptr.offset(offset).write(ms.transform);
-                        }
-                        offset += 1;
-                    });
-                });
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        gpu_instances.as_ptr(),
+                        dst_ptr,
+                        gpu_instances.len(),
+                    );
+                }
             });
 
         self.ubo_globals
@@ -393,6 +390,8 @@ impl MissileSys {
         &mut self,
         kind: MissileKind,
         initial_orientation: &nalgebra::Isometry3<f32>,
+        linear_vel: glm::Vec3,
+        angular_vel: glm::Vec3,
         physics_engine: &mut PhysicsEngine,
     ) {
         if self.missiles_count >= Self::MAX_MISSILES {
@@ -432,6 +431,10 @@ impl MissileSys {
             &mut physics_engine.rigid_body_set,
         );
 
+        let body = physics_engine.get_rigid_body_mut(body_handle);
+        body.set_linvel(linear_vel, true);
+        body.set_angvel(angular_vel, true);
+
         self.live_missiles.push(LiveMissile {
             kind,
             orientation: *initial_orientation,
@@ -443,6 +446,10 @@ impl MissileSys {
     }
 
     pub fn update(&mut self, context: &mut UpdateContext) {
+	//
+	// TODO: don't draw missile if too far away from camera
+	// TODO: warhead arming only after a certain distance
+	// TODO: actual missile logic
         self.live_missiles.retain_mut(|msl| {
             let msl_phys_body = context.physics_engine.get_rigid_body_mut(msl.rigid_body);
 
@@ -461,6 +468,7 @@ impl MissileSys {
                 //
                 // dead missile, remove it
                 context.physics_engine.remove_rigid_body(msl.rigid_body);
+                log::info!("Missile died @ {}", msl.orientation.translation.vector);
                 false
             }
         });

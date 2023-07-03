@@ -12,7 +12,6 @@ use nalgebra_glm::Vec4;
 
 use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 use smallvec::SmallVec;
-use strum::EnumProperty;
 
 use crate::{
     app_config::{AppConfig, PlayerShipConfig},
@@ -25,7 +24,7 @@ use crate::{
     math,
     missile_sys::{Missile, MissileKind, MissileSys},
     particles::{ImpactSpark, SparksSystem},
-    physics_engine::{ColliderUserData, PhysicsEngine, PhysicsObjectCollisionGroups},
+    physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
     projectile_system::{ProjectileSpawnData, ProjectileSystem},
     resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
     shadow_swarm::ShadowFighterSwarm,
@@ -39,7 +38,7 @@ use crate::{
 #[derive(Copy, Clone, Debug)]
 pub enum QueuedCommand {
     SpawnProjectile(ProjectileSpawnData),
-    SpawnMissile(MissileKind, nalgebra::Isometry3<f32>),
+    SpawnMissile(MissileKind, nalgebra::Isometry3<f32>, glm::Vec3, glm::Vec3),
     ProcessProjectileImpact(RigidBodyHandle),
     DrawMissile(Missile),
 }
@@ -508,6 +507,7 @@ impl GameWorld {
 
         let sprites = SpriteBatch::create(renderer, app_cfg)?;
         let missile_sys = MissileSys::new(renderer, &resource_cache, app_cfg)?;
+        let projectile_sys = ProjectileSystem::new(renderer, &resource_cache, app_cfg)?;
 
         let aspect = renderer.framebuffer_extents().width as f32
             / renderer.framebuffer_extents().height as f32;
@@ -534,8 +534,6 @@ impl GameWorld {
             debug_draw_overlay: std::rc::Rc::new(RefCell::new(
                 DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
             )),
-            projectiles_sys: RefCell::new(ProjectileSystem::create(renderer, app_cfg)?),
-            missile_sys: RefCell::new(missile_sys),
             sparks_sys: RefCell::new(SparksSystem::create(renderer, app_cfg)?),
             player_opts: PlayerShipOptions::new(&app_cfg.player, &sprites),
             sprite_batch: RefCell::new(sprites),
@@ -545,6 +543,8 @@ impl GameWorld {
             }),
             locked_target: RefCell::new(None),
             rt,
+            projectiles_sys: RefCell::new(projectile_sys),
+            missile_sys: RefCell::new(missile_sys),
         })
     }
 
@@ -1116,51 +1116,6 @@ impl GameWorld {
 
     pub fn update(&mut self, frame_time: f64) {
         {
-            let queued_commands = {
-                let mut phys_engine = self.physics_engine.borrow_mut();
-                let mut update_ctx = UpdateContext {
-                    physics_engine: &mut phys_engine,
-                    queued_commands: Vec::with_capacity(32),
-                    frame_time,
-                };
-
-                self.projectiles_sys.borrow_mut().update(&mut update_ctx);
-                self.missile_sys.borrow_mut().update(&mut update_ctx);
-                self.sparks_sys.borrow_mut().update(&mut update_ctx);
-                self.starfury.update(&mut update_ctx);
-
-                update_ctx.queued_commands
-            };
-
-            {
-                let mut phys_eng = self.physics_engine.borrow_mut();
-                queued_commands
-                    .iter()
-                    .for_each(|&queued_cmd| match queued_cmd {
-                        QueuedCommand::SpawnProjectile(data) => {
-                            self.projectiles_sys
-                                .borrow_mut()
-                                .spawn_projectile(data, &mut phys_eng);
-                        }
-
-                        QueuedCommand::SpawnMissile(msl_kind, msl_orientation) => {
-                            self.missile_sys.borrow_mut().add_live_missile(
-                                msl_kind,
-                                &msl_orientation,
-                                &mut phys_eng,
-                            );
-                        }
-
-                        QueuedCommand::DrawMissile(msl) => {
-                            self.missile_sys.borrow_mut().draw_inert_missile(msl);
-                        }
-
-                        _ => {}
-                    });
-            }
-        }
-
-        {
             let mut frame_times = self.frame_times.borrow_mut();
             if (frame_times.len() + 1) > Self::MAX_HISTOGRAM_VALUES {
                 frame_times.rotate_left(1);
@@ -1195,7 +1150,11 @@ impl GameWorld {
                 .borrow()
                 .rigid_body_set
                 .get(self.starfury.rigid_body_handle)
-                .map(|starfury_phys_obj| self.camera.borrow_mut().update(starfury_phys_obj));
+                .map(|starfury_phys_obj| {
+                    self.camera
+                        .borrow_mut()
+                        .update(starfury_phys_obj.position())
+                });
 
             //
             // remove impacted bullets/missiles
@@ -1204,10 +1163,63 @@ impl GameWorld {
 
                 removed_bodies.iter().for_each(|rbody| {
                     self.projectiles_sys.borrow_mut().despawn_projectile(*rbody);
+                    self.projectiles_sys.borrow_mut().despawn_projectile(*rbody);
                     pe.remove_rigid_body(*rbody);
                 });
             }
         });
+
+        {
+            let queued_commands = {
+                let mut phys_engine = self.physics_engine.borrow_mut();
+                let mut update_ctx = UpdateContext {
+                    physics_engine: &mut phys_engine,
+                    queued_commands: Vec::with_capacity(32),
+                    frame_time,
+                };
+
+                self.projectiles_sys.borrow_mut().update(&mut update_ctx);
+                self.missile_sys.borrow_mut().update(&mut update_ctx);
+                self.sparks_sys.borrow_mut().update(&mut update_ctx);
+                self.starfury.update(&mut update_ctx);
+
+                update_ctx.queued_commands
+            };
+
+            {
+                let mut phys_eng = self.physics_engine.borrow_mut();
+                queued_commands
+                    .iter()
+                    .for_each(|&queued_cmd| match queued_cmd {
+                        QueuedCommand::SpawnProjectile(data) => {
+                            self.projectiles_sys
+                                .borrow_mut()
+                                .spawn_projectile(data, &mut phys_eng);
+                        }
+
+                        QueuedCommand::SpawnMissile(
+                            msl_kind,
+                            msl_orientation,
+                            linear_vel,
+                            angular_val,
+                        ) => {
+                            self.missile_sys.borrow_mut().add_live_missile(
+                                msl_kind,
+                                &msl_orientation,
+                                linear_vel,
+                                angular_val,
+                                &mut phys_eng,
+                            );
+                        }
+
+                        QueuedCommand::DrawMissile(msl) => {
+                            self.missile_sys.borrow_mut().draw_inert_missile(msl);
+                        }
+
+                        _ => {}
+                    });
+            }
+        }
 
         if self.debug_options().debug_camera {
             self.dbg_camera.borrow_mut().update_view_matrix();

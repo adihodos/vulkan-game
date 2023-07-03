@@ -471,10 +471,17 @@ impl Starfury {
                         self.missile_respawn_cooldown = 10f32;
                     }
 
-                    let object2world = update_context
+		    
+                    let (object2world, linear_vel, angular_vel) = {
+			let rigid_body = update_context
                         .physics_engine
-                        .get_rigid_body(self.rigid_body_handle)
-                        .position();
+                            .get_rigid_body(self.rigid_body_handle);
+			
+			let angular_vel = *rigid_body.angvel();
+			let linear_vel = *rigid_body.linvel();
+			
+                        (*rigid_body.position(), linear_vel, angular_vel)
+		    };
 
                     let msl_kind = self.pylons_weaponry[pylon_id as usize].kind;
 
@@ -496,7 +503,7 @@ impl Starfury {
 
                     update_context
                         .queued_commands
-                        .push(QueuedCommand::SpawnMissile(msl_kind, iso));
+                        .push(QueuedCommand::SpawnMissile(msl_kind, iso, linear_vel, angular_vel));
                 }
 
                 QueuedOp::FireGuns => {
