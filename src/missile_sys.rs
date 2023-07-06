@@ -475,7 +475,11 @@ impl MissileSys {
 
         //
         // add live missiles to draw list
-        self.live_missiles.iter().for_each(|msl| {
+        self.live_missiles.iter().filter(|msl| {
+	    let msl_pos = msl.orientation.translation.vector.xyz();
+	    const MAX_DRAW_DST: f32 = 2000f32;
+	    glm::distance2(&msl_pos, &context.camera_pos) < MAX_DRAW_DST * MAX_DRAW_DST
+	}).for_each(|msl| {
             let m = Missile {
                 kind: msl.kind,
                 state: MissileState::Inactive,

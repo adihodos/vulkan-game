@@ -37,21 +37,22 @@ use ash::{
         ImageViewCreateInfo, ImageViewType, MappedMemoryRange, MemoryAllocateInfo, MemoryMapFlags,
         MemoryPropertyFlags, MemoryRequirements, Offset2D, Offset3D, PhysicalDevice,
         PhysicalDeviceFeatures, PhysicalDeviceFeatures2, PhysicalDeviceMemoryProperties,
-        PhysicalDeviceProperties, PhysicalDeviceType, PhysicalDeviceVulkan11Features, Pipeline,
-        PipelineBindPoint, PipelineCache, PipelineCacheCreateInfo,
-        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
-        PipelineDepthStencilStateCreateInfo, PipelineDynamicStateCreateInfo,
-        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
-        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
-        PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
-        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PresentModeKHR,
-        PrimitiveTopology, PushConstantRange, Queue, QueueFlags, Rect2D, RenderPass,
-        RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, SamplerCreateInfo, Semaphore,
-        SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SharingMode,
-        SubmitInfo, SubpassContents, SubpassDependency, SubpassDescription, SurfaceCapabilitiesKHR,
-        SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
-        VertexInputAttributeDescription, VertexInputBindingDescription, Viewport,
-        QUEUE_FAMILY_IGNORED, SUBPASS_EXTERNAL, WHOLE_SIZE,
+        PhysicalDeviceProperties, PhysicalDeviceType, PhysicalDeviceVulkan11Features,
+        PhysicalDeviceVulkan12Features, Pipeline, PipelineBindPoint, PipelineCache,
+        PipelineCacheCreateInfo, PipelineColorBlendAttachmentState,
+        PipelineColorBlendStateCreateInfo, PipelineDepthStencilStateCreateInfo,
+        PipelineDynamicStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
+        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
+        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo, PipelineStageFlags,
+        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
+        PresentInfoKHR, PresentModeKHR, PrimitiveTopology, PushConstantRange, Queue, QueueFlags,
+        Rect2D, RenderPass, RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags,
+        SamplerCreateInfo, Semaphore, SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo,
+        ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents, SubpassDependency,
+        SubpassDescription, SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR,
+        SwapchainCreateInfoKHR, SwapchainKHR, VertexInputAttributeDescription,
+        VertexInputBindingDescription, Viewport, QUEUE_FAMILY_IGNORED, SUBPASS_EXTERNAL,
+        WHOLE_SIZE,
     },
     Device, Entry, Instance,
 };
@@ -780,6 +781,13 @@ impl UniqueImageView {
                 .image(image.image)
                 .view_type(image.info.view_type)
                 .format(image.info.format)
+                .components(
+                    *ComponentMapping::builder()
+                        .r(ComponentSwizzle::IDENTITY)
+                        .g(ComponentSwizzle::IDENTITY)
+                        .b(ComponentSwizzle::IDENTITY)
+                        .a(ComponentSwizzle::IDENTITY),
+                )
                 .subresource_range(
                     ImageSubresourceRange::builder()
                         .aspect_mask(ImageAspectFlags::COLOR)
@@ -799,7 +807,7 @@ impl std::ops::Drop for UniqueImageView {
     }
 }
 
-pub struct UniqueImageWithView(UniqueImage, UniqueImageView);
+pub struct UniqueImageWithView(pub UniqueImage, pub UniqueImageView);
 
 impl UniqueImageWithView {
     pub fn from_ktx<P: AsRef<std::path::Path>>(
@@ -2447,6 +2455,7 @@ impl VulkanRenderer {
             create_logical_device(
                 &vk_instance,
                 phys_device,
+                &phys_dev_features,
                 queue_idx,
                 Some(&device_required_extensions),
             )
@@ -3222,18 +3231,43 @@ fn find_queue_family_indices(
 fn create_logical_device(
     vk_instance: &Instance,
     phys_device: PhysicalDevice,
+    phys_dev_features: &PhysicalDeviceFeatures,
     queue_family_id: u32,
     enabled_exts: Option<&[&CStr]>,
 ) -> Option<Device> {
-    let mut vk11_features = PhysicalDeviceVulkan11Features::builder().build();
-    let mut phys_device_features2 =
-        PhysicalDeviceFeatures2::builder().push_next(&mut vk11_features);
+    let vk11_features = unsafe {
+        let mut vk11_features = PhysicalDeviceVulkan11Features::builder().build();
+        let mut pd2 = PhysicalDeviceFeatures2::builder().push_next(&mut vk11_features);
 
-    unsafe {
-        vk_instance.get_physical_device_features2(phys_device, &mut phys_device_features2);
+        vk_instance.get_physical_device_features2(phys_device, &mut pd2);
+        vk11_features
+    };
+
+    if vk11_features.shader_draw_parameters == 0 {
+        log::error!("ShaderDrawParameters not supported!");
+        return None;
     }
 
+    let vk12_features = unsafe {
+        let mut vk12_features = PhysicalDeviceVulkan12Features::builder().build();
+        let mut phys_device_features2 =
+            PhysicalDeviceFeatures2::builder().push_next(&mut vk12_features);
+        vk_instance.get_physical_device_features2(phys_device, &mut phys_device_features2);
+        vk12_features
+    };
+
+    if vk12_features.draw_indirect_count == 0
+        || vk12_features.descriptor_binding_partially_bound == 0
+        || vk12_features.descriptor_indexing == 0
+    {
+        log::error!("DrawIndirectCount/DescriptorIndexig/DescriptorBindingPartiallyBound not supported on this device!");
+        return None;
+    }
+
+    log::info!("Supported Vk1.2 features: {:?}", vk12_features);
+
     let queue_priorities = [1f32];
+
     let enabled_extension_names = enabled_exts
         .map(|ee| {
             ee.iter()
@@ -3248,10 +3282,16 @@ fn create_logical_device(
         .build()];
 
     unsafe {
+        let mut vk11_features = vk11_features;
+        let mut vk12_features = vk12_features;
+        let mut phys_device_features2 = PhysicalDeviceFeatures2::builder()
+            .features(*phys_dev_features)
+            .push_next(&mut vk11_features)
+            .push_next(&mut vk12_features);
+
         vk_instance.create_device(
             phys_device,
             &DeviceCreateInfo::builder()
-                // .enabled_features(phys_device_features)
                 .queue_create_infos(&queue_create_info)
                 .enabled_extension_names(&enabled_extension_names)
                 .push_next(&mut phys_device_features2)

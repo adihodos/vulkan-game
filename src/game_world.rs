@@ -26,7 +26,7 @@ use crate::{
     particles::{ImpactSpark, SparksSystem},
     physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
     projectile_system::{ProjectileSpawnData, ProjectileSystem},
-    resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder},
+    resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder, ResourceSystem, DrawingSys},
     shadow_swarm::ShadowFighterSwarm,
     skybox::Skybox,
     sprite_batch::{SpriteBatch, TextureRegion},
@@ -41,6 +41,7 @@ pub enum QueuedCommand {
     SpawnMissile(MissileKind, nalgebra::Isometry3<f32>, glm::Vec3, glm::Vec3),
     ProcessProjectileImpact(RigidBodyHandle),
     DrawMissile(Missile),
+    DrawEngineExhaust(glm::Mat4)
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -275,6 +276,8 @@ pub struct GameWorld {
     locked_target: RefCell<Option<(ColliderHandle, RigidBodyHandle)>>,
     missile_sys: RefCell<MissileSys>,
     rt: tokio::runtime::Runtime,
+    resource_sys: ResourceSystem,
+    drawing_sys: RefCell<DrawingSys>
 }
 
 impl GameWorld {
@@ -545,6 +548,8 @@ impl GameWorld {
             rt,
             projectiles_sys: RefCell::new(projectile_sys),
             missile_sys: RefCell::new(missile_sys),
+	    resource_sys: ResourceSystem::create(renderer, app_cfg)?,
+	    drawing_sys: RefCell::new(DrawingSys::create(renderer)?)
         })
     }
 
@@ -653,6 +658,7 @@ impl GameWorld {
 
         let draw_context = DrawContext {
             rcache: &rcache,
+	    rsys: &self.resource_sys,
             renderer: frame_context.renderer,
             cmd_buff: frame_context.cmd_buff,
             frame_id: frame_context.frame_id,
@@ -666,22 +672,32 @@ impl GameWorld {
             debug_draw: self.debug_draw_overlay.clone(),
         };
 
-        self.draw_objects(&draw_context);
-        self.draw_crosshair(&draw_context);
-        self.draw_locked_target_indicator(&draw_context);
-        self.sprite_batch.borrow_mut().render(&draw_context);
+	use nalgebra::{Isometry3, Translation3, Rotation};
+	let sf0 = Isometry3::from_parts(Translation3::new(0f32, 0f32, 10f32), Rotation::identity().into());
+	let sf1 = Isometry3::from_parts(Translation3::new(0f32, 10f32, 5f32), Rotation::identity().into());
 
-        if self.debug_options().debug_draw_physics {
-            self.physics_engine
-                .borrow_mut()
-                .debug_draw(&mut self.debug_draw_overlay.borrow_mut());
-        }
+	self.drawing_sys.borrow_mut().add_mesh("sa23".into(), None, None, &sf0.to_matrix());
+	self.drawing_sys.borrow_mut().add_mesh("sa23".into(), None, None, &sf1.to_matrix());
 
-        self.debug_draw_overlay
-            .borrow_mut()
-            .draw(frame_context.renderer, &draw_context.projection_view);
+	self.drawing_sys.borrow_mut().draw(&draw_context);
+	
 
-        self.debug_draw_overlay.borrow_mut().clear();
+        // self.draw_objects(&draw_context);
+        // self.draw_crosshair(&draw_context);
+        // self.draw_locked_target_indicator(&draw_context);
+        // self.sprite_batch.borrow_mut().render(&draw_context);
+
+        // if self.debug_options().debug_draw_physics {
+        //     self.physics_engine
+        //         .borrow_mut()
+        //         .debug_draw(&mut self.debug_draw_overlay.borrow_mut());
+        // }
+
+        // self.debug_draw_overlay
+        //     .borrow_mut()
+        //     .draw(frame_context.renderer, &draw_context.projection_view);
+
+        // self.debug_draw_overlay.borrow_mut().clear();
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {
@@ -1176,11 +1192,12 @@ impl GameWorld {
                     physics_engine: &mut phys_engine,
                     queued_commands: Vec::with_capacity(32),
                     frame_time,
+		    camera_pos: self.camera.borrow().position
                 };
 
-                self.projectiles_sys.borrow_mut().update(&mut update_ctx);
-                self.missile_sys.borrow_mut().update(&mut update_ctx);
-                self.sparks_sys.borrow_mut().update(&mut update_ctx);
+                // self.projectiles_sys.borrow_mut().update(&mut update_ctx);
+                // self.missile_sys.borrow_mut().update(&mut update_ctx);
+                // self.sparks_sys.borrow_mut().update(&mut update_ctx);
                 self.starfury.update(&mut update_ctx);
 
                 update_ctx.queued_commands
@@ -1191,30 +1208,31 @@ impl GameWorld {
                 queued_commands
                     .iter()
                     .for_each(|&queued_cmd| match queued_cmd {
-                        QueuedCommand::SpawnProjectile(data) => {
-                            self.projectiles_sys
-                                .borrow_mut()
-                                .spawn_projectile(data, &mut phys_eng);
-                        }
+			
+                        // QueuedCommand::SpawnProjectile(data) => {
+                        //     self.projectiles_sys
+                        //         .borrow_mut()
+                        //         .spawn_projectile(data, &mut phys_eng);
+                        // }
 
-                        QueuedCommand::SpawnMissile(
-                            msl_kind,
-                            msl_orientation,
-                            linear_vel,
-                            angular_val,
-                        ) => {
-                            self.missile_sys.borrow_mut().add_live_missile(
-                                msl_kind,
-                                &msl_orientation,
-                                linear_vel,
-                                angular_val,
-                                &mut phys_eng,
-                            );
-                        }
+                        // QueuedCommand::SpawnMissile(
+                        //     msl_kind,
+                        //     msl_orientation,
+                        //     linear_vel,
+                        //     angular_val,
+                        // ) => {
+                        //     self.missile_sys.borrow_mut().add_live_missile(
+                        //         msl_kind,
+                        //         &msl_orientation,
+                        //         linear_vel,
+                        //         angular_val,
+                        //         &mut phys_eng,
+                        //     );
+                        // }
 
-                        QueuedCommand::DrawMissile(msl) => {
-                            self.missile_sys.borrow_mut().draw_inert_missile(msl);
-                        }
+                        // QueuedCommand::DrawMissile(msl) => {
+                        //     self.missile_sys.borrow_mut().draw_inert_missile(msl);
+                        // }
 
                         _ => {}
                     });
@@ -1326,7 +1344,7 @@ impl GameWorld {
             .exclude_rigid_body(self.starfury.rigid_body_handle)
             .groups(PhysicsObjectCollisionGroups::ships());
 
-        const MAX_RAY_DIST: f32 = 5000f32;
+        const MAX_RAY_DIST: f32 = 1000f32;
 
         let left_gun_origin = player_ship_transform * self.starfury.lower_left_gun();
         self.physics_engine
@@ -1337,7 +1355,7 @@ impl GameWorld {
                 self.physics_engine.borrow().cast_ray(
                     right_gun_origin,
                     ray_dir,
-                    5000f32,
+                    MAX_RAY_DIST,
                     query_filter,
                 )
             })
@@ -1397,7 +1415,8 @@ impl GameWorld {
 
     fn draw_locked_target_indicator(&self, draw_context: &DrawContext) {
         let physics_engine = self.physics_engine.borrow();
-        self.locked_target
+        let target_is_out_of_view = self
+            .locked_target
             .borrow()
             .and_then(|(collider_handle, locked_target_phys_handle)| {
                 physics_engine
@@ -1406,6 +1425,23 @@ impl GameWorld {
                     .map(|phys_body| (collider_handle, phys_body))
             })
             .map(|(collider_handle, locked_target)| {
+                //
+                // if target not in field of view clear lock indicator
+                let ship_frame = physics_engine
+                    .get_rigid_body(self.starfury.rigid_body_handle)
+                    .position()
+                    .to_matrix();
+                let ship_dir = ship_frame.column(2).xyz();
+                let target_vec =
+                    locked_target.position().translation.vector.xyz() - ship_frame.column(3).xyz();
+
+                const MAX_ANGLE: f32 = 1.3089969389957472f32; // 75 degrees
+                let angle = glm::angle(&ship_dir, &target_vec);
+
+                if angle > MAX_ANGLE {
+                    return true;
+                }
+
                 let current_position = *locked_target.position();
 
                 let ship_centermass_world = current_position.translation.vector;
@@ -1479,7 +1515,13 @@ impl GameWorld {
                             Some(self.player_opts.enemy_outline_color),
                         );
                     });
-            });
+                return false;
+            })
+            .unwrap_or_else(|| false);
+
+        if target_is_out_of_view {
+            self.locked_target.borrow_mut().take();
+        }
     }
 
     fn dbg_cam_gamepad_input(cam: &mut FirstPersonCamera, input: &GamepadInputState) {

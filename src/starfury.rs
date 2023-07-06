@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use crate::{
-    draw_context::UpdateContext,
+    draw_context::{DrawContext, UpdateContext},
     game_world::{GameObjectHandle, QueuedCommand},
     math::AABB3,
     missile_sys::{Missile, MissileKind, MissileState},
@@ -221,6 +223,7 @@ struct EngineThruster {
     name: String,
     transform: glm::Mat4,
     aabb: AABB3,
+    exhaust_attach_point: glm::Vec3,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -320,6 +323,7 @@ impl Starfury {
                     name: node.name.clone(),
                     transform: node.transform,
                     aabb: node.aabb,
+                    exhaust_attach_point: node.aabb.center() - node.aabb.extents(),
                 }
             })
             .collect::<Vec<_>>();
@@ -471,17 +475,16 @@ impl Starfury {
                         self.missile_respawn_cooldown = 10f32;
                     }
 
-		    
                     let (object2world, linear_vel, angular_vel) = {
-			let rigid_body = update_context
-                        .physics_engine
+                        let rigid_body = update_context
+                            .physics_engine
                             .get_rigid_body(self.rigid_body_handle);
-			
-			let angular_vel = *rigid_body.angvel();
-			let linear_vel = *rigid_body.linvel();
-			
+
+                        let angular_vel = *rigid_body.angvel();
+                        let linear_vel = *rigid_body.linvel();
+
                         (*rigid_body.position(), linear_vel, angular_vel)
-		    };
+                    };
 
                     let msl_kind = self.pylons_weaponry[pylon_id as usize].kind;
 
@@ -503,7 +506,12 @@ impl Starfury {
 
                     update_context
                         .queued_commands
-                        .push(QueuedCommand::SpawnMissile(msl_kind, iso, linear_vel, angular_vel));
+                        .push(QueuedCommand::SpawnMissile(
+                            msl_kind,
+                            iso,
+                            linear_vel,
+                            angular_vel,
+                        ));
                 }
 
                 QueuedOp::FireGuns => {
@@ -534,6 +542,7 @@ impl Starfury {
         //
         // add remaining missiles to draw sys
         self.draw_suspended_weaponry(update_context);
+        self.draw_engines_exhaust(update_context);
         self.queued_ops.clear();
     }
 
@@ -730,6 +739,42 @@ impl Starfury {
         self.params.weapons.gun_ports.lower_right
     }
 
+    fn draw_engines_exhaust(&self, update_ctx: &mut UpdateContext) {
+        let object2world = *update_ctx
+            .physics_engine
+            .get_rigid_body(self.rigid_body_handle)
+            .position();
+
+        [
+            EngineThrusterId::UpperLeftBack,
+            EngineThrusterId::UpperRightBack,
+            EngineThrusterId::LowerLeftBack,
+            EngineThrusterId::LowerRightBack,
+        ]
+        .iter()
+        .for_each(|&tid| {
+            use nalgebra::Translation3;
+
+            let thruster = &self.thrusters[tid as usize];
+            let exhaust_origin = object2world.transform_point(&nalgebra::Point3::new(
+                thruster.exhaust_attach_point.x,
+                thruster.exhaust_attach_point.y,
+                thruster.exhaust_attach_point.z,
+            ));
+	    
+            let exhaust_transform = Isometry3::from_parts(
+                Translation3::new(exhaust_origin.x, exhaust_origin.y, exhaust_origin.z),
+                object2world.rotation,
+            );
+
+            update_ctx
+                .queued_commands
+                .push(QueuedCommand::DrawEngineExhaust(
+                    exhaust_transform.to_matrix(),
+                ));
+        });
+    }
+
     fn draw_suspended_weaponry(&self, update_ctx: &mut UpdateContext) {
         let object2world = update_ctx
             .physics_engine
@@ -766,3 +811,56 @@ impl Starfury {
             });
     }
 }
+
+struct DrawCmd {
+    mesh: u64,
+    submesh: Option<u64>,
+    transparent: bool,
+    pbr: bool,
+}
+
+// struct DrawSys {
+//     cmds: Vec<DrawCmd>,
+//     mesh_name_to_id: HashMap<String, Vec<u64>>
+	
+// }
+
+// impl DrawSys {
+//     pub fn new(rc: &ResourceHolder) -> Self {
+	
+// 	let mesh_name_to_id = rc.handles.keys().map(|k| {
+// 	    use std::hash::Hasher;
+// 	    let mut h = fnv::FnvHasher::default();
+// 	    h.write(k.as_bytes());
+	    
+// 	    (k.clone(), h.finish())
+// 	}).collect::<HashMap<String, u64>>();
+
+// 	Self {
+// 	    cmds: Vec::with_capacity(1024),
+// 	    mesh_name_to_id
+// 	}
+//     }
+    
+//     fn add_draw(&mut self, mesh: u64, submesh: Option<u64>, transparent: bool, pbr: bool) {
+// 	self.cmds.push(DrawCmd { mesh , submesh, transparent, pbr });
+//     }
+
+//     fn draw(&mut self, dc: &DrawContext) {
+// 	//
+// 	// separate
+	
+// 	// let solid_objects = self.cmds.iter().filter(|c| !c.transparent)
+// 	self.cmds.sort_unstable_by(|a, b| a.transparent.cmp(&b.transparent));
+// 	let transp_idx = self.cmds.iter().position(|cmd| cmd.transparent);
+// 	let transparent_objs = transp_idx.map(|idx| {
+// 	    self.cmds.drain(idx..).collect::<Vec<_>>()
+// 	});
+
+// 	//
+// 	// sort by mesh
+// 	self.cmds.sort_by_key(|cmd| {
+// 	    (cmd.pbr, cmd.mesh, cmd.submesh)
+// 	});	
+//     }
+// }

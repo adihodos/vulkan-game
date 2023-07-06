@@ -330,6 +330,8 @@ impl ProjectileSystem {
                 }
             });
 
+	//
+	// TODO: maybe don't draw anything beyond a certain distance to the camera ??
         self.gpu_instances
             .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
             .map(|gpu_proj_buff| {
