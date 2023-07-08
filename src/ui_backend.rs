@@ -419,8 +419,21 @@ impl UiBackend {
                     })
                     .and_then(|(file_metadata, file)| unsafe {
                         mmap_rs::MmapOptions::new(file_metadata.len() as usize)
-                            .with_file(file, 0)
+                            .map_err(|e| {
+                                log::error!(
+                                    "Failed to create mapping options for file {}, error: {e}",
+                                    full_path.display()
+                                )
+                            })
+                            .ok()?
+                            .with_file(&file, 0)
                             .map()
+                            .map_err(|e| {
+                                log::error!(
+                                    "Failed to map file {}, error: {e}",
+                                    full_path.display()
+                                )
+                            })
                             .ok()
                     })
             })

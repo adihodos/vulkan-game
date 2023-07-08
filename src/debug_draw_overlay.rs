@@ -497,7 +497,7 @@ impl rapier3d::pipeline::DebugRenderBackend for DebugDrawOverlay {
         b: rapier3d::prelude::Point<rapier3d::prelude::Real>,
         color: [f32; 4],
     ) {
-        let color: palette::Packed = palette::Srgba::new(color[0], color[1], color[2], color[3])
+        let color: palette::rgb::PackedRgba  = palette::Srgba::new(color[0], color[1], color[2], color[3])
             .into_format()
             .into();
         self.add_line(

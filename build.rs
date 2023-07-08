@@ -2,9 +2,7 @@ use std::env;
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::{io::Error, io::ErrorKind};
 
-// use shaderc;
 fn add_extension(path: &mut std::path::PathBuf, extension: impl AsRef<std::path::Path>) {
     match path.extension() {
         Some(ext) => {
@@ -17,18 +15,9 @@ fn add_extension(path: &mut std::path::PathBuf, extension: impl AsRef<std::path:
     };
 }
 
-fn get_output_path() -> PathBuf {
-    //<root or manifest path>/target/<profile>/
-    let manifest_dir_string = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let build_type = env::var("PROFILE").unwrap();
-    let path = Path::new(&manifest_dir_string)
-        .join("target")
-        .join(build_type);
-    path
-}
-
 fn main() -> std::io::Result<()> {
     println!("cargo:rerun-if-changed=src/shaders");
+    println!("cargo:rerun-if-changed=data/shaders");
 
     let shader_source_files = std::fs::read_dir("src/shaders")?
         .filter_map(|dir_entry| dir_entry.ok().map(|de| de.path()))
@@ -37,7 +26,6 @@ fn main() -> std::io::Result<()> {
     let out_dir =
         Path::new(&env::var("OUT_DIR").expect("Failed to read OUT_DIR env var")).join("shaders");
     let bytecode_output_dir = Path::new("data/shaders");
-    //get_output_path().join("shaders");
 
     let _ = std::fs::create_dir(out_dir.clone());
     let _ = std::fs::create_dir_all(bytecode_output_dir.clone());
@@ -59,6 +47,7 @@ fn main() -> std::io::Result<()> {
                 .arg("-g")
                 .arg("-O0")
                 .arg("--target-env=vulkan1.3")
+                .arg("--target-spv=spv1.6")
                 .arg("-std=460core")
                 .arg("-o")
                 .arg(out_file_name.as_os_str().to_str()?)
@@ -106,8 +95,8 @@ fn main() -> std::io::Result<()> {
     if compiled_shaders == shader_source_files.len() {
         Ok(())
     } else {
-        Err(Error::new(
-            ErrorKind::Other,
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
             "Shader bytecode compilation failed",
         ))
     }

@@ -557,9 +557,19 @@ impl UniqueImage {
         ));
         let ktx_file_mapping = unsafe {
             mmap_rs::MmapOptions::new(ktx_file.metadata().unwrap().len() as usize)
-                .with_file(ktx_file, 0)
+                .map_err(|e| {
+                    log::error!(
+                        "Failed to create mapping for file {}, error {e}",
+                        path.as_ref().display()
+                    )
+                })
+                .ok()?
+                .with_file(&ktx_file, 0)
                 .map()
-                .expect("Failed to mmap texture file")
+                .map_err(|e| {
+                    log::error!("Failed to map file {}, error: {e}", path.as_ref().display())
+                })
+                .ok()?
         };
 
         let reader = ktx2::Reader::new(&ktx_file_mapping).expect("Failed to read KTX2");
@@ -1422,14 +1432,7 @@ impl std::ops::Drop for UniqueShaderModule {
 }
 
 impl UniqueShaderModule {
-    pub fn from_bytecode(graphics_device: &Device, bytecode: &[u8]) -> Option<UniqueShaderModule> {
-        let bytecode = unsafe {
-            std::slice::from_raw_parts(
-                bytecode.as_ptr() as *const _ as *const u32,
-                bytecode.len() / size_of::<u32>(),
-            )
-        };
-
+    pub fn from_bytecode(graphics_device: &Device, bytecode: &[u32]) -> Option<UniqueShaderModule> {
         unsafe {
             graphics_device.create_shader_module(
                 &ShaderModuleCreateInfo::builder().code(bytecode).build(),
@@ -1444,13 +1447,13 @@ impl UniqueShaderModule {
         .ok()
     }
 
-    pub fn from_file<P: AsRef<std::path::Path> + ?Sized>(
+    pub fn from_file<P: AsRef<std::path::Path>>(
         graphics_device: &Device,
         path: &P,
     ) -> Option<UniqueShaderModule> {
         let bytecode_file = std::fs::OpenOptions::new()
             .read(true)
-            .open(path)
+            .open(&path)
             .map_err(|e| {
                 error!(
                     "Failed to open shader file {}, error:\n{}",
@@ -1463,19 +1466,26 @@ impl UniqueShaderModule {
         let metadata = bytecode_file.metadata().ok()?;
         let mapped_file = unsafe {
             mmap_rs::MmapOptions::new(metadata.len() as usize)
-                .with_file(bytecode_file, 0)
+                .map_err(|e| {
+                    log::error!(
+                        "Failed to create mapping options for file {}, error: {e}",
+                        path.as_ref().display()
+                    )
+                })
+                .ok()?
+                .with_file(&bytecode_file, 0)
                 .map()
-        }
-        .map_err(|e| {
-            error!(
-                "Failed to memory map shader bytecode file {}, error: {}",
-                path.as_ref().to_str().unwrap(),
-                e
-            )
-        })
-        .ok()?;
+                .map_err(|e| {
+                    log::error!(
+                        "Failed to create mapping for file {}, error: {e}",
+                        path.as_ref().display()
+                    )
+                })
+                .ok()?
+        };
 
-        UniqueShaderModule::from_bytecode(graphics_device, &mapped_file)
+        let (_, bytecode, _) = unsafe { mapped_file.align_to::<u32>() };
+        UniqueShaderModule::from_bytecode(graphics_device, &bytecode)
     }
 }
 
@@ -1611,10 +1621,11 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             .filter_map(|smi| {
                 let bytecode = match &smi.source {
                     ShaderModuleSource::File(path) => {
-                        UniqueShaderModule::from_file(graphics_device, *path)
+                        UniqueShaderModule::from_file(graphics_device, path)
                     }
                     ShaderModuleSource::Bytes(bytecode) => {
-                        UniqueShaderModule::from_bytecode(graphics_device, bytecode)
+                        unimplemented!("fix this!!");
+                        // UniqueShaderModule::from_bytecode(graphics_device, bytecode)
                     }
                 }?;
 
@@ -2175,7 +2186,7 @@ impl VulkanRenderer {
         vk_entry: &ash::Entry,
     ) -> VkResult<vk::SurfaceKHR> {
         let win32_module_handle = unsafe {
-            std::mem::transmute::<windows_sys::Win32::Foundation::HINSTANCE, ash::vk::HINSTANCE>(
+            std::mem::transmute::<windows_sys::Win32::Foundation::HMODULE, ash::vk::HINSTANCE>(
                 windows_sys::Win32::System::LibraryLoader::GetModuleHandleA(std::ptr::null()),
             )
         };
@@ -2311,6 +2322,16 @@ impl VulkanRenderer {
 
     pub fn create(window: &winit::window::Window) -> Option<VulkanRenderer> {
         let vk_entry = Entry::linked();
+
+        vk_entry
+            .enumerate_instance_layer_properties()
+            .ok()?
+            .iter()
+            .for_each(|layer_prop| {
+                let layer_name = unsafe { CStr::from_ptr(layer_prop.layer_name.as_ptr()) };
+                log::info!("Layer: {}", layer_name.to_str().unwrap_or_default());
+            });
+
         let validation_layer_name =
             CStr::from_bytes_with_nul(b"VK_LAYER_KHRONOS_validation\0").unwrap();
 
@@ -2370,7 +2391,7 @@ impl VulkanRenderer {
         let app_info = vk::ApplicationInfo::builder()
             .api_version(vk::make_api_version(0, 1, 3, 0))
             .application_name(&std::ffi::CString::new("vulkan-experiments-rust").unwrap())
-            .application_version(0)
+            .application_version(vk::make_api_version(0, 0, 1, 0))
             .engine_name(&std::ffi::CString::new("Vulkan-B5-RS").unwrap())
             .build();
 
@@ -3332,7 +3353,11 @@ unsafe extern "system" fn debug_message_callback(
 ) -> Bool32 {
     if message_severity.contains(DebugUtilsMessageSeverityFlagsEXT::WARNING) {
         warn!(
-            "[Vulkan]:: {}",
+            "[Vulkan]::[id::{} id-name::{}]\n{}",
+            (*p_callback_data).message_id_number,
+            CStr::from_ptr((*p_callback_data).p_message_id_name)
+                .to_str()
+                .unwrap_or(r#"unknown id"#),
             CStr::from_ptr((*p_callback_data).p_message)
                 .to_str()
                 .unwrap_or(r#"cannot display warning"#)
@@ -3341,7 +3366,11 @@ unsafe extern "system" fn debug_message_callback(
 
     if message_severity.contains(DebugUtilsMessageSeverityFlagsEXT::ERROR) {
         error!(
-            "[Vulkan]:: {}",
+            "[Vulkan]::[id::{} id-name::{}]\n{}",
+            (*p_callback_data).message_id_number,
+            CStr::from_ptr((*p_callback_data).p_message_id_name)
+                .to_str()
+                .unwrap_or(r#"unknown id"#),
             CStr::from_ptr((*p_callback_data).p_message)
                 .to_str()
                 .unwrap_or(r#"cannot display error"#)
