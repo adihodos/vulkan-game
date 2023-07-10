@@ -1,10 +1,14 @@
-use std::{borrow::Borrow, cell::RefCell, rc::Rc};
+use std::{
+    borrow::Borrow,
+    cell::{RefCell, RefMut},
+    rc::Rc,
+};
 
 use ash::vk::{
     BorderColor, BufferUsageFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
     DescriptorSetAllocateInfo, DescriptorType, DeviceSize, Filter, ImageLayout, IndexType,
-    PipelineBindPoint, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode,
-    WriteDescriptorSet,
+    PhysicalDevicePipelineExecutablePropertiesFeaturesKHRBuilder, PipelineBindPoint,
+    SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, WriteDescriptorSet,
 };
 use nalgebra::Point3;
 use nalgebra_glm as glm;
@@ -16,7 +20,7 @@ use smallvec::SmallVec;
 use crate::{
     app_config::{AppConfig, PlayerShipConfig},
     debug_draw_overlay::DebugDrawOverlay,
-    draw_context::{DrawContext, FrameRenderContext, UpdateContext},
+    draw_context::{DrawContext, FrameRenderContext, InitContext, UpdateContext},
     flight_cam::FlightCamera,
     fps_camera::FirstPersonCamera,
     frustrum::{is_aabb_on_frustrum, Frustrum, FrustrumPlane},
@@ -26,11 +30,14 @@ use crate::{
     particles::{ImpactSpark, SparksSystem},
     physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
     projectile_system::{ProjectileSpawnData, ProjectileSystem},
-    resource_cache::{PbrDescriptorType, PbrRenderableHandle, ResourceHolder, ResourceSystem, DrawingSys},
+    resource_cache::{
+        DrawingSys, PbrDescriptorType, PbrRenderableHandle, ResourceHolder, ResourceSystem,
+    },
     shadow_swarm::ShadowFighterSwarm,
     skybox::Skybox,
     sprite_batch::{SpriteBatch, TextureRegion},
     starfury::Starfury,
+    ui_backend::UiBackend,
     vk_renderer::{Cpu2GpuBuffer, UniqueSampler, VulkanRenderer},
     window::{GamepadInputState, InputState},
 };
@@ -41,7 +48,7 @@ pub enum QueuedCommand {
     SpawnMissile(MissileKind, nalgebra::Isometry3<f32>, glm::Vec3, glm::Vec3),
     ProcessProjectileImpact(RigidBodyHandle),
     DrawMissile(Missile),
-    DrawEngineExhaust(glm::Mat4)
+    DrawEngineExhaust(glm::Mat4),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -277,7 +284,8 @@ pub struct GameWorld {
     missile_sys: RefCell<MissileSys>,
     rt: tokio::runtime::Runtime,
     resource_sys: ResourceSystem,
-    drawing_sys: RefCell<DrawingSys>
+    drawing_sys: RefCell<DrawingSys>,
+    ui: RefCell<UiBackend>,
 }
 
 impl GameWorld {
@@ -292,7 +300,11 @@ impl GameWorld {
         self.draw_opts.borrow_mut()
     }
 
-    pub fn new(renderer: &VulkanRenderer, app_cfg: &AppConfig) -> Option<GameWorld> {
+    pub fn new(
+        window: &winit::window::Window,
+        renderer: &VulkanRenderer,
+        cfg: &AppConfig,
+    ) -> Option<GameWorld> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4)
             .thread_name("vkgame-thread-pool")
@@ -300,11 +312,10 @@ impl GameWorld {
             .build()
             .expect("Failed to create Tokio runtime");
 
-        // ShadowFighterSwarm::write_default_config();
+        let mut rsys =
+            ResourceSystem::create(&renderer, &cfg).expect("Failed to create resource system");
 
-        let skybox = Skybox::create(renderer, &app_cfg.scene, &app_cfg.engine)?;
-
-        let resource_cache = ResourceHolder::create(renderer, app_cfg)?;
+        let resource_cache = ResourceHolder::create(renderer, cfg)?;
 
         let vs_ubo_transforms = Cpu2GpuBuffer::<PbrTransformDataSingleInstanceUBO>::create(
             renderer,
@@ -404,92 +415,92 @@ impl GameWorld {
                 .build(),
         )?;
 
-        skybox.get_ibl_data().iter().for_each(|ibl_data| {
-            let levels_irradiance = ibl_data.irradiance.info().num_levels;
+        // skybox.get_ibl_data().iter().for_each(|ibl_data| {
+        //     let levels_irradiance = ibl_data.irradiance.info().num_levels;
 
-            let sampler_cubemaps = UniqueSampler::new(
-                renderer.graphics_device(),
-                &SamplerCreateInfo::builder()
-                    .min_lod(0f32)
-                    .max_lod(levels_irradiance as f32)
-                    .min_filter(Filter::LINEAR)
-                    .mag_filter(Filter::LINEAR)
-                    .mipmap_mode(SamplerMipmapMode::LINEAR)
-                    .address_mode_u(SamplerAddressMode::CLAMP_TO_EDGE)
-                    .address_mode_v(SamplerAddressMode::CLAMP_TO_EDGE)
-                    .address_mode_w(SamplerAddressMode::CLAMP_TO_EDGE)
-                    .border_color(BorderColor::INT_OPAQUE_BLACK)
-                    .max_anisotropy(1f32)
-                    .build(),
-            )
-            .expect("Failed to create sampler");
+        //     let sampler_cubemaps = UniqueSampler::new(
+        //         renderer.graphics_device(),
+        //         &SamplerCreateInfo::builder()
+        //             .min_lod(0f32)
+        //             .max_lod(levels_irradiance as f32)
+        //             .min_filter(Filter::LINEAR)
+        //             .mag_filter(Filter::LINEAR)
+        //             .mipmap_mode(SamplerMipmapMode::LINEAR)
+        //             .address_mode_u(SamplerAddressMode::CLAMP_TO_EDGE)
+        //             .address_mode_v(SamplerAddressMode::CLAMP_TO_EDGE)
+        //             .address_mode_w(SamplerAddressMode::CLAMP_TO_EDGE)
+        //             .border_color(BorderColor::INT_OPAQUE_BLACK)
+        //             .max_anisotropy(1f32)
+        //             .build(),
+        //     )
+        //     .expect("Failed to create sampler");
 
-            let ibl_desc_img_info = [
-                DescriptorImageInfo::builder()
-                    .image_view(ibl_data.irradiance.image_view())
-                    .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .sampler(sampler_cubemaps.sampler)
-                    .build(),
-                DescriptorImageInfo::builder()
-                    .image_view(ibl_data.specular.image_view())
-                    .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .sampler(sampler_cubemaps.sampler)
-                    .build(),
-                DescriptorImageInfo::builder()
-                    .image_view(ibl_data.brdf_lut.image_view())
-                    .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .sampler(sampler_brdf_lut.sampler)
-                    .build(),
-            ];
+        //     let ibl_desc_img_info = [
+        //         DescriptorImageInfo::builder()
+        //             .image_view(ibl_data.irradiance.image_view())
+        //             .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        //             .sampler(sampler_cubemaps.sampler)
+        //             .build(),
+        //         DescriptorImageInfo::builder()
+        //             .image_view(ibl_data.specular.image_view())
+        //             .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        //             .sampler(sampler_cubemaps.sampler)
+        //             .build(),
+        //         DescriptorImageInfo::builder()
+        //             .image_view(ibl_data.brdf_lut.image_view())
+        //             .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        //             .sampler(sampler_brdf_lut.sampler)
+        //             .build(),
+        //     ];
 
-            samplers_ibl.push(sampler_cubemaps);
+        //     samplers_ibl.push(sampler_cubemaps);
 
-            let dset_ibl = unsafe {
-                renderer.graphics_device().allocate_descriptor_sets(
-                    &DescriptorSetAllocateInfo::builder()
-                        .descriptor_pool(renderer.descriptor_pool())
-                        .set_layouts(&pbr_descriptor_layouts[3..])
-                        .build(),
-                )
-            }
-            .expect("Failed to allocate descriptor sets");
+        //     let dset_ibl = unsafe {
+        //         renderer.graphics_device().allocate_descriptor_sets(
+        //             &DescriptorSetAllocateInfo::builder()
+        //                 .descriptor_pool(renderer.descriptor_pool())
+        //                 .set_layouts(&pbr_descriptor_layouts[3..])
+        //                 .build(),
+        //         )
+        //     }
+        //     .expect("Failed to allocate descriptor sets");
 
-            let wds = [
-                //
-                // irradiance
-                WriteDescriptorSet::builder()
-                    .dst_set(dset_ibl[0])
-                    .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .dst_binding(0)
-                    .image_info(&ibl_desc_img_info[0..1])
-                    .dst_array_element(0)
-                    .build(),
-                //
-                // specular
-                WriteDescriptorSet::builder()
-                    .dst_set(dset_ibl[0])
-                    .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .dst_binding(1)
-                    .dst_array_element(0)
-                    .image_info(&ibl_desc_img_info[1..2])
-                    .build(),
-                //
-                // BRDF lut
-                WriteDescriptorSet::builder()
-                    .dst_set(dset_ibl[0])
-                    .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .dst_binding(2)
-                    .dst_array_element(0)
-                    .image_info(&ibl_desc_img_info[2..])
-                    .build(),
-            ];
+        //     let wds = [
+        //         //
+        //         // irradiance
+        //         WriteDescriptorSet::builder()
+        //             .dst_set(dset_ibl[0])
+        //             .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+        //             .dst_binding(0)
+        //             .image_info(&ibl_desc_img_info[0..1])
+        //             .dst_array_element(0)
+        //             .build(),
+        //         //
+        //         // specular
+        //         WriteDescriptorSet::builder()
+        //             .dst_set(dset_ibl[0])
+        //             .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+        //             .dst_binding(1)
+        //             .dst_array_element(0)
+        //             .image_info(&ibl_desc_img_info[1..2])
+        //             .build(),
+        //         //
+        //         // BRDF lut
+        //         WriteDescriptorSet::builder()
+        //             .dst_set(dset_ibl[0])
+        //             .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+        //             .dst_binding(2)
+        //             .dst_array_element(0)
+        //             .image_info(&ibl_desc_img_info[2..])
+        //             .build(),
+        //     ];
 
-            unsafe {
-                renderer.graphics_device().update_descriptor_sets(&wds, &[]);
-            }
+        //     unsafe {
+        //         renderer.graphics_device().update_descriptor_sets(&wds, &[]);
+        //     }
 
-            ibl_descriptor_sets.extend(dset_ibl);
-        });
+        //     ibl_descriptor_sets.extend(dset_ibl);
+        // });
 
         samplers_ibl.push(sampler_brdf_lut);
         let objects = vec![GameObjectData {
@@ -508,12 +519,26 @@ impl GameWorld {
             shadows_swarm.params.instance_count,
         )?;
 
-        let sprites = SpriteBatch::create(renderer, app_cfg)?;
-        let missile_sys = MissileSys::new(renderer, &resource_cache, app_cfg)?;
-        let projectile_sys = ProjectileSystem::new(renderer, &resource_cache, app_cfg)?;
+        let sprites = SpriteBatch::create(renderer, cfg)?;
+        let missile_sys = MissileSys::new(renderer, &resource_cache, cfg)?;
+        let projectile_sys = ProjectileSystem::new(renderer, &resource_cache, cfg)?;
 
         let aspect = renderer.framebuffer_extents().width as f32
             / renderer.framebuffer_extents().height as f32;
+
+        let ui = RefCell::new(UiBackend::new(&mut InitContext {
+            window,
+            renderer,
+            cfg,
+            rsys: &mut rsys,
+        })?);
+
+        let skybox = Skybox::create(&mut InitContext {
+            window,
+            renderer,
+            cfg,
+            rsys: &mut rsys,
+        })?;
 
         Some(GameWorld {
             draw_opts: RefCell::new(DebugOptions::default()),
@@ -535,10 +560,10 @@ impl GameWorld {
             camera: RefCell::new(FlightCamera::new(75f32, aspect, 0.1f32, 5000f32)),
             dbg_camera: RefCell::new(FirstPersonCamera::new(75f32, aspect, 0.1f32, 5000f32)),
             debug_draw_overlay: std::rc::Rc::new(RefCell::new(
-                DebugDrawOverlay::create(&renderer).expect("Failed to create debug draw overlay"),
+                DebugDrawOverlay::create(renderer).expect("Failed to create debug draw overlay"),
             )),
-            sparks_sys: RefCell::new(SparksSystem::create(renderer, app_cfg)?),
-            player_opts: PlayerShipOptions::new(&app_cfg.player, &sprites),
+            sparks_sys: RefCell::new(SparksSystem::create(renderer, cfg)?),
+            player_opts: PlayerShipOptions::new(&cfg.player, &sprites),
             sprite_batch: RefCell::new(sprites),
             stats: RefCell::new(Statistics {
                 total_instances: 0,
@@ -548,8 +573,9 @@ impl GameWorld {
             rt,
             projectiles_sys: RefCell::new(projectile_sys),
             missile_sys: RefCell::new(missile_sys),
-	    resource_sys: ResourceSystem::create(renderer, app_cfg)?,
-	    drawing_sys: RefCell::new(DrawingSys::create(renderer)?)
+            resource_sys: rsys,
+            drawing_sys: RefCell::new(DrawingSys::create(renderer)?),
+            ui,
         })
     }
 
@@ -658,7 +684,7 @@ impl GameWorld {
 
         let draw_context = DrawContext {
             rcache: &rcache,
-	    rsys: &self.resource_sys,
+            rsys: &self.resource_sys,
             renderer: frame_context.renderer,
             cmd_buff: frame_context.cmd_buff,
             frame_id: frame_context.frame_id,
@@ -672,15 +698,27 @@ impl GameWorld {
             debug_draw: self.debug_draw_overlay.clone(),
         };
 
-	use nalgebra::{Isometry3, Translation3, Rotation};
-	let sf0 = Isometry3::from_parts(Translation3::new(0f32, 0f32, 10f32), Rotation::identity().into());
-	let sf1 = Isometry3::from_parts(Translation3::new(0f32, 10f32, 5f32), Rotation::identity().into());
+        use nalgebra::{Isometry3, Rotation, Translation3};
+        let sf0 = Isometry3::from_parts(
+            Translation3::new(0f32, 0f32, 10f32),
+            Rotation::identity().into(),
+        );
+        let sf1 = Isometry3::from_parts(
+            Translation3::new(0f32, 10f32, 5f32),
+            Rotation::identity().into(),
+        );
 
-	self.drawing_sys.borrow_mut().add_mesh("sa23".into(), None, None, &sf0.to_matrix());
-	self.drawing_sys.borrow_mut().add_mesh("sa23".into(), None, None, &sf1.to_matrix());
+        self.drawing_sys
+            .borrow_mut()
+            .add_mesh("sa23".into(), None, None, &sf0.to_matrix());
+        self.drawing_sys
+            .borrow_mut()
+            .add_mesh("sa23".into(), None, None, &sf1.to_matrix());
 
-	self.drawing_sys.borrow_mut().draw(&draw_context);
-	
+        self.drawing_sys.borrow_mut().setup_bindless(self.skybox.id, &draw_context);
+
+        self.skybox.draw(&draw_context);
+        self.drawing_sys.borrow_mut().draw(&draw_context);
 
         // self.draw_objects(&draw_context);
         // self.draw_crosshair(&draw_context);
@@ -698,6 +736,19 @@ impl GameWorld {
         //     .draw(frame_context.renderer, &draw_context.projection_view);
 
         // self.debug_draw_overlay.borrow_mut().clear();
+
+        {
+            let mut u = RefMut::map(self.ui.borrow_mut(), |ui| {
+                ui.new_frame(frame_context.window)
+            });
+
+            self.ui(&mut u);
+        }
+        {
+            let mut ui = self.ui.borrow_mut();
+            ui.apply_cursor_before_render(frame_context.window);
+            ui.draw_frame(&draw_context);
+        }
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {
@@ -785,7 +836,10 @@ impl GameWorld {
                     object_renderable.descriptor_sets[0],
                     self.single_inst_renderdata.object_descriptor_sets[1],
                     self.single_inst_renderdata.ibl_descriptor_sets
-                        [self.skybox.active_skybox as usize],
+                        [
+			    // self.skybox.active_skybox as usize
+			    0
+			],
                 ];
 
                 let descriptor_set_offsets = [
@@ -964,7 +1018,10 @@ impl GameWorld {
                     renderable.descriptor_sets[0],
                     self.single_inst_renderdata.object_descriptor_sets[1],
                     self.single_inst_renderdata.ibl_descriptor_sets
-                        [self.skybox.active_skybox as usize],
+                        [
+			    // self.skybox.active_skybox as usize
+			    0
+			],
                 ],
                 &[
                     self.shadows_swarm_inst_render_data
@@ -994,7 +1051,7 @@ impl GameWorld {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut imgui::Ui) {
+    pub fn ui(&self, ui: &mut imgui::Ui) {
         ui.window("Options")
             .size([400.0, 110.0], imgui::Condition::FirstUseEver)
             .build(|| {
@@ -1192,7 +1249,7 @@ impl GameWorld {
                     physics_engine: &mut phys_engine,
                     queued_commands: Vec::with_capacity(32),
                     frame_time,
-		    camera_pos: self.camera.borrow().position
+                    camera_pos: self.camera.borrow().position,
                 };
 
                 // self.projectiles_sys.borrow_mut().update(&mut update_ctx);
@@ -1208,7 +1265,6 @@ impl GameWorld {
                 queued_commands
                     .iter()
                     .for_each(|&queued_cmd| match queued_cmd {
-			
                         // QueuedCommand::SpawnProjectile(data) => {
                         //     self.projectiles_sys
                         //         .borrow_mut()
@@ -1233,7 +1289,6 @@ impl GameWorld {
                         // QueuedCommand::DrawMissile(msl) => {
                         //     self.missile_sys.borrow_mut().draw_inert_missile(msl);
                         // }
-
                         _ => {}
                     });
             }
@@ -1263,19 +1318,13 @@ impl GameWorld {
         log::info!("Removed {:?}", proj_handle);
     }
 
-    // pub fn input_event(&self, event: &winit::event::WindowEvent) {
-    //     use winit::event::WindowEvent;
-    //     match event {
-    //         WindowEvent::KeyboardInput {
-    //             device_id: _,
-    //             input,
-    //             is_synthetic: _,
-    //         } => {
-    //             self.starfury.input_event(input);
-    //         }
-    //         _ => {}
-    //     }
-    // }
+    pub fn handle_winit_event<T>(
+        &mut self,
+        window: &winit::window::Window,
+        event: &winit::event::Event<T>,
+    ) {
+        self.ui.borrow_mut().handle_event(window, event);
+    }
 
     pub fn gamepad_input(&mut self, input_state: &InputState) {
         if input_state.gamepad.btn_lock_target {

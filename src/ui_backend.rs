@@ -1,17 +1,12 @@
 use ash::vk::{
-    BlendFactor, BlendOp, BorderColor, BufferUsageFlags, ColorComponentFlags, ComponentMapping,
-    CullModeFlags, DescriptorBufferInfo, DescriptorImageInfo, DescriptorSet,
-    DescriptorSetAllocateInfo, DescriptorSetLayoutBinding, DescriptorType, DeviceSize,
-    DynamicState, Extent2D, Extent3D, Filter, Format, FrontFace, Handle, ImageAspectFlags,
-    ImageCreateInfo, ImageLayout, ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags,
-    ImageViewCreateInfo, ImageViewType, IndexType, MemoryPropertyFlags, Offset2D,
+    BlendFactor, BlendOp, BufferUsageFlags, ColorComponentFlags,
+    CullModeFlags, DeviceSize,
+    DynamicState, Extent2D, Extent3D, Format, FrontFace,
+    ImageCreateInfo, ImageLayout, ImageTiling, ImageType, ImageUsageFlags, IndexType, MemoryPropertyFlags, Offset2D,
     PipelineBindPoint, PipelineColorBlendAttachmentState, PipelineRasterizationStateCreateInfo,
-    PolygonMode, PrimitiveTopology, Rect2D, SampleCountFlags, SamplerAddressMode,
-    SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, SharingMode,
+    PolygonMode, PrimitiveTopology, Rect2D, SampleCountFlags, ShaderStageFlags, SharingMode,
     VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
-    WriteDescriptorSet,
 };
-use log::{error, info};
 use memoffset::offset_of;
 
 use imgui::{self, BackendFlags, ConfigFlags, DrawCmd, FontConfig, FontSource, Io, Key};
@@ -26,12 +21,13 @@ use winit::{
 };
 
 use crate::{
-    app_config::AppConfig,
-    draw_context::FrameRenderContext,
+    draw_context::{DrawContext, InitContext},
+    resource_cache::{BindlessResourceHandle, PushConstVertex},
     vk_renderer::{
-        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ImageCopySource,
+        GraphicsPipelineBuilder, ImageCopySource,
         ScopedBufferMapping, ShaderModuleDescription, ShaderModuleSource, UniqueBuffer,
-        UniqueGraphicsPipeline, UniqueImage, UniqueImageView, UniqueSampler, VulkanRenderer,
+        UniqueGraphicsPipeline, UniqueImageWithView,
+        VulkanRenderer,
     },
 };
 
@@ -39,11 +35,6 @@ use std::{mem::size_of, path::Path};
 
 type UiVertex = imgui::DrawVert;
 type UiIndex = imgui::DrawIdx;
-
-#[repr(C)]
-struct Uniform {
-    world_view_proj: nalgebra_glm::Mat4,
-}
 
 /// Parts adapted from imgui-winit-support example
 
@@ -252,16 +243,11 @@ pub struct UiBackend {
     imgui: imgui::Context,
     vertex_bytes_one_frame: DeviceSize,
     index_bytes_one_frame: DeviceSize,
-    ubo_bytes_one_frame: DeviceSize,
-    uniform_buffer: UniqueBuffer,
-    sampler: UniqueSampler,
     pipeline: UniqueGraphicsPipeline,
-    descriptor_set: DescriptorSet,
     vertex_buffer: UniqueBuffer,
     index_buffer: UniqueBuffer,
-    font_atlas_image: UniqueImage,
-    font_atlas_imageview: UniqueImageView,
     platform: WinitPlatform,
+    font_atlas: BindlessResourceHandle,
 }
 
 impl UiBackend {
@@ -330,25 +316,19 @@ impl UiBackend {
         imgui
     }
 
-    pub fn new(
-        renderer: &VulkanRenderer,
-        window: &winit::window::Window,
-        cfg: &AppConfig,
-    ) -> Option<UiBackend> {
-        info!(
-            "UI vertex type size = {}, index type size = {}",
-            std::mem::size_of::<UiVertex>(),
-            std::mem::size_of::<UiIndex>()
-        );
-
+    pub fn new(init_ctx: &mut InitContext) -> Option<UiBackend> {
         let vertex_bytes_one_frame = UiBackend::MAX_VERTICES
             * VulkanRenderer::aligned_size_of_type::<UiVertex>(
-                renderer.device_properties().limits.non_coherent_atom_size,
+                init_ctx
+                    .renderer
+                    .device_properties()
+                    .limits
+                    .non_coherent_atom_size,
             ) as u32;
 
-        let vertex_buffer_size = vertex_bytes_one_frame * renderer.max_inflight_frames();
+        let vertex_buffer_size = vertex_bytes_one_frame * init_ctx.renderer.max_inflight_frames();
         let vertex_buffer = UniqueBuffer::new(
-            renderer,
+            init_ctx.renderer,
             BufferUsageFlags::VERTEX_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE,
             vertex_buffer_size as DeviceSize,
@@ -356,33 +336,23 @@ impl UiBackend {
 
         let index_bytes_one_frame = UiBackend::MAX_INDICES
             * VulkanRenderer::aligned_size_of_type::<UiIndex>(
-                renderer.device_properties().limits.non_coherent_atom_size,
+                init_ctx
+                    .renderer
+                    .device_properties()
+                    .limits
+                    .non_coherent_atom_size,
             ) as u32;
-        let index_buffer_size = index_bytes_one_frame * renderer.max_inflight_frames();
+        let index_buffer_size = index_bytes_one_frame * init_ctx.renderer.max_inflight_frames();
         let index_buffer = UniqueBuffer::new(
-            renderer,
+            init_ctx.renderer,
             BufferUsageFlags::INDEX_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE,
             index_buffer_size as DeviceSize,
         )?;
 
-        let ubo_bytes_one_frame = VulkanRenderer::aligned_size_of_type::<Uniform>(
-            renderer
-                .device_properties()
-                .limits
-                .min_uniform_buffer_offset_alignment,
-        );
-
-        let uniform_buffer = UniqueBuffer::new(
-            renderer,
-            BufferUsageFlags::UNIFORM_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE,
-            ubo_bytes_one_frame * renderer.max_inflight_frames() as DeviceSize,
-        )?;
-
         let mut imgui = Self::init_imgui();
         let hidpi_mode = HiDpiMode::Default;
-        let (hidpi_mode, hidpi_factor) = hidpi_mode.apply(window.scale_factor());
+        let (hidpi_mode, hidpi_factor) = hidpi_mode.apply(init_ctx.window.scale_factor());
 
         let platform = WinitPlatform {
             hidpi_mode,
@@ -391,8 +361,8 @@ impl UiBackend {
         };
 
         imgui.io_mut().display_framebuffer_scale = [hidpi_factor as f32, hidpi_factor as f32];
-        let logical_size = window.inner_size().to_logical(hidpi_factor);
-        let logical_size = Self::scale_size_from_winit(&platform, window, logical_size);
+        let logical_size = init_ctx.window.inner_size().to_logical(hidpi_factor);
+        let logical_size = Self::scale_size_from_winit(&platform, init_ctx.window, logical_size);
         imgui.io_mut().display_size = [logical_size.width as f32, logical_size.height as f32];
 
         let font_files = ["iosevka-ss03-regular.ttf", "iosevka-ss03-medium.ttf"];
@@ -400,7 +370,7 @@ impl UiBackend {
         font_files
             .iter()
             .filter_map(|font_file| {
-                let full_path = cfg.engine.fonts_path(font_file);
+                let full_path = init_ctx.cfg.engine.fonts_path(font_file);
                 std::fs::File::open(&full_path)
                     .map_err(|e| {
                         log::error!(
@@ -452,15 +422,9 @@ impl UiBackend {
 
         let font_atlas_image = imgui.fonts().build_alpha8_texture();
 
-        let img_pixels = [ImageCopySource {
-            src: font_atlas_image.data.as_ptr(),
-            bytes: (font_atlas_image.width * font_atlas_image.height) as DeviceSize,
-        }];
-
-        let copy_tex_work_pkg = renderer.create_work_package()?;
-
-        let font_atlas_image = UniqueImage::with_data(
-            renderer,
+        let copy_tex_work_pkg = init_ctx.renderer.create_work_package()?;
+        let font_atlas_trexture = UniqueImageWithView::from_pixels(
+            init_ctx.renderer,
             &ImageCreateInfo::builder()
                 .usage(ImageUsageFlags::SAMPLED | ImageUsageFlags::TRANSFER_DST)
                 .format(Format::R8_UNORM)
@@ -475,45 +439,21 @@ impl UiBackend {
                     depth: 1,
                 })
                 .sharing_mode(SharingMode::EXCLUSIVE)
-                .samples(SampleCountFlags::TYPE_1)
-                .build(),
-            &img_pixels,
+                .samples(SampleCountFlags::TYPE_1),
             &copy_tex_work_pkg,
+            &[ImageCopySource {
+                src: font_atlas_image.data.as_ptr(),
+                bytes: (font_atlas_image.width * font_atlas_image.height) as DeviceSize,
+            }],
         )?;
+	init_ctx.renderer.push_work_package(copy_tex_work_pkg);
 
-        renderer.push_work_package(copy_tex_work_pkg);
-
-        let font_atlas_imageview = UniqueImageView::new(
-            renderer.graphics_device(),
-            &ImageViewCreateInfo::builder()
-                .format(Format::R8_UNORM)
-                .image(font_atlas_image.image)
-                .view_type(ImageViewType::TYPE_2D)
-                .components(ComponentMapping::default())
-                .subresource_range(
-                    ImageSubresourceRange::builder()
-                        .aspect_mask(ImageAspectFlags::COLOR)
-                        .layer_count(1)
-                        .level_count(1)
-                        .build(),
-                ),
-        )?;
-
-        let sampler = UniqueSampler::new(
-            renderer.graphics_device(),
-            &SamplerCreateInfo::builder()
-                .mag_filter(Filter::LINEAR)
-                .min_filter(Filter::LINEAR)
-                .mipmap_mode(SamplerMipmapMode::LINEAR)
-                .border_color(BorderColor::INT_OPAQUE_BLACK)
-                .address_mode_u(SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_v(SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_w(SamplerAddressMode::CLAMP_TO_EDGE)
-                .max_lod(1f32)
-                .build(),
-        )?;
-
-        info!("Creating ui graphics pipeline");
+        let font_atlas_handle = init_ctx.rsys.add_texture(
+            font_atlas_trexture,
+            crate::resource_cache::BindlessResourceKind::SamplerMiscTextures,
+            None,
+            init_ctx.renderer,
+        );
 
         let pipeline = GraphicsPipelineBuilder::new()
             .add_vertex_input_attribute_descriptions(&[
@@ -580,96 +520,35 @@ impl UiBackend {
             )
             .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
             .build(
-                renderer.graphics_device(),
-                renderer.pipeline_cache(),
-                GraphicsPipelineLayoutBuilder::new()
-                    .set(
-                        0,
-                        &[
-                            DescriptorSetLayoutBinding::builder()
-                                .binding(0)
-                                .stage_flags(ShaderStageFlags::VERTEX)
-                                .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                                .descriptor_count(1)
-                                .build(),
-                            DescriptorSetLayoutBinding::builder()
-                                .binding(1)
-                                .stage_flags(ShaderStageFlags::FRAGMENT)
-                                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                                .descriptor_count(1)
-                                .build(),
-                        ],
-                    )
-                    .build(renderer.graphics_device())?,
-                renderer.renderpass(),
+                init_ctx.renderer.graphics_device(),
+                init_ctx.renderer.pipeline_cache(),
+                (
+                    init_ctx.rsys.get_pbr_pipeline().layout,
+                    init_ctx
+                        .rsys
+                        .get_pbr_pipeline()
+                        .descriptor_layouts()
+                        .to_vec(),
+                ),
+                init_ctx.renderer.renderpass(),
                 0,
             )?;
 
-        let descriptor_sets = unsafe {
-            renderer.graphics_device().allocate_descriptor_sets(
-                &DescriptorSetAllocateInfo::builder()
-                    .descriptor_pool(renderer.descriptor_pool())
-                    .set_layouts(pipeline.descriptor_layouts())
-                    .build(),
-            )
-        }
-        .map_err(|e| error!("Failed to allocate descriptor sets: {}", e))
-        .ok()?;
-
-        assert!(descriptor_sets.len() == 1);
-        imgui.fonts().tex_id = imgui::TextureId::new(descriptor_sets[0].as_raw() as usize);
-
-        let ds_buffer_info = [DescriptorBufferInfo::builder()
-            .range(size_of::<Uniform>() as DeviceSize)
-            .offset(0)
-            .buffer(uniform_buffer.buffer)
-            .build()];
-
-        let ds_image_info = [DescriptorImageInfo::builder()
-            .sampler(sampler.sampler)
-            .image_view(font_atlas_imageview.view)
-            .image_layout(ImageLayout::READ_ONLY_OPTIMAL)
-            .build()];
-
-        let wds = [
-            WriteDescriptorSet::builder()
-                .dst_binding(0)
-                .dst_set(descriptor_sets[0])
-                .dst_array_element(0)
-                .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                .buffer_info(&ds_buffer_info)
-                .build(),
-            WriteDescriptorSet::builder()
-                .dst_binding(1)
-                .dst_array_element(0)
-                .image_info(&ds_image_info)
-                .dst_set(descriptor_sets[0])
-                .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .build(),
-        ];
-
-        unsafe {
-            renderer.graphics_device().update_descriptor_sets(&wds, &[]);
-        }
+        imgui.fonts().tex_id = imgui::TextureId::new(font_atlas_handle.handle() as usize);
 
         Some(UiBackend {
             imgui,
             vertex_bytes_one_frame: vertex_bytes_one_frame as u64,
             index_bytes_one_frame: index_bytes_one_frame as u64,
-            ubo_bytes_one_frame,
-            uniform_buffer,
-            sampler,
+            font_atlas: font_atlas_handle,
             pipeline,
-            descriptor_set: descriptor_sets[0],
             vertex_buffer,
             index_buffer,
-            font_atlas_image,
-            font_atlas_imageview,
             platform,
         })
     }
 
-    pub fn draw_frame(&mut self, frame_context: &FrameRenderContext) {
+    pub fn draw_frame(&mut self, frame_context: &DrawContext) {
         let ui_context = &mut self.imgui;
 
         let draw_data = ui_context.render();
@@ -792,40 +671,36 @@ impl UiBackend {
                 1.0f32,
             ];
 
-            let transform_gpu = std::slice::from_raw_parts(
-                transform.as_ptr() as *const u8,
-                transform.len() * size_of::<f32>(),
-            );
+            // let transform_gpu = std::slice::from_raw_parts(
+            //     transform.as_ptr() as *const u8,
+            //     transform.len() * size_of::<f32>(),
+            // );
 
-            //
-            // push transform
-            {
-                ScopedBufferMapping::create(
-                    frame_context.renderer,
-                    &self.uniform_buffer,
-                    size_of::<Uniform>() as DeviceSize,
-                    self.ubo_bytes_one_frame * frame_context.frame_id as DeviceSize,
-                )
-                .map(|mapping| {
-                    std::ptr::copy_nonoverlapping(
-                        transform_gpu.as_ptr(),
-                        mapping.memptr() as *mut u8,
-                        transform_gpu.len(),
-                    );
-                });
-            }
+	    use nalgebra_glm::Mat4;
+	    let pcv = PushConstVertex {
+		model: Mat4::from_column_slice(&transform),
+		atlas_id: self.font_atlas.handle()
+	    };
 
-            let descriptor_sets = [self.descriptor_set];
-            let dynamic_offsets = [self.ubo_bytes_one_frame as u32 * frame_context.frame_id];
-
-            graphics_device.cmd_bind_descriptor_sets(
+            graphics_device.cmd_push_constants(
                 frame_context.cmd_buff,
-                PipelineBindPoint::GRAPHICS,
                 self.pipeline.layout,
+                ShaderStageFlags::ALL,
                 0,
-                &descriptor_sets,
-                &dynamic_offsets,
+                pcv.as_ref()
             );
+
+            // graphics_device.cmd_push_constants(
+            //     frame_context.cmd_buff,
+            //     self.pipeline.layout,
+            //     ShaderStageFlags::FRAGMENT,
+            //     PushConstVertex::SIZE,
+            //     PushConstFragment {
+            //         tex: self.font_atlas.handle(),
+            //         array: 0,
+            //     }
+            //     .as_ref(),
+            // );
 
             //
             // Will project scissor/clipping rectangles into framebuffer space
@@ -893,7 +768,7 @@ impl UiBackend {
                                     0,
                                 );
                             }
-                            DrawCmd::ResetRenderState => info!("reset render state"),
+                            DrawCmd::ResetRenderState => log::info!("reset render state"),
                             _ => {}
                         }
                     }

@@ -3,8 +3,8 @@ use std::{collections::HashMap, mem::size_of};
 use crate::{math::AABB3, pbr::PbrMaterial};
 use ash::vk::DeviceSize;
 use gltf::{
-    buffer::{self},
-    image::{self},
+    buffer,
+    image,
     scene::Transform,
 };
 use mmap_rs::MmapOptions;

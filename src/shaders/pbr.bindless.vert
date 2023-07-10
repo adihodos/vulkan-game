@@ -8,28 +8,17 @@ layout (location = 4) in vec4 vs_in_tangent;
 layout (location = 5) in uint vs_in_primitive_id;
 
 layout (location = 0) out vs_out_fs_in {
-	vec3 pos;
-	vec3 normal;
-	vec2 uv;
-	vec4 color;
-	vec4 tangent;
-	flat uint primitive_id;
-	flat uint instance_id;
-	flat uint mtl_offset;
+  vec3 pos;
+  vec3 normal;
+  vec2 uv;
+  vec4 color;
+  vec4 tangent;
+  flat uint primitive_id;
+  flat uint instance_id;
+  flat uint mtl_offset;
 } vs_out;
 
-struct InstanceRenderInfo {
-  mat4 model;
-  uint mtl_coll_offset;
-};
-
-layout (std140, set = 0, binding = 0) uniform GlobalData_t {
-  mat4 projection_view;
-} g_data;
-
-layout (std430, set = 1, binding = 0) readonly buffer instanced_data_t {
-	InstanceRenderInfo data[]; 
-} instances;
+#include "pbr.layout.vert.h"
 
 void main() {
   const InstanceRenderInfo inst_info = instances.data[gl_InstanceIndex];

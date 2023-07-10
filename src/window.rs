@@ -1,7 +1,5 @@
-use std::{
-    cell::{Cell, RefCell},
-    time::Instant,
-};
+use std::cell::RefCell;
+use std::{cell::Cell, time::Instant};
 
 use nalgebra_glm::IVec2;
 
@@ -11,9 +9,11 @@ use winit::{
     window::Fullscreen,
 };
 
+use crate::draw_context::InitContext;
+use crate::resource_cache::ResourceSystem;
 use crate::{
     app_config::AppConfig, draw_context::FrameRenderContext, game_world::GameWorld,
-    ui_backend::UiBackend, vk_renderer::VulkanRenderer,
+    vk_renderer::VulkanRenderer,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -254,7 +254,6 @@ impl MainWindow {
 }
 
 struct GameMain {
-    ui: UiBackend,
     game_world: GameWorld,
     timestamp: Cell<Instant>,
     app_config: AppConfig,
@@ -276,10 +275,8 @@ impl GameMain {
         let renderer = VulkanRenderer::create(&window).expect("Failed to create renderer!");
         renderer.begin_resource_loading();
 
-        let ui =
-            UiBackend::new(&renderer, &window, &app_config).expect("Failed to create ui backend");
         let game_world =
-            GameWorld::new(&renderer, &app_config).expect("Failed to create game world");
+            GameWorld::new(window, &renderer, &app_config).expect("Failed to create game world");
 
         renderer.wait_all_work_packages();
         renderer.wait_resources_loaded();
@@ -289,7 +286,6 @@ impl GameMain {
         let framebuffer_size = IVec2::new(client_size.width as i32, client_size.height as i32);
 
         GameMain {
-            ui,
             game_world,
             timestamp: Cell::new(Instant::now()),
             app_config,
@@ -310,23 +306,18 @@ impl GameMain {
             _ => {}
         }
 
-        // self.game_world.borrow().input_event(event);
-        self.ui.handle_event(window, event);
+        self.game_world.handle_winit_event(window, event);
     }
 
     fn gamepad_input(&mut self, input_state: &InputState) {
         self.game_world.gamepad_input(input_state);
     }
 
-    fn do_ui(&mut self, window: &winit::window::Window) {
-        let mut ui = self.ui.new_frame(window);
-        self.game_world.ui(&mut ui);
-    }
-
     fn draw_frame(&mut self, window: &winit::window::Window) {
         self.renderer.begin_frame();
 
         let frame_context = FrameRenderContext {
+            window,
             renderer: &self.renderer,
             cmd_buff: self.renderer.current_command_buffer(),
             frame_id: self.renderer.current_frame_id(),
@@ -336,8 +327,6 @@ impl GameMain {
         };
 
         self.game_world.draw(&frame_context);
-        self.ui.apply_cursor_before_render(window);
-        self.ui.draw_frame(&frame_context);
         self.renderer.end_frame();
     }
 
@@ -348,7 +337,6 @@ impl GameMain {
         let frame_time = elapsed.as_secs_f64().clamp(0f64, 0.25f64);
 
         self.game_world.update(frame_time);
-        self.do_ui(window);
         self.draw_frame(window);
     }
 }

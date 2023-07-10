@@ -21,6 +21,16 @@ fn main() -> std::io::Result<()> {
 
     let shader_source_files = std::fs::read_dir("src/shaders")?
         .filter_map(|dir_entry| dir_entry.ok().map(|de| de.path()))
+        .filter(|f| {
+            f.is_file()
+                && f.extension()
+                    .map(|ext| {
+                        ["vert", "geom", "frag"]
+                            .iter()
+                            .any(|&shader_ext| shader_ext == ext.to_string_lossy().as_ref())
+                    })
+                    .unwrap_or_default()
+        })
         .collect::<Vec<_>>();
 
     let out_dir =

@@ -839,6 +839,18 @@ impl UniqueImageWithView {
         Some(UniqueImageWithView(image, image_view))
     }
 
+    pub fn from_pixels(
+        renderer: &VulkanRenderer,
+        image_info: &ImageCreateInfo,
+        work_pkg: &RendererWorkPackage,
+        pixels: &[ImageCopySource],
+    ) -> Option<Self> {
+        let image = UniqueImage::with_data(renderer, image_info, pixels, work_pkg)?;
+        let image_view = UniqueImageView::from_image(renderer, &image)?;
+
+        Some(UniqueImageWithView(image, image_view))
+    }
+
     pub fn image(&self) -> Image {
         self.0.image
     }
@@ -1491,7 +1503,7 @@ impl UniqueShaderModule {
 
 #[derive(Clone)]
 pub enum ShaderModuleSource<'a> {
-    Bytes(&'a [u8]),
+    Bytes(&'a [u32]),
     File(&'a std::path::Path),
 }
 
@@ -1624,8 +1636,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
                         UniqueShaderModule::from_file(graphics_device, path)
                     }
                     ShaderModuleSource::Bytes(bytecode) => {
-                        unimplemented!("fix this!!");
-                        // UniqueShaderModule::from_bytecode(graphics_device, bytecode)
+                        UniqueShaderModule::from_bytecode(graphics_device, bytecode)
                     }
                 }?;
 
@@ -1771,15 +1782,15 @@ impl UniqueGraphicsPipeline {
 
 impl std::ops::Drop for UniqueGraphicsPipeline {
     fn drop(&mut self) {
-        unsafe {
-            (*self.device).destroy_pipeline_layout(self.layout, None);
-            (*self.device).destroy_pipeline(self.pipeline, None);
-        }
-        self.descriptor_layouts
-            .iter()
-            .for_each(|&desc_set_layout| unsafe {
-                (*self.device).destroy_descriptor_set_layout(desc_set_layout, None);
-            });
+        // unsafe {
+        //     (*self.device).destroy_pipeline_layout(self.layout, None);
+        //     (*self.device).destroy_pipeline(self.pipeline, None);
+        // }
+        // self.descriptor_layouts
+        //     .iter()
+        //     .for_each(|&desc_set_layout| unsafe {
+        //         (*self.device).destroy_descriptor_set_layout(desc_set_layout, None);
+        //     });
     }
 }
 
@@ -3352,7 +3363,7 @@ unsafe extern "system" fn debug_message_callback(
     _p_user_data: *mut std::ffi::c_void,
 ) -> Bool32 {
     if message_severity.contains(DebugUtilsMessageSeverityFlagsEXT::WARNING) {
-        warn!(
+        log::warn!(
             "[Vulkan]::[id::{} id-name::{}]\n{}",
             (*p_callback_data).message_id_number,
             CStr::from_ptr((*p_callback_data).p_message_id_name)
@@ -3365,7 +3376,7 @@ unsafe extern "system" fn debug_message_callback(
     }
 
     if message_severity.contains(DebugUtilsMessageSeverityFlagsEXT::ERROR) {
-        error!(
+        log::error!(
             "[Vulkan]::[id::{} id-name::{}]\n{}",
             (*p_callback_data).message_id_number,
             CStr::from_ptr((*p_callback_data).p_message_id_name)
