@@ -22,7 +22,7 @@ use winit::{
 
 use crate::{
     draw_context::{DrawContext, InitContext},
-    resource_cache::{BindlessResourceHandle, PushConstVertex},
+    resource_system::{BindlessResourceHandle, BindlessResourceKind, PushConstVertex},
     vk_renderer::{
         GraphicsPipelineBuilder, ImageCopySource,
         ScopedBufferMapping, ShaderModuleDescription, ShaderModuleSource, UniqueBuffer,
@@ -450,7 +450,7 @@ impl UiBackend {
 
         let font_atlas_handle = init_ctx.rsys.add_texture(
             font_atlas_trexture,
-            crate::resource_cache::BindlessResourceKind::SamplerMiscTextures,
+            BindlessResourceKind::SamplerMiscTextures,
             None,
             init_ctx.renderer,
         );
@@ -522,14 +522,7 @@ impl UiBackend {
             .build(
                 init_ctx.renderer.graphics_device(),
                 init_ctx.renderer.pipeline_cache(),
-                (
-                    init_ctx.rsys.get_pbr_pipeline().layout,
-                    init_ctx
-                        .rsys
-                        .get_pbr_pipeline()
-                        .descriptor_layouts()
-                        .to_vec(),
-                ),
+		init_ctx.rsys.pipeline_layout(),
                 init_ctx.renderer.renderpass(),
                 0,
             )?;

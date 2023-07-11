@@ -16,7 +16,7 @@ mod pbr;
 mod physics_engine;
 mod plane;
 mod projectile_system;
-mod resource_cache;
+mod resource_system;
 mod shadow_swarm;
 mod skybox;
 mod sprite_batch;
@@ -24,6 +24,7 @@ mod starfury;
 mod ui_backend;
 mod vk_renderer;
 mod window;
+mod drawing_system;
 
 pub fn main() {
     self::window::MainWindow::run();

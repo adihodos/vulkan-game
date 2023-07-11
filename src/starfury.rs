@@ -1,18 +1,17 @@
-use std::collections::HashMap;
-
 use crate::{
     draw_context::{DrawContext, UpdateContext},
-    game_world::{GameObjectHandle, QueuedCommand},
+    game_world::QueuedCommand,
     math::AABB3,
-    missile_sys::{Missile, MissileKind, MissileState},
+    missile_sys::MissileKind,
+    missile_sys::{MissileSpawnData, ProjectileKind, ProjectileSpawnData},
     physics_engine::PhysicsEngine,
-    projectile_system::ProjectileSpawnData,
-    resource_cache::{PbrRenderableHandle, ResourceHolder},
+    resource_system::{EffectType, MeshId, ResourceSystem, SubmeshId},
+    drawing_system::DrawingSys,
     window::InputState,
 };
 
 use glm::Vec3;
-use nalgebra::{Isometry3, Point3};
+use nalgebra::{Isometry3, Point3, Rotation3, Translation3};
 use nalgebra_glm as glm;
 use rand_distr::num_traits::Zero;
 use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, RigidBodyType};
@@ -220,7 +219,7 @@ impl FlightModel {
 }
 
 struct EngineThruster {
-    name: String,
+    name: SubmeshId,
     transform: glm::Mat4,
     aabb: AABB3,
     exhaust_attach_point: glm::Vec3,
@@ -282,8 +281,10 @@ struct SuspendedWeaponry {
 }
 
 pub struct Starfury {
-    pub renderable: PbrRenderableHandle,
-    pub object_handle: GameObjectHandle,
+    pub mesh_id: MeshId,
+    msl_mesh: MeshId,
+    msl_r73_submesh: SubmeshId,
+    msl_r27_submesh: SubmeshId,
     pub rigid_body_handle: rapier3d::prelude::RigidBodyHandle,
     pub collider_handle: rapier3d::prelude::ColliderHandle,
     params: StarfuryParameters,
@@ -296,19 +297,15 @@ pub struct Starfury {
 }
 
 impl Starfury {
-    pub fn new(
-        object_handle: GameObjectHandle,
-        physics_engine: &mut PhysicsEngine,
-        resource_cache: &ResourceHolder,
-    ) -> Starfury {
+    pub fn new(rsys: &ResourceSystem, physics_engine: &mut PhysicsEngine) -> Starfury {
         let params: StarfuryParameters = ron::de::from_reader(
             std::fs::File::open("config/starfury.flightmodel.cfg.ron")
                 .expect("Failed to read Starfury flight model configuration file."),
         )
         .expect("Invalid configuration file");
 
-        let geometry_handle = resource_cache.get_pbr_geometry_handle(&"sa23");
-        let geometry = resource_cache.get_pbr_geometry_info(geometry_handle);
+        let mesh_id: MeshId = "sa23".into();
+        let geometry = rsys.get_mesh_info(mesh_id);
 
         use strum::{EnumProperty, IntoEnumIterator};
         let thrusters = EngineThrusterId::iter()
@@ -316,11 +313,11 @@ impl Starfury {
                 let node = geometry
                     .nodes
                     .iter()
-                    .find(|node| node.name == thruster_id.get_str("node_id").unwrap())
+                    .find(|node| node.name == thruster_id.get_str("node_id").unwrap().into())
                     .unwrap();
 
                 EngineThruster {
-                    name: node.name.clone(),
+                    name: node.name,
                     transform: node.transform,
                     aabb: node.aabb,
                     exhaust_attach_point: node.aabb.center() - node.aabb.extents(),
@@ -334,7 +331,7 @@ impl Starfury {
             .angular_damping(params.fm.angular_damping)
             .build();
 
-        let bbox_half_extents = geometry.aabb.extents();
+        let bbox_half_extents = geometry.bounds.extents();
         let collider = ColliderBuilder::cuboid(
             bbox_half_extents.x,
             bbox_half_extents.y,
@@ -353,8 +350,10 @@ impl Starfury {
         log::info!("Starfury collider {:?}", collider_handle);
 
         Starfury {
-            renderable: geometry_handle,
-            object_handle,
+            mesh_id,
+            msl_mesh: "r73r27".into(),
+            msl_r73_submesh: MissileKind::R73.get_str("kind").unwrap().into(),
+            msl_r27_submesh: MissileKind::R27.get_str("kind").unwrap().into(),
             rigid_body_handle: body_handle,
             collider_handle,
             params,
@@ -456,12 +455,6 @@ impl Starfury {
         }
 
         {
-            let _rigid_body = update_context
-                .physics_engine
-                .rigid_body_set
-                .get_mut(self.rigid_body_handle)
-                .unwrap();
-
             self.queued_ops.iter().for_each(|&op| match op {
                 QueuedOp::FireMissile(pylon_id) => {
                     //
@@ -497,39 +490,50 @@ impl Starfury {
 
                     //
                     // rotate missile 45 degrees then move it to pylon center
-                    use nalgebra::{Rotation3, Translation3};
                     let missile2pylon = Isometry3::from_parts(
                         Translation3::from(pylon_attachment_point),
                         Rotation3::from_euler_angles(0f32, 0f32, 45f32.to_radians()).into(),
                     );
-                    let iso = object2world * missile2pylon;
+                    let missile_orientation = object2world * missile2pylon;
 
                     update_context
                         .queued_commands
-                        .push(QueuedCommand::SpawnMissile(
-                            msl_kind,
-                            iso,
+                        .push(QueuedCommand::SpawnMissile(MissileSpawnData {
+                            kind: msl_kind,
+                            initial_orientation: missile_orientation,
                             linear_vel,
                             angular_vel,
-                        ));
+                        }));
                 }
 
                 QueuedOp::FireGuns => {
+                    let object2world = *update_context
+                        .physics_engine
+                        .get_rigid_body(self.rigid_body_handle)
+                        .position();
+
+                    let left_origin = object2world * self.params.weapons.gun_ports.lower_left;
+                    let right_origin = object2world * self.params.weapons.gun_ports.lower_right;
+
                     update_context.queued_commands.extend(
                         [
                             QueuedCommand::SpawnProjectile(ProjectileSpawnData {
-                                origin: self.params.weapons.gun_ports.lower_left,
-                                speed: self.params.weapons.laser.speed,
-                                mass: self.params.weapons.laser.mass,
-                                emitter: self.rigid_body_handle,
-                                life: self.params.weapons.laser.lifetime,
+                                orientation: Isometry3::from_parts(
+                                    Translation3::new(left_origin.x, left_origin.y, left_origin.z),
+                                    object2world.rotation,
+                                ),
+                                kind: ProjectileKind::Plasmabolt,
                             }),
                             QueuedCommand::SpawnProjectile(ProjectileSpawnData {
-                                origin: self.params.weapons.gun_ports.lower_right,
-                                speed: self.params.weapons.laser.speed,
-                                mass: self.params.weapons.laser.mass,
-                                emitter: self.rigid_body_handle,
-                                life: self.params.weapons.laser.lifetime,
+                                orientation: Isometry3::from_parts(
+                                    Translation3::new(
+                                        right_origin.x,
+                                        right_origin.y,
+                                        right_origin.z,
+                                    ),
+                                    object2world.rotation,
+                                ),
+                                kind: ProjectileKind::Plasmabolt,
                             }),
                         ]
                         .iter(),
@@ -539,9 +543,6 @@ impl Starfury {
             });
         }
 
-        //
-        // add remaining missiles to draw sys
-        self.draw_suspended_weaponry(update_context);
         self.draw_engines_exhaust(update_context);
         self.queued_ops.clear();
     }
@@ -577,6 +578,65 @@ impl Starfury {
 
             _ => (),
         });
+    }
+
+    pub fn draw(&self, draw_context: &DrawContext, draw_sys: &mut DrawingSys) {
+        let ship2world = *draw_context
+            .physics
+            .get_rigid_body(self.rigid_body_handle)
+            .position();
+
+        draw_sys.add_mesh(
+            self.mesh_id,
+            None,
+            None,
+            &ship2world.to_matrix(),
+            EffectType::Pbr,
+        );
+
+        //
+        // draw suspended weaponry
+        self.pylons_weaponry
+            .iter()
+            .filter(|p| p.weapon_attached)
+            .for_each(|pylon| {
+                let pylon_attachment_point = PYLON_ATTACHMENT_POINTS[pylon.id as usize];
+                let pylon_attachment_point = [
+                    pylon_attachment_point[0],
+                    pylon_attachment_point[1] + Y_OFFSET_BY_MISSILE[pylon.kind as usize],
+                    pylon_attachment_point[2],
+                ];
+
+                //
+                // rotate missile 45 degrees then move it to pylon center
+                let missile2pylon = Isometry3::from_parts(
+                    Translation3::from(pylon_attachment_point),
+                    Rotation3::from_euler_angles(0f32, 0f32, 45f32.to_radians()).into(),
+                );
+
+                let missile2world = ship2world * missile2pylon;
+
+                let msl_submesh = match pylon.kind {
+                    MissileKind::R27 => self.msl_r27_submesh,
+                    MissileKind::R73 => self.msl_r73_submesh,
+                };
+
+                draw_sys.add_mesh(
+                    self.msl_mesh,
+                    Some(msl_submesh),
+                    None,
+                    &missile2world.to_matrix(),
+                    EffectType::Pbr,
+                );
+            });
+    }
+
+    pub fn lower_left_gun(&self) -> Point3<f32> {
+        self.params.weapons.gun_ports.lower_left
+    }
+
+    pub fn lower_right_gun(&self) -> Point3<f32> {
+        self.params.weapons.gun_ports.lower_right
     }
 
     pub fn gamepad_input(&mut self, input_state: &InputState) {
@@ -731,14 +791,6 @@ impl Starfury {
         });
     }
 
-    pub fn lower_left_gun(&self) -> Point3<f32> {
-        self.params.weapons.gun_ports.lower_left
-    }
-
-    pub fn lower_right_gun(&self) -> Point3<f32> {
-        self.params.weapons.gun_ports.lower_right
-    }
-
     fn draw_engines_exhaust(&self, update_ctx: &mut UpdateContext) {
         let object2world = *update_ctx
             .physics_engine
@@ -753,15 +805,13 @@ impl Starfury {
         ]
         .iter()
         .for_each(|&tid| {
-            use nalgebra::Translation3;
-
             let thruster = &self.thrusters[tid as usize];
             let exhaust_origin = object2world.transform_point(&nalgebra::Point3::new(
                 thruster.exhaust_attach_point.x,
                 thruster.exhaust_attach_point.y,
                 thruster.exhaust_attach_point.z,
             ));
-	    
+
             let exhaust_transform = Isometry3::from_parts(
                 Translation3::new(exhaust_origin.x, exhaust_origin.y, exhaust_origin.z),
                 object2world.rotation,
@@ -774,93 +824,4 @@ impl Starfury {
                 ));
         });
     }
-
-    fn draw_suspended_weaponry(&self, update_ctx: &mut UpdateContext) {
-        let object2world = update_ctx
-            .physics_engine
-            .get_rigid_body(self.rigid_body_handle)
-            .position();
-
-        self.pylons_weaponry
-            .iter()
-            .filter(|p| p.weapon_attached)
-            .for_each(|pylon| {
-                let pylon_attachment_point = PYLON_ATTACHMENT_POINTS[pylon.id as usize];
-                let pylon_attachment_point = [
-                    pylon_attachment_point[0],
-                    pylon_attachment_point[1] + Y_OFFSET_BY_MISSILE[pylon.kind as usize],
-                    pylon_attachment_point[2],
-                ];
-
-                //
-                // rotate missile 45 degrees then move it to pylon center
-                use nalgebra::{Rotation3, Translation3};
-                let missile2pylon = Isometry3::from_parts(
-                    Translation3::from(pylon_attachment_point),
-                    Rotation3::from_euler_angles(0f32, 0f32, 45f32.to_radians()).into(),
-                );
-                let iso = object2world * missile2pylon;
-
-                update_ctx
-                    .queued_commands
-                    .push(QueuedCommand::DrawMissile(Missile {
-                        kind: pylon.kind,
-                        state: MissileState::Inactive,
-                        transform: iso.to_matrix(),
-                    }));
-            });
-    }
 }
-
-struct DrawCmd {
-    mesh: u64,
-    submesh: Option<u64>,
-    transparent: bool,
-    pbr: bool,
-}
-
-// struct DrawSys {
-//     cmds: Vec<DrawCmd>,
-//     mesh_name_to_id: HashMap<String, Vec<u64>>
-	
-// }
-
-// impl DrawSys {
-//     pub fn new(rc: &ResourceHolder) -> Self {
-	
-// 	let mesh_name_to_id = rc.handles.keys().map(|k| {
-// 	    use std::hash::Hasher;
-// 	    let mut h = fnv::FnvHasher::default();
-// 	    h.write(k.as_bytes());
-	    
-// 	    (k.clone(), h.finish())
-// 	}).collect::<HashMap<String, u64>>();
-
-// 	Self {
-// 	    cmds: Vec::with_capacity(1024),
-// 	    mesh_name_to_id
-// 	}
-//     }
-    
-//     fn add_draw(&mut self, mesh: u64, submesh: Option<u64>, transparent: bool, pbr: bool) {
-// 	self.cmds.push(DrawCmd { mesh , submesh, transparent, pbr });
-//     }
-
-//     fn draw(&mut self, dc: &DrawContext) {
-// 	//
-// 	// separate
-	
-// 	// let solid_objects = self.cmds.iter().filter(|c| !c.transparent)
-// 	self.cmds.sort_unstable_by(|a, b| a.transparent.cmp(&b.transparent));
-// 	let transp_idx = self.cmds.iter().position(|cmd| cmd.transparent);
-// 	let transparent_objs = transp_idx.map(|idx| {
-// 	    self.cmds.drain(idx..).collect::<Vec<_>>()
-// 	});
-
-// 	//
-// 	// sort by mesh
-// 	self.cmds.sort_by_key(|cmd| {
-// 	    (cmd.pbr, cmd.mesh, cmd.submesh)
-// 	});	
-//     }
-// }

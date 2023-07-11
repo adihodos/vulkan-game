@@ -1,4 +1,3 @@
-use nalgebra::ComplexField;
 use nalgebra_glm as glm;
 
 use crate::plane::Plane;

@@ -1,24 +1,14 @@
 use std::collections::HashMap;
 
 use crate::{
-    app_config::AppConfig,
-    draw_context::{DrawContext, UpdateContext},
+    draw_context::{DrawContext, InitContext, UpdateContext},
     math::AABB3,
-    physics_engine::PhysicsEngine,
-    resource_cache::ResourceHolder,
-    vk_renderer::{Cpu2GpuBuffer, UniqueImageWithView, UniqueSampler, VulkanRenderer},
+    physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
+    resource_system::{EffectType, MeshId, SubmeshId},
+    drawing_system::DrawingSys,
 };
-use ash::vk::{BufferUsageFlags, DeviceSize, DrawIndexedIndirectCommand};
 use nalgebra_glm as glm;
 use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
-use smallvec::SmallVec;
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum MissileState {
-    Inactive,
-    Fired,
-    Active,
-}
 
 #[derive(
     Copy,
@@ -39,187 +29,99 @@ pub enum MissileKind {
     R27,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct Missile {
-    pub kind: MissileKind,
-    pub state: MissileState,
-    pub transform: nalgebra_glm::Mat4,
-    // booster_time: f32,
-    // booster_life: f32,
-}
-
 struct MissileClassSheet {
+    id: SubmeshId,
     mass: f32,
     aabb: AABB3,
     booster_life: f32,
     thrust: f32,
 }
 
-pub struct LiveMissile {
+pub struct Missile {
     kind: MissileKind,
     orientation: nalgebra::Isometry3<f32>,
     rigid_body: RigidBodyHandle,
     collider: ColliderHandle,
     booster_time: f32,
     thrust: f32,
+    out_of_vis_range: bool,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Hash,
+    Eq,
+    PartialEq,
+    strum_macros::EnumProperty,
+    strum_macros::EnumIter,
+    strum_macros::Display,
+)]
+#[repr(u8)]
+pub enum ProjectileKind {
+    #[strum(props(kind = "plasmabolt"))]
+    Plasmabolt,
+}
+
+#[derive(Copy, Clone)]
+pub struct ProjectileSpawnData {
+    pub orientation: nalgebra::Isometry3<f32>,
+    pub kind: ProjectileKind,
+}
+
+#[derive(Copy, Clone)]
+pub struct MissileSpawnData {
+    pub kind: MissileKind,
+    pub initial_orientation: nalgebra::Isometry3<f32>,
+    pub linear_vel: glm::Vec3,
+    pub angular_vel: glm::Vec3,
+}
+
+#[derive(Copy, Clone)]
+struct Projectile {
+    kind: ProjectileKind,
+    orientation: nalgebra::Isometry3<f32>,
+    rigid_body: RigidBodyHandle,
+    collider: ColliderHandle,
+    life: f32,
+    visible: bool,
+}
+
+struct ProjectileClassSheet {
+    id: SubmeshId,
+    mass: f32,
+    aabb: AABB3,
+    speed: f32,
+    life: f32,
 }
 
 pub struct MissileSys {
-    missiles_gpu: Cpu2GpuBuffer<glm::Mat4>,
-    placeholder_mtl: UniqueImageWithView,
-    sampler: UniqueSampler,
-    ubo_globals: Cpu2GpuBuffer<TransformDataMultiInstanceUBO>,
-    buffer_vertices: ash::vk::Buffer,
-    buffer_indices: ash::vk::Buffer,
-    pipeline: ash::vk::Pipeline,
-    pipeline_layout: ash::vk::PipelineLayout,
-    descriptor_sets: [ash::vk::DescriptorSet; 2],
-    draw_indirect_calls_data: std::collections::HashMap<MissileKind, DrawIndexedIndirectCommand>,
-    missiles_cpu_by_type: std::collections::HashMap<MissileKind, Vec<Missile>>,
-    live_missiles: Vec<LiveMissile>,
-    buffer_draw_indirect: Cpu2GpuBuffer<DrawIndexedIndirectCommand>,
+    mesh_id: MeshId,
+    live_missiles: Vec<Missile>,
     missile_classes: HashMap<MissileKind, MissileClassSheet>,
-    missiles_count: u32,
+    projectiles: Vec<Projectile>,
+    projectile_classes: HashMap<ProjectileKind, ProjectileClassSheet>,
 }
 
 impl MissileSys {
-    const MAX_MISSILES: u32 = 1024;
-    const MAX_DRAW_INDIRECT_CMDS: u32 = 32;
+    const MAX_OBJECTS: u32 = 1024;
 
-    pub fn new(
-        renderer: &VulkanRenderer,
-        resource_cache: &ResourceHolder,
-        cfg: &AppConfig,
-    ) -> Option<MissileSys> {
-        let missiles_instances = Cpu2GpuBuffer::<glm::Mat4>::create(
-            renderer,
-            BufferUsageFlags::STORAGE_BUFFER,
-            renderer.device_properties().limits.non_coherent_atom_size,
-            Self::MAX_MISSILES as DeviceSize,
-            renderer.max_inflight_frames() as DeviceSize,
-        )?;
-
-        let work_pkg = renderer.create_work_package()?;
-        let placeholder_mtl = UniqueImageWithView::from_ktx(
-            renderer,
-            &work_pkg,
-            cfg.engine.texture_path("uv_grids/ash_uvgrid01.ktx2"),
-        )?;
-        renderer.push_work_package(work_pkg);
-
-        use ash::vk::{Filter, SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode};
-        let sampler = UniqueSampler::new(
-            renderer.graphics_device(),
-            &SamplerCreateInfo::builder()
-                .min_lod(0f32)
-                .max_lod(1f32)
-                .min_filter(Filter::LINEAR)
-                .mag_filter(Filter::LINEAR)
-                .mipmap_mode(SamplerMipmapMode::LINEAR)
-                .address_mode_u(SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_v(SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_w(SamplerAddressMode::CLAMP_TO_EDGE)
-                .border_color(ash::vk::BorderColor::INT_OPAQUE_BLACK)
-                .max_anisotropy(1f32)
-                .build(),
-        )?;
-
-        let ubo_globals = Cpu2GpuBuffer::<TransformDataMultiInstanceUBO>::create(
-            renderer,
-            BufferUsageFlags::UNIFORM_BUFFER,
-            renderer
-                .device_properties()
-                .limits
-                .min_uniform_buffer_offset_alignment,
-            1,
-            renderer.max_inflight_frames() as DeviceSize,
-        )?;
-
-        let ds_layouts = resource_cache
-            .non_pbr_pipeline_instanced()
-            .descriptor_layouts();
-
-        let descriptor_sets = unsafe {
-            use ash::vk::DescriptorSetAllocateInfo;
-            renderer.graphics_device().allocate_descriptor_sets(
-                &DescriptorSetAllocateInfo::builder()
-                    .descriptor_pool(renderer.descriptor_pool())
-                    .set_layouts(ds_layouts),
-            )
-        }
-        .map_err(|e| log::error!("Failed to allocate descriptor sets: {e}"))
-        .ok()?;
-
-        use ash::vk::{
-            DescriptorBufferInfo, DescriptorImageInfo, DescriptorType, ImageLayout,
-            WriteDescriptorSet,
-        };
-
-        unsafe {
-            renderer.graphics_device().update_descriptor_sets(
-                &[
-                    *WriteDescriptorSet::builder()
-                        .dst_set(descriptor_sets[0])
-                        .dst_binding(0)
-                        .dst_array_element(0)
-                        .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                        .buffer_info(&[*DescriptorBufferInfo::builder()
-                            .buffer(ubo_globals.buffer.buffer)
-                            .offset(0)
-                            .range(ubo_globals.bytes_one_frame)]),
-                    *WriteDescriptorSet::builder()
-                        .dst_set(descriptor_sets[0])
-                        .dst_binding(1)
-                        .dst_array_element(0)
-                        .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                        .buffer_info(&[*DescriptorBufferInfo::builder()
-                            .buffer(missiles_instances.buffer.buffer)
-                            .offset(0)
-                            .range(missiles_instances.bytes_one_frame)]),
-                    *WriteDescriptorSet::builder()
-                        .dst_set(descriptor_sets[1])
-                        .dst_binding(0)
-                        .dst_array_element(0)
-                        .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .image_info(&[*DescriptorImageInfo::builder()
-                            .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                            .image_view(placeholder_mtl.image_view())
-                            .sampler(sampler.sampler)]),
-                ],
-                &[],
-            );
-        }
-
-        let missile_mesh_handle = resource_cache.get_non_pbr_geometry_handle(&"r73r27");
-        let missile_mesh = resource_cache.get_non_pbr_geometry_info(missile_mesh_handle);
+    pub fn new(init_ctx: &InitContext) -> Option<MissileSys> {
+        let mesh_id: MeshId = "r73r27".into();
+        let missile_mesh = init_ctx.rsys.get_mesh_info(mesh_id);
 
         use strum::IntoEnumIterator;
-        let draw_indirect_calls_data = MissileKind::iter()
-            .map(|missile_kind| {
-                use strum::EnumProperty;
-                let missile_node =
-                    missile_mesh.get_node_by_name(missile_kind.get_str("kind").unwrap());
-                (
-                    missile_kind,
-                    DrawIndexedIndirectCommand {
-                        index_count: missile_node.index_count,
-                        instance_count: 0,
-                        first_index: missile_node.index_offset + missile_mesh.index_offset,
-                        vertex_offset: missile_mesh.vertex_offset as i32,
-                        first_instance: 0,
-                    },
-                )
-            })
-            .collect::<std::collections::HashMap<_, _>>();
 
         let missile_classes = MissileKind::iter()
             .map(|msl_kind| {
                 use strum::EnumProperty;
-                let missile_node = missile_mesh.get_node_by_name(msl_kind.get_str("kind").unwrap());
+                let id: SubmeshId = msl_kind.get_str("kind").unwrap().into();
+                let missile_node = missile_mesh.get_node(id);
 
                 (
                     msl_kind,
                     MissileClassSheet {
+                        id,
                         mass: 500f32,
                         aabb: missile_node.aabb,
                         booster_life: 25f32,
@@ -229,185 +131,130 @@ impl MissileSys {
             })
             .collect::<std::collections::HashMap<_, _>>();
 
-        let buffer_draw_indirect = Cpu2GpuBuffer::<ash::vk::DrawIndexedIndirectCommand>::create(
-            renderer,
-            BufferUsageFlags::INDIRECT_BUFFER,
-            renderer.device_properties().limits.non_coherent_atom_size,
-            Self::MAX_DRAW_INDIRECT_CMDS as DeviceSize,
-            renderer.max_inflight_frames() as DeviceSize,
-        )?;
+        let projectile_classes = ProjectileKind::iter()
+            .map(|proj_kind| {
+                use strum::EnumProperty;
+                let id: SubmeshId = proj_kind.get_str("kind").unwrap().into();
+                let proj_node = missile_mesh.get_node(id);
+
+                (
+                    proj_kind,
+                    ProjectileClassSheet {
+                        id,
+                        mass: 10f32,
+                        aabb: proj_node.aabb,
+                        speed: 2000f32,
+                        life: 5f32,
+                    },
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
 
         Some(MissileSys {
-            ubo_globals,
-            missiles_gpu: missiles_instances,
-            placeholder_mtl,
-            descriptor_sets: [descriptor_sets[0], descriptor_sets[1]],
-            sampler,
-            draw_indirect_calls_data,
-            buffer_draw_indirect,
-            buffer_vertices: resource_cache.vertex_buffer_non_pbr(),
-            buffer_indices: resource_cache.index_buffer_non_pbr(),
-            pipeline: resource_cache.non_pbr_pipeline_instanced().pipeline,
-            pipeline_layout: resource_cache.non_pbr_pipeline_instanced().layout,
-            missiles_cpu_by_type: std::collections::HashMap::new(),
-            missiles_count: 0,
             live_missiles: Vec::new(),
+            projectiles: Vec::new(),
             missile_classes,
+            projectile_classes,
+            mesh_id,
         })
     }
 
-    pub fn draw_inert_missile(&mut self, missile: Missile) {
-        if self.missiles_count >= Self::MAX_MISSILES {
-            log::error!("Cannot spawn missile, limit reached!");
-            return;
-        }
-        self.missiles_cpu_by_type
-            .entry(missile.kind)
-            .and_modify(|e| e.push(missile))
-            .or_insert(vec![missile]);
-        self.missiles_count += 1;
-    }
-
-    pub fn draw(&mut self, draw_context: &DrawContext) {
-        if self.missiles_count == 0 {
-            return;
-        }
-
-        let mut gpu_instances = Vec::<glm::Mat4>::new();
-
-        let mut instance_offset = 0u32;
-        self.missiles_cpu_by_type
+    pub fn draw(&self, _draw_context: &DrawContext, draw_sys: &mut DrawingSys) {
+        self.live_missiles
             .iter()
-            .for_each(|(missile_kind, missiles)| {
-                self.draw_indirect_calls_data
-                    .entry(*missile_kind)
-                    .and_modify(|draw_call_data| {
-                        draw_call_data.instance_count += missiles.len() as u32;
-                        draw_call_data.first_instance = instance_offset;
-                    });
-
-                gpu_instances.extend(missiles.iter().map(|msl| msl.transform));
-                instance_offset += missiles.len() as u32;
-            });
-
-        let indirect_draw_calls = self
-            .draw_indirect_calls_data
-            .values()
-            .filter_map(|draw_call| {
-                if draw_call.instance_count != 0 {
-                    Some(*draw_call)
-                } else {
-                    None
-                }
-            })
-            .collect::<SmallVec<[DrawIndexedIndirectCommand; 8]>>();
-
-        self.buffer_draw_indirect
-            .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
-            .map(|mut drawcall_buffer| unsafe {
-                std::ptr::copy_nonoverlapping(
-                    indirect_draw_calls.as_ptr(),
-                    drawcall_buffer.as_mut_ptr() as *mut DrawIndexedIndirectCommand,
-                    indirect_draw_calls.len(),
+            .filter(|msl| !msl.out_of_vis_range)
+            .for_each(|msl| {
+                let msl_class_data = self.missile_classes.get(&msl.kind).unwrap();
+                draw_sys.add_mesh(
+                    self.mesh_id,
+                    Some(msl_class_data.id),
+                    None,
+                    &msl.orientation.to_matrix(),
+                    EffectType::BasicEmissive,
                 );
             });
 
-        self.missiles_gpu
-            .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
-            .map(|mut missiles_gpu_buf| {
-                let dst_ptr = missiles_gpu_buf.as_mut_ptr() as *mut glm::Mat4;
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        gpu_instances.as_ptr(),
-                        dst_ptr,
-                        gpu_instances.len(),
-                    );
-                }
-            });
-
-        self.ubo_globals
-            .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
-            .map(|mut ubo_globals| {
-                let ptr = ubo_globals.as_mut_ptr() as *mut TransformDataMultiInstanceUBO;
-                unsafe {
-                    (*ptr).projection = draw_context.projection;
-                    (*ptr).view = draw_context.view_matrix;
-                }
-            });
-
-        let dc = draw_context.renderer.graphics_device();
-        unsafe {
-            dc.cmd_bind_pipeline(
-                draw_context.cmd_buff,
-                ash::vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline,
+        self.projectiles.iter().filter(|p| p.visible).for_each(|p| {
+            let p_class_data = self.projectile_classes.get(&p.kind).unwrap();
+            draw_sys.add_mesh(
+                self.mesh_id,
+                Some(p_class_data.id),
+                None,
+                &p.orientation.to_matrix(),
+                EffectType::BasicEmissive,
             );
-            dc.cmd_bind_vertex_buffers(draw_context.cmd_buff, 0, &[self.buffer_vertices], &[0]);
-            dc.cmd_bind_index_buffer(
-                draw_context.cmd_buff,
-                self.buffer_indices,
-                0,
-                ash::vk::IndexType::UINT32,
-            );
-            dc.cmd_set_viewport(draw_context.cmd_buff, 0, &[draw_context.viewport]);
-            dc.cmd_set_scissor(draw_context.cmd_buff, 0, &[draw_context.scissor]);
-            dc.cmd_bind_descriptor_sets(
-                draw_context.cmd_buff,
-                ash::vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline_layout,
-                0,
-                &self.descriptor_sets,
-                &[
-                    self.ubo_globals
-                        .offset_for_frame(draw_context.frame_id as DeviceSize)
-                        as u32,
-                    self.missiles_gpu
-                        .offset_for_frame(draw_context.frame_id as DeviceSize)
-                        as u32,
-                ],
-            );
-            dc.cmd_draw_indexed_indirect(
-                draw_context.cmd_buff,
-                self.buffer_draw_indirect.buffer.buffer,
-                self.buffer_draw_indirect
-                    .offset_for_frame(draw_context.frame_id as DeviceSize),
-                indirect_draw_calls.len() as u32,
-                std::mem::size_of::<DrawIndexedIndirectCommand>() as u32,
-            );
-        }
-
-        self.missiles_cpu_by_type.iter_mut().for_each(|(_, v)| {
-            v.clear();
         });
-
-        self.draw_indirect_calls_data.values_mut().for_each(|val| {
-            val.instance_count = 0;
-        });
-        self.missiles_count = 0;
     }
 
-    pub fn add_live_missile(
+    pub fn spawn_projectile(
         &mut self,
-        kind: MissileKind,
-        initial_orientation: &nalgebra::Isometry3<f32>,
-        linear_vel: glm::Vec3,
-        angular_vel: glm::Vec3,
+        spawn_data: &ProjectileSpawnData,
         physics_engine: &mut PhysicsEngine,
     ) {
-        if self.missiles_count >= Self::MAX_MISSILES {
-            log::error!("Cannot spawn anymore missiles, limit reached");
+        if self.projectiles.len() as u32 > Self::MAX_OBJECTS {
+            log::error!("Can't spawn projectile, max object limit reached");
             return;
         }
 
-        let msl_class_sheet = self
-            .missile_classes
-            .get(&kind)
-            .expect(&format!("Missing data sheet for missile class {kind}"));
+        let p_class_data = self.projectile_classes.get(&spawn_data.kind).unwrap();
+        let direction = (spawn_data.orientation * glm::Vec3::z_axis()).xyz();
+        let velocity = direction * p_class_data.speed;
 
-        use crate::physics_engine::{ColliderUserData, PhysicsObjectCollisionGroups};
+        let mut rigid_body = rapier3d::prelude::RigidBodyBuilder::dynamic()
+            .position(spawn_data.orientation)
+            .lock_rotations()
+            .build();
+
+        rigid_body.add_force(velocity, true);
+
+        let rigid_body_handle = physics_engine.rigid_body_set.insert(rigid_body);
+        let collider_extents = p_class_data.aabb.extents();
+
+        let collider = rapier3d::prelude::ColliderBuilder::cuboid(
+            collider_extents.x,
+            collider_extents.y,
+            collider_extents.z,
+        )
+        .active_events(rapier3d::prelude::ActiveEvents::COLLISION_EVENTS)
+        .collision_groups(PhysicsObjectCollisionGroups::projectiles())
+        .mass(p_class_data.mass)
+        .sensor(true)
+        .build();
+
+        let collider_handle = physics_engine.collider_set.insert_with_parent(
+            collider,
+            rigid_body_handle,
+            &mut physics_engine.rigid_body_set,
+        );
+
+        self.projectiles.push(Projectile {
+            kind: spawn_data.kind,
+            orientation: spawn_data.orientation,
+            rigid_body: rigid_body_handle,
+            collider: collider_handle,
+            life: p_class_data.life,
+            visible: true,
+        });
+    }
+
+    pub fn spawn_missile(
+        &mut self,
+        spawn_data: &MissileSpawnData,
+        physics_engine: &mut PhysicsEngine,
+    ) {
+        if self.live_missiles.len() as u32 >= Self::MAX_OBJECTS {
+            log::error!("Cannot spawn missile, object limit reached");
+            return;
+        }
+
+        let msl_class_sheet = self.missile_classes.get(&spawn_data.kind).expect(&format!(
+            "Missing data sheet for missile class {}",
+            spawn_data.kind
+        ));
+
         use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, RigidBodyType};
         let body = RigidBodyBuilder::new(RigidBodyType::Dynamic)
-            .position(*initial_orientation)
+            .position(spawn_data.initial_orientation)
             .build();
 
         let body_handle = physics_engine.rigid_body_set.insert(body);
@@ -422,7 +269,6 @@ impl MissileSys {
         .active_events(rapier3d::prelude::ActiveEvents::COLLISION_EVENTS)
         .collision_groups(PhysicsObjectCollisionGroups::missiles())
         .sensor(true)
-        .user_data(ColliderUserData::new(body_handle).into())
         .build();
 
         let collider_handle = physics_engine.collider_set.insert_with_parent(
@@ -432,37 +278,44 @@ impl MissileSys {
         );
 
         let body = physics_engine.get_rigid_body_mut(body_handle);
-        body.set_linvel(linear_vel, true);
-        body.set_angvel(angular_vel, true);
+        body.set_linvel(spawn_data.linear_vel, true);
+        body.set_angvel(spawn_data.angular_vel, true);
 
-        self.live_missiles.push(LiveMissile {
-            kind,
-            orientation: *initial_orientation,
+        self.live_missiles.push(Missile {
+            kind: spawn_data.kind,
+            orientation: spawn_data.initial_orientation,
             booster_time: msl_class_sheet.booster_life,
             rigid_body: body_handle,
             collider: collider_handle,
             thrust: msl_class_sheet.thrust,
+            out_of_vis_range: false,
         });
     }
 
     pub fn update(&mut self, context: &mut UpdateContext) {
-	//
-	// TODO: don't draw missile if too far away from camera
-	// TODO: warhead arming only after a certain distance
-	// TODO: actual missile logic
+        //
+        // TODO: warhead arming only after a certain distance
+        // TODO: actual missile logic
         self.live_missiles.retain_mut(|msl| {
-            let msl_phys_body = context.physics_engine.get_rigid_body_mut(msl.rigid_body);
-
-            msl.orientation = *msl_phys_body.position();
-
             if msl.booster_time > 0f32 {
                 msl.booster_time = (msl.booster_time - context.frame_time as f32).max(0f32);
             }
 
             if msl.booster_time > 0f32 {
+                let msl_phys_body = context.physics_engine.get_rigid_body_mut(msl.rigid_body);
+                msl.orientation = *msl_phys_body.position();
                 //
                 // apply force
                 msl_phys_body.apply_impulse(msl.orientation * glm::Vec3::z() * msl.thrust, true);
+                if !msl.out_of_vis_range {
+                    let sqr_dist =
+                        glm::distance2(&context.camera_pos, &msl.orientation.translation.vector);
+                    const MAX_DRAW_DST: f32 = 1000f32 * 1000f32;
+                    if sqr_dist > MAX_DRAW_DST {
+                        msl.out_of_vis_range = true;
+                    }
+                }
+
                 true
             } else {
                 //
@@ -474,30 +327,36 @@ impl MissileSys {
         });
 
         //
-        // add live missiles to draw list
-        self.live_missiles.iter().filter(|msl| {
-	    let msl_pos = msl.orientation.translation.vector.xyz();
-	    const MAX_DRAW_DST: f32 = 2000f32;
-	    glm::distance2(&msl_pos, &context.camera_pos) < MAX_DRAW_DST * MAX_DRAW_DST
-	}).for_each(|msl| {
-            let m = Missile {
-                kind: msl.kind,
-                state: MissileState::Inactive,
-                transform: msl.orientation.to_matrix(),
-            };
+        // projectiles
+        self.projectiles.retain_mut(|proj| {
+            proj.life -= context.frame_time as f32;
+            proj.orientation = *context
+                .physics_engine
+                .get_rigid_body(proj.rigid_body)
+                .position();
 
-            self.missiles_cpu_by_type
-                .entry(msl.kind)
-                .and_modify(|e| e.push(m))
-                .or_insert(vec![m]);
+            if proj.life > 0f32 {
+                if proj.visible {
+                    const MAX_DRAW_DST: f32 = 1000f32 * 1000f32;
+                    proj.visible =
+                        glm::distance2(&context.camera_pos, &proj.orientation.translation.vector)
+                            < MAX_DRAW_DST;
+                }
 
-            self.missiles_count += 1;
+                true
+            } else {
+                context.physics_engine.remove_rigid_body(proj.rigid_body);
+                false
+            }
         });
     }
-}
 
-#[repr(C, align(16))]
-struct TransformDataMultiInstanceUBO {
-    projection: glm::Mat4,
-    view: glm::Mat4,
+    pub fn despawn_projectile(&mut self, proj_body: RigidBodyHandle) {
+        self.projectiles
+            .iter()
+            .position(|projectile| projectile.rigid_body == proj_body)
+            .map(|proj_pos| {
+                self.projectiles.swap_remove(proj_pos);
+            });
+    }
 }

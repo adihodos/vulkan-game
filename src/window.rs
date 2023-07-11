@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::{cell::Cell, time::Instant};
 
 use nalgebra_glm::IVec2;
@@ -9,8 +8,6 @@ use winit::{
     window::Fullscreen,
 };
 
-use crate::draw_context::InitContext;
-use crate::resource_cache::ResourceSystem;
 use crate::{
     app_config::AppConfig, draw_context::FrameRenderContext, game_world::GameWorld,
     vk_renderer::VulkanRenderer,

@@ -11,7 +11,7 @@ use crate::{
     vk_renderer::{
         GraphicsPipelineBuilder, ShaderModuleDescription,
         ShaderModuleSource, UniqueGraphicsPipeline, UniqueImageWithView, VulkanRenderer,
-    }, resource_cache::BindlessResourceKind,
+    }, resource_system::BindlessResourceKind,
 };
 
 pub struct Skybox {
@@ -27,14 +27,16 @@ impl Skybox {
             return None;
         }
 
+	let (layout, descriptor_layouts) = init_ctx.rsys.pipeline_layout();
+
         Some(Self {
             id: 0,
             count: loaded,
             pipeline: Self::create_pipeline(
                 init_ctx.cfg,
                 init_ctx.renderer,
-                init_ctx.rsys.get_pbr_pipeline().layout,
-                init_ctx.rsys.get_pbr_pipeline().descriptor_layouts().into(),
+                layout,
+                descriptor_layouts
             )?,
         })
     }

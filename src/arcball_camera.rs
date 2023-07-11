@@ -119,12 +119,7 @@ impl ArcballCamera {
         use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 
         match event {
-            WindowEvent::MouseInput {
-                device_id: _,
-                state,
-                button,
-                modifiers: _,
-            } => {
+            WindowEvent::MouseInput { state, button, .. } => {
                 // info!("Mouse button down: {:?}", mouse_btn);
                 if button == &MouseButton::Middle {
                     if state == &ElementState::Pressed {
@@ -149,11 +144,7 @@ impl ArcballCamera {
                     }
                 }
             }
-            WindowEvent::CursorMoved {
-                device_id: _,
-                position,
-                modifiers: _,
-            } => {
+            WindowEvent::CursorMoved { position, .. } => {
                 let (x, y) = (position.x as f32, position.y as f32);
                 if self.is_rotating {
                     if self.is_first_rotation {
@@ -177,12 +168,7 @@ impl ArcballCamera {
             WindowEvent::Resized(new_size) => {
                 self.update_screen(new_size.width as i32, new_size.height as i32)
             }
-            WindowEvent::MouseWheel {
-                device_id: _,
-                delta,
-                phase: _,
-                modifiers: _,
-            } => match delta {
+            WindowEvent::MouseWheel { delta, .. } => match delta {
                 MouseScrollDelta::LineDelta(_horizontal, vertical) => {
                     self.zoom(*vertical, 0f32);
                 }

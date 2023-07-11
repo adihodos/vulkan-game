@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use log::{error, info, warn};
+use log::{error, info};
 use smallvec::SmallVec;
 use std::{
     cell::RefCell,

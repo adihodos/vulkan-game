@@ -24,10 +24,8 @@ const float PI = 3.14159265359;
 
 // ----------------------------------------------------------------------------
 // Easy trick to get tangent-normals to world-space to keep PBR code simplified.
-// Don't worry if you don't get what's going on; you generally want to do normal 
-									    // mapping the usual way for performance anways; I do plan make a note of this 
-																    // technique somewhere later in the normal mapping tutorial.
-																    vec3 getNormalFromMap(vec3 normal)
+																    
+vec3 getNormalFromMap(vec3 normal)
   {
     vec3 tangentNormal = normal * 2.0 - 1.0;
 
@@ -120,15 +118,15 @@ void main() {
   float ao        = 1.0;
 
   vec3 N = 
-    // normalize(fs_in.normal);
-    getNormalFromMap(texture(g_s_normal_maps[pbr.normal_id], fs_in.uv).rgb);
+    normalize(fs_in.normal);
+  // getNormalFromMap(texture(g_s_normal_maps[pbr.normal_id], fs_in.uv).rgb);
 
   vec3 V = normalize(lighting_data.eye_pos - fs_in.pos);
   vec3 R = reflect(-V, N);
 
-  // calculate reflectance at normal incidence; if dia-electric (like plastic) use F0 
-								  // of 0.04 and if it's a metal, use the albedo color as F0 (metallic workflow)    
-											 vec3 F0 = albedo;
+  // calculate reflectance at normal incidence; if dia-electric (like plastic) use F0
+  // of 0.04 and if it's a metal, use the albedo color as F0 (metallic workflow)
+  vec3 F0 = albedo;
   // vec3(0.04); 
   // F0 = mix(F0, albedo, metallic);
 
