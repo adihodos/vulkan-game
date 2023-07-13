@@ -159,8 +159,8 @@ impl Skybox {
     fn create_pipeline(
         app_config: &AppConfig,
         renderer: &VulkanRenderer,
-        pipeline_layout: ash::vk::PipelineLayout,
-        desc_sets_layout: Vec<ash::vk::DescriptorSetLayout>,
+        pipeline_layout: std::rc::Rc<ash::vk::PipelineLayout>,
+        desc_sets_layout: std::rc::Rc<Vec<ash::vk::DescriptorSetLayout>>,
     ) -> Option<UniqueGraphicsPipeline> {
         GraphicsPipelineBuilder::new()
             .shader_stages(&[

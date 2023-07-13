@@ -13,6 +13,7 @@ use ash::vk::{
 use chrono::Duration;
 use memoffset::offset_of;
 
+use nalgebra_glm as glm;
 use rayon::prelude::*;
 use smallvec::SmallVec;
 use std::{collections::HashMap, mem::size_of, path::Path, time::Instant};
@@ -187,6 +188,11 @@ impl BindlessResourceHandle {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct MissileSmokePoint {
+    pub pt: glm::Vec3,
+}
+
 pub struct ResourceSystem {
     pub g_vertex_buffer: UniqueBuffer,
     pub g_index_buffer: UniqueBuffer,
@@ -210,9 +216,14 @@ impl ResourceSystem {
             .expect(&format!("Effect {:?} not found", e))
     }
 
-    pub fn pipeline_layout(&self) -> (PipelineLayout, Vec<ash::vk::DescriptorSetLayout>) {
+    pub fn pipeline_layout(
+        &self,
+    ) -> (
+        std::rc::Rc<PipelineLayout>,
+        std::rc::Rc<Vec<ash::vk::DescriptorSetLayout>>,
+    ) {
         let p = self.get_effect(EffectType::Pbr);
-        (p.layout, p.descriptor_layouts().into())
+        (p.layout(), p.descriptor_layouts())
     }
 
     fn default_sampler() -> SamplerCreateInfo {
@@ -694,7 +705,7 @@ impl ResourceSystem {
         }
         .expect("Failed to create set layout uniform buffer dynamic");
 
-        let descriptor_set_layouts = vec![
+        let descriptor_set_layouts = std::rc::Rc::new(vec![
             //
             // uniform buffer
             layout_ubd, //
@@ -707,20 +718,22 @@ impl ResourceSystem {
             layout_cs, //
             // misc textures array
             layout_cs,
-        ];
+        ]);
 
-        let pipeline_layout = unsafe {
-            renderer.graphics_device().create_pipeline_layout(
-                &PipelineLayoutCreateInfo::builder()
-                    .set_layouts(&descriptor_set_layouts)
-                    .push_constant_ranges(&[*PushConstantRange::builder()
-                        .stage_flags(ShaderStageFlags::ALL)
-                        .offset(0)
-                        .size(PushConstVertex::SIZE)]),
-                None,
-            )
-        }
-        .expect("Failed to create bindless pipeline layout");
+        let pipeline_layout = std::rc::Rc::new(
+            unsafe {
+                renderer.graphics_device().create_pipeline_layout(
+                    &PipelineLayoutCreateInfo::builder()
+                        .set_layouts(&descriptor_set_layouts)
+                        .push_constant_ranges(&[*PushConstantRange::builder()
+                            .stage_flags(ShaderStageFlags::ALL)
+                            .offset(0)
+                            .size(PushConstVertex::SIZE)]),
+                    None,
+                )
+            }
+            .expect("Failed to create bindless pipeline layout"),
+        );
 
         let pipeline = GraphicsPipelineBuilder::new()
             .add_vertex_input_attribute_descriptions(&[
@@ -796,7 +809,10 @@ impl ResourceSystem {
             .build(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
-                (pipeline_layout, descriptor_set_layouts.clone()),
+                (
+                    std::rc::Rc::clone(&pipeline_layout),
+                    std::rc::Rc::clone(&descriptor_set_layouts),
+                ),
                 renderer.renderpass(),
                 0,
             )?;
@@ -805,7 +821,7 @@ impl ResourceSystem {
             renderer.graphics_device().allocate_descriptor_sets(
                 &DescriptorSetAllocateInfo::builder()
                     .descriptor_pool(descriptor_pool)
-                    .set_layouts(pipeline.descriptor_layouts()),
+                    .set_layouts(&pipeline.descriptor_layouts()),
             )
         }
         .expect("Failed to allocate descriptor sets");
@@ -955,8 +971,8 @@ impl ResourceSystem {
         let emissive_effect = Self::create_emissive_effect(
             renderer,
             app_config,
-            pipeline_layout,
-            descriptor_set_layouts.clone(),
+            std::rc::Rc::clone(&pipeline_layout),
+            std::rc::Rc::clone(&descriptor_set_layouts),
         )?;
         Some(ResourceSystem {
             g_vertex_buffer,
@@ -990,11 +1006,13 @@ impl ResourceSystem {
         })
     }
 
+    pub fn add_missile_some(&mut self, segments: &[MissileSmokePoint]) {}
+
     fn create_emissive_effect(
         renderer: &VulkanRenderer,
         app_config: &AppConfig,
-        layout: PipelineLayout,
-        descriptor_layouts: Vec<DescriptorSetLayout>,
+        layout: std::rc::Rc<PipelineLayout>,
+        descriptor_layouts: std::rc::Rc<Vec<DescriptorSetLayout>>,
     ) -> Option<UniqueGraphicsPipeline> {
         GraphicsPipelineBuilder::new()
             .add_vertex_input_attribute_descriptions(&[

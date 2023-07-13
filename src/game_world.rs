@@ -14,6 +14,7 @@ use crate::{
     app_config::{AppConfig, PlayerShipConfig},
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, FrameRenderContext, InitContext, UpdateContext},
+    drawing_system::DrawingSys,
     flight_cam::FlightCamera,
     fps_camera::FirstPersonCamera,
     frustrum::{is_aabb_on_frustrum, Frustrum, FrustrumPlane},
@@ -23,7 +24,6 @@ use crate::{
     particles::{ImpactSpark, SparksSystem},
     physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
     resource_system::{EffectType, ResourceSystem},
-    drawing_system::DrawingSys,
     shadow_swarm::ShadowFighterSwarm,
     skybox::Skybox,
     sprite_batch::{SpriteBatch, TextureRegion},
@@ -378,9 +378,6 @@ impl GameWorld {
         self.drawing_sys.borrow_mut().draw(&draw_context);
 
         // self.draw_objects(&draw_context);
-        // self.draw_crosshair(&draw_context);
-        // self.draw_locked_target_indicator(&draw_context);
-        // self.sprite_batch.borrow_mut().render(&draw_context);
 
         // if self.debug_options().debug_draw_physics {
         //     self.physics_engine
@@ -406,6 +403,10 @@ impl GameWorld {
             ui.apply_cursor_before_render(frame_context.window);
             ui.draw_frame(&draw_context);
         }
+
+        self.draw_crosshair(&draw_context);
+        self.draw_locked_target_indicator(&draw_context);
+        self.sprite_batch.borrow_mut().render(&draw_context);
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {
@@ -414,7 +415,6 @@ impl GameWorld {
         //         .borrow_mut()
         //         .world_space_coord_sys(self.draw_opts.borrow().world_axis_length);
         // }
-
 
         //         if self.debug_options().debug_draw_mesh {
         //             // let aabb = self.render_state.borrow()[game_object.handle.0 as usize]
@@ -454,7 +454,6 @@ impl GameWorld {
         //         }
         //     });
         // }
-
     }
 
     pub fn ui(&self, ui: &mut imgui::Ui) {
@@ -771,9 +770,7 @@ impl GameWorld {
         let player_ship_transform = *self
             .physics_engine
             .borrow()
-            .rigid_body_set
-            .get(self.starfury.rigid_body_handle)
-            .unwrap()
+            .get_rigid_body(self.starfury.rigid_body_handle)
             .position();
 
         let ray_dir = (player_ship_transform * glm::Vec3::z_axis())

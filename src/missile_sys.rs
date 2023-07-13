@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use crate::{
     draw_context::{DrawContext, InitContext, UpdateContext},
+    drawing_system::DrawingSys,
     math::AABB3,
     physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
     resource_system::{EffectType, MeshId, SubmeshId},
-    drawing_system::DrawingSys,
 };
 use nalgebra_glm as glm;
 use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
@@ -37,6 +37,11 @@ struct MissileClassSheet {
     thrust: f32,
 }
 
+struct SmokePoint {
+    pos: glm::Vec3,
+    color: glm::Vec4,
+}
+
 pub struct Missile {
     kind: MissileKind,
     orientation: nalgebra::Isometry3<f32>,
@@ -45,6 +50,20 @@ pub struct Missile {
     booster_time: f32,
     thrust: f32,
     out_of_vis_range: bool,
+    // trail: std::collections::VecDeque<SmokePoint>,
+}
+
+impl Missile {
+    // fn add_trail_segment(&mut self, current_orientation: &nalgebra::Isometry3<f32>) {
+    //     if self.trail.len() > 64 {
+    //         self.trail.pop_back();
+    //     }
+
+    //     self.trail.push_front(SmokePoint {
+    //         pos: current_orientation.translation.vector.xyz(),
+    //         color: glm::vec4(1f32, 0f32, 0f32, 1f32),
+    //     });
+    // }
 }
 
 #[derive(

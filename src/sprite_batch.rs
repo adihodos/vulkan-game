@@ -648,7 +648,7 @@ impl SpriteBatch {
             graphics_device.cmd_bind_descriptor_sets(
                 cmd_buf,
                 PipelineBindPoint::GRAPHICS,
-                self.pipeline.layout,
+                *self.pipeline.layout(),
                 0,
                 &self.descriptor_sets,
                 &[self

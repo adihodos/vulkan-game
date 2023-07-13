@@ -677,7 +677,7 @@ impl UiBackend {
 
             graphics_device.cmd_push_constants(
                 frame_context.cmd_buff,
-                self.pipeline.layout,
+                *self.pipeline.layout(),
                 ShaderStageFlags::ALL,
                 0,
                 pcv.as_ref()

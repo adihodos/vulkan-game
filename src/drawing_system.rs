@@ -124,7 +124,7 @@ impl DrawingSys {
                 .cmd_bind_descriptor_sets(
                     draw_ctx.cmd_buff,
                     ash::vk::PipelineBindPoint::GRAPHICS,
-                    p_layout,
+                    *p_layout,
                     0,
                     &draw_ctx.rsys.descriptor_sets,
                     &bindig_offsets,

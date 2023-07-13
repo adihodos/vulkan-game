@@ -144,7 +144,7 @@ impl DebugDrawOverlay {
         let descriptor_set = unsafe {
             renderer.graphics_device().allocate_descriptor_sets(
                 &DescriptorSetAllocateInfo::builder()
-                    .set_layouts(pipeline.descriptor_layouts())
+                    .set_layouts(&pipeline.descriptor_layouts())
                     .descriptor_pool(renderer.descriptor_pool())
                     .build(),
             )
@@ -472,7 +472,7 @@ impl DebugDrawOverlay {
             renderer.graphics_device().cmd_bind_descriptor_sets(
                 renderer.current_command_buffer(),
                 PipelineBindPoint::GRAPHICS,
-                self.pipeline.layout,
+                *self.pipeline.layout(),
                 0,
                 &self.descriptor_set,
                 &descriptor_offsets,

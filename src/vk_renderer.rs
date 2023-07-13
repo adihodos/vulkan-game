@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use itertools::Itertools;
 use log::{error, info};
 use smallvec::SmallVec;
 use std::{
@@ -1390,7 +1391,7 @@ impl GraphicsPipelineLayoutBuilder {
     pub fn build(
         self,
         graphics_device: &Device,
-    ) -> Option<(PipelineLayout, Vec<DescriptorSetLayout>)> {
+    ) -> Option<(std::rc::Rc<PipelineLayout>, std::rc::Rc<Vec<DescriptorSetLayout>>)> {
         let mut layout_descriptions = self.layout_bindings.into_iter().collect::<Vec<_>>();
         layout_descriptions.sort_unstable_by_key(|(set_id, _)| *set_id);
 
@@ -1425,7 +1426,7 @@ impl GraphicsPipelineLayoutBuilder {
             )
         }
         .map_err(|e| error!("Failed to create pipeline layout; {}", e))
-        .map(|pipeline_layout| (pipeline_layout, descriptor_set_layouts))
+        .map(|pipeline_layout| (std::rc::Rc::new(pipeline_layout), std::rc::Rc::new(descriptor_set_layouts)))
         .ok()
     }
 }
@@ -1621,7 +1622,10 @@ impl<'a> GraphicsPipelineBuilder<'a> {
         self,
         graphics_device: &Device,
         pipeline_cache: PipelineCache,
-        pipeline_layout_with_descriptor_layouts: (PipelineLayout, Vec<DescriptorSetLayout>),
+        pipeline_layout_with_descriptor_layouts: (
+            std::rc::Rc<PipelineLayout>,
+            std::rc::Rc<Vec<DescriptorSetLayout>>,
+        ),
         renderpass: RenderPass,
         subpass: u32,
     ) -> Option<UniqueGraphicsPipeline> {
@@ -1693,7 +1697,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             .dynamic_state(
                 &PipelineDynamicStateCreateInfo::builder().dynamic_states(&self.dynamic_state),
             )
-            .layout(pipeline_layout)
+            .layout(*pipeline_layout)
             .render_pass(renderpass)
             .subpass(subpass)
             .viewport_state(&vsb.build())
@@ -1769,28 +1773,54 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 
 pub struct UniqueGraphicsPipeline {
     pub pipeline: Pipeline,
-    pub layout: PipelineLayout,
-    descriptor_layouts: Vec<DescriptorSetLayout>,
+    layout: std::rc::Rc<PipelineLayout>,
+    descriptor_layouts: std::rc::Rc<Vec<DescriptorSetLayout>>,
     device: *const Device,
 }
 
 impl UniqueGraphicsPipeline {
-    pub fn descriptor_layouts(&self) -> &[DescriptorSetLayout] {
-        &self.descriptor_layouts
+    pub fn create(
+        pipeline: Pipeline,
+        layout: std::rc::Rc<PipelineLayout>,
+        descriptor_layouts: std::rc::Rc<Vec<DescriptorSetLayout>>,
+        device: &ash::Device,
+    ) -> Self {
+        Self {
+            pipeline,
+            layout,
+            descriptor_layouts,
+            device: &*device as *const _,
+        }
+    }
+
+    pub fn layout(&self) -> std::rc::Rc<PipelineLayout> {
+        std::rc::Rc::clone(&self.layout)
+    }
+
+    pub fn descriptor_layouts(&self) -> std::rc::Rc<Vec<DescriptorSetLayout>> {
+        std::rc::Rc::clone(&self.descriptor_layouts)
     }
 }
 
 impl std::ops::Drop for UniqueGraphicsPipeline {
     fn drop(&mut self) {
-        // unsafe {
-        //     (*self.device).destroy_pipeline_layout(self.layout, None);
-        //     (*self.device).destroy_pipeline(self.pipeline, None);
-        // }
-        // self.descriptor_layouts
-        //     .iter()
-        //     .for_each(|&desc_set_layout| unsafe {
-        //         (*self.device).destroy_descriptor_set_layout(desc_set_layout, None);
-        //     });
+        let descriptor_layouts = std::mem::take(&mut self.descriptor_layouts);
+        if let Ok(dsls) = std::rc::Rc::try_unwrap(descriptor_layouts) {
+            dsls.into_iter().unique().for_each(|d| unsafe {
+                (*self.device).destroy_descriptor_set_layout(d, None);
+            });
+        }
+
+        let layout = std::mem::take(&mut self.layout);
+        if let Ok(l) = std::rc::Rc::try_unwrap(layout) {
+            unsafe {
+                (*self.device).destroy_pipeline_layout(l, None);
+            }
+        }
+
+        unsafe {
+            (*self.device).destroy_pipeline(self.pipeline, None);
+        }
     }
 }
 
@@ -2578,22 +2608,6 @@ impl VulkanRenderer {
 
         info!("Pipeline cache created");
 
-        let img_fmt_props = unsafe {
-            vk_instance.get_physical_device_image_format_properties(
-                phys_device,
-                Format::R8G8B8A8_UNORM,
-                ImageType::TYPE_2D,
-                ImageTiling::OPTIMAL,
-                ImageUsageFlags::SAMPLED | ImageUsageFlags::SAMPLED,
-                ImageCreateFlags::empty(),
-            )
-        }
-        .expect("Failed to query image format properties ...");
-
-        info!("R8G8B8A8 fmt {:?}", img_fmt_props);
-
-        // img_fmt_props.
-
         Some(VulkanRenderer {
             work_packages: RefCell::new(Vec::new()),
             pipeline_cache,
@@ -2929,7 +2943,7 @@ impl VulkanRenderer {
         unsafe {
             self.graphics_device().allocate_descriptor_sets(
                 &DescriptorSetAllocateInfo::builder()
-                    .set_layouts(pipeline.descriptor_layouts())
+                    .set_layouts(&pipeline.descriptor_layouts())
                     .descriptor_pool(self.descriptor_pool.dpool)
                     .build(),
             )
