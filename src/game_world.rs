@@ -691,7 +691,7 @@ impl GameWorld {
     }
 
     fn projectile_impacted_event(&self, proj_handle: RigidBodyHandle) {
-        log::info!("Impact for {:?}", proj_handle);
+        // log::info!("Impact for {:?}", proj_handle);
         // let projectile_isometry = *self
         //     .physics_engine
         //     .borrow()
@@ -706,7 +706,7 @@ impl GameWorld {
         //     life: 2f32,
         // });
 
-        log::info!("Removed {:?}", proj_handle);
+        // log::info!("Removed {:?}", proj_handle);
     }
 
     pub fn handle_winit_event<T>(

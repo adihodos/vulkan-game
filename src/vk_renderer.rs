@@ -576,7 +576,7 @@ impl UniqueImage {
         let reader = ktx2::Reader::new(&ktx_file_mapping).expect("Failed to read KTX2");
         let header = reader.header();
 
-        log::info!("KTX2 header {:?}", header);
+        // log::info!("KTX2 header {:?}", header);
 
         if header.pixel_width == 0 || (header.pixel_depth >= 1 && header.pixel_height == 0) {
             log::error!("Invalid KTX2 texture dimensions");
@@ -584,7 +584,7 @@ impl UniqueImage {
         }
 
         let image_info = ImageInfo::from(header);
-        log::info!("Image info: {:?}", image_info);
+        // log::info!("Image info: {:?}", image_info);
 
         let image_create_flags = if image_info.is_cubemap {
             ImageCreateFlags::CUBE_COMPATIBLE
@@ -656,7 +656,7 @@ impl UniqueImage {
                 let width = image_info.width >> level as u32;
                 let height = image_info.height >> level as u32;
                 let depth = image_info.depth;
-                log::info!("Mip level {}, width {}, height {}", level, width, height);
+                // log::info!("Mip level {}, width {}, height {}", level, width, height);
 
                 buffer_offset -= pixels.len() as usize;
 
@@ -1391,7 +1391,10 @@ impl GraphicsPipelineLayoutBuilder {
     pub fn build(
         self,
         graphics_device: &Device,
-    ) -> Option<(std::rc::Rc<PipelineLayout>, std::rc::Rc<Vec<DescriptorSetLayout>>)> {
+    ) -> Option<(
+        std::rc::Rc<PipelineLayout>,
+        std::rc::Rc<Vec<DescriptorSetLayout>>,
+    )> {
         let mut layout_descriptions = self.layout_bindings.into_iter().collect::<Vec<_>>();
         layout_descriptions.sort_unstable_by_key(|(set_id, _)| *set_id);
 
@@ -1426,7 +1429,12 @@ impl GraphicsPipelineLayoutBuilder {
             )
         }
         .map_err(|e| error!("Failed to create pipeline layout; {}", e))
-        .map(|pipeline_layout| (std::rc::Rc::new(pipeline_layout), std::rc::Rc::new(descriptor_set_layouts)))
+        .map(|pipeline_layout| {
+            (
+                std::rc::Rc::new(pipeline_layout),
+                std::rc::Rc::new(descriptor_set_layouts),
+            )
+        })
         .ok()
     }
 }
@@ -2206,15 +2214,15 @@ pub struct VulkanRenderer {
     max_inflight_frames: u32,
     swapchain: UniqueSwapchain,
     swapchain_loader: std::pin::Pin<std::boxed::Box<Swapchain>>,
-    graphics_device: std::pin::Pin<std::boxed::Box<Device>>,
     device_memory: PhysicalDeviceMemoryProperties,
     device_properties: PhysicalDeviceProperties,
     device_features: PhysicalDeviceFeatures,
-    debug_utils_msg: DebugUtilsMessengerEXT,
-    debug_utils: DebugUtils,
     surface_loader: Surface,
     vk_surface: SurfaceKHR,
+    graphics_device: std::pin::Pin<std::boxed::Box<Device>>,
     phys_device: PhysicalDevice,
+    debug_utils_msg: DebugUtilsMessengerEXT,
+    debug_utils: DebugUtils,
     vk_instance: Instance,
     vk_entry: Entry,
 }
@@ -2256,7 +2264,8 @@ impl VulkanRenderer {
         vk_entry: &ash::Entry,
     ) -> VkResult<vk::SurfaceKHR> {
         use std::mem::transmute;
-        use winit::platform::unix::WindowExtUnix;
+        // use winit::platform::unix::WindowExtUnix;
+        use winit::platform::x11::WindowExtX11;
 
         let native_window = win.xlib_window().expect("Failed to query native window id");
         let native_display = win.xlib_display().expect("Failed to query native display");
@@ -2768,7 +2777,7 @@ impl VulkanRenderer {
                 .wait_for_fences(&[wait_fence], true, !0u64);
         }
 
-        let mut tries = 0;
+        // let mut tries = 0;
         let available_image = loop {
             let acquire_result = unsafe {
                 self.swapchain_loader.acquire_next_image(
@@ -2784,12 +2793,14 @@ impl VulkanRenderer {
                 }
 
                 Ok((_, true)) | Err(ash::vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    if tries < 5 {
-                        self.handle_suboptimal();
-                        tries += 1;
-                    } else {
-                        panic!("Failed to recreate swapchain and acquire image, giving up after {} tries", tries);
-                    }
+                    // if tries < 5 {
+                    //     self.handle_suboptimal();
+                    //     tries += 1;
+                    // } else {
+                    //     panic!("Failed to recreate swapchain and acquire image, giving up after {} tries", tries);
+                    // }
+                    self.handle_suboptimal();
+                    return;
                 }
                 Err(e) => {
                     log::error!("Acquire image error {}", e);
@@ -2877,11 +2888,10 @@ impl VulkanRenderer {
                 .wait_dst_stage_mask(&wait_stages)
                 .build()];
 
-            let _ = self.graphics_device.queue_submit(
-                self.queue,
-                &submits,
-                current_frame_render_data.fence.fence,
-            );
+            let _ = self
+                .graphics_device
+                .queue_submit(self.queue, &submits, current_frame_render_data.fence.fence)
+                .map_err(|e| log::error!("VkQueueSubmit failed, error {e}"));
 
             let swapchains = [self.swapchain.swapchain];
             let swapchain_image_indices = [self.current_frame_id()];
@@ -2899,14 +2909,14 @@ impl VulkanRenderer {
                 Ok(true) | Err(ash::vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                     self.handle_suboptimal();
                 }
-                Ok(false) => {
-                    self.current_frame_id = (self.current_frame_id + 1) % self.max_inflight_frames;
-                }
+                Ok(false) => {}
                 Err(e) => {
                     log::error!("Fatal present error: {}", e);
                     panic!();
                 }
             }
+
+            self.current_frame_id = (self.current_frame_id + 1) % self.max_inflight_frames;
         }
     }
 
@@ -2915,20 +2925,21 @@ impl VulkanRenderer {
     }
 
     pub fn wait_idle(&self) {
+        log::info!("Waiting device idle ...");
+
         let fences = self
             .frame_render_data
             .iter()
-            .map(|fr| fr.fence.fence)
-            .collect::<Vec<_>>();
-
+            .map(|frd| frd.fence.fence)
+            .collect::<SmallVec<[Fence; 8]>>();
         unsafe {
-            let _ = self.graphics_device().wait_for_fences(
-                &fences,
-                true,
-                std::time::Duration::from_secs(5).as_nanos() as u64,
-            );
+            let _ = self
+                .graphics_device()
+                .wait_for_fences(&fences, true, !0u64)
+                .map_err(|e| log::error!("Failed to wait fences: {e}"));
         }
 
+        // deadlocks on Linux ...
         #[cfg(not(target_os = "linux"))]
         unsafe {
             let _ = self.graphics_device.queue_wait_idle(self.queue);
@@ -2972,7 +2983,20 @@ impl VulkanRenderer {
         {
             surface_caps.current_extent.width = 1200;
             surface_caps.current_extent.height = 1200;
+        } else if surface_caps.current_extent.width == 0 || surface_caps.current_extent.height == 0
+        {
+            while surface_caps.current_extent.width == 0 || surface_caps.current_extent.height == 0
+            {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                surface_caps = unsafe {
+                    self.surface_loader
+                        .get_physical_device_surface_capabilities(self.phys_device, self.vk_surface)
+                }
+                .expect("Failed to query surface caps");
+            }
         }
+
+        self.wait_idle();
 
         let (swapchain, max_inflight_frames) = UniqueSwapchain::new(
             &self.swapchain_loader,
@@ -2991,8 +3015,6 @@ impl VulkanRenderer {
         .expect("Failed to get swapchain images ...");
 
         log::info!("Swapchain created, image count {}", max_inflight_frames);
-
-        self.wait_idle();
 
         //
         // would be more efficient to recycle some of the old frame render resources
@@ -3025,7 +3047,6 @@ impl VulkanRenderer {
 
         self.frame_render_data = frame_render_data;
         self.swapchain = swapchain;
-
         self.max_inflight_frames = max_inflight_frames;
         self.current_frame_id = 0;
         self.framebuffer_extents = surface_caps.current_extent;
@@ -3401,5 +3422,53 @@ unsafe extern "system" fn debug_message_callback(
                 .unwrap_or(r#"cannot display error"#)
         );
     }
+    // let log_level = if message_severity.contains(DebugUtilsMessageSeverityFlagsEXT::INFO) {
+    //     Some(log::Level::Info)
+    // } else if message_severity.contains(DebugUtilsMessageSeverityFlagsEXT::WARNING) {
+    //     Some(log::Level::Warn)
+    // } else if message_severity.contains(DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+    //     Some(log::Level::Error)
+    // } else {
+    //     None
+    // };
+
+    // if let Some(log_lvl) = log_level {
+    //     log::log!(
+    //         log_lvl,
+    //         "[Vulkan]::[id::{} id-name::{}]\n{}",
+    //         (*p_callback_data).message_id_number,
+    //         CStr::from_ptr((*p_callback_data).p_message_id_name)
+    //             .to_str()
+    //             .unwrap_or(r#"unknown id"#),
+    //         CStr::from_ptr((*p_callback_data).p_message)
+    //             .to_str()
+    //             .unwrap_or(r#"cannot display Vulkan message"#)
+    //     );
+    // }
+
+    //     log::warn!(
+    //         "[Vulkan]::[id::{} id-name::{}]\n{}",
+    //         (*p_callback_data).message_id_number,
+    //         CStr::from_ptr((*p_callback_data).p_message_id_name)
+    //             .to_str()
+    //             .unwrap_or(r#"unknown id"#),
+    //         CStr::from_ptr((*p_callback_data).p_message)
+    //             .to_str()
+    //             .unwrap_or(r#"cannot display warning"#)
+    //     );
+    // }
+
+    // if
+    //     log::error!(
+    //         "[Vulkan]::[id::{} id-name::{}]\n{}",
+    //         (*p_callback_data).message_id_number,
+    //         CStr::from_ptr((*p_callback_data).p_message_id_name)
+    //             .to_str()
+    //             .unwrap_or(r#"unknown id"#),
+    //         CStr::from_ptr((*p_callback_data).p_message)
+    //             .to_str()
+    //             .unwrap_or(r#"cannot display error"#)
+    //     );
+    // }
     vk::FALSE
 }
