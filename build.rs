@@ -38,7 +38,7 @@ fn main() -> std::io::Result<()> {
     let bytecode_output_dir = Path::new("data/shaders");
 
     let _ = std::fs::create_dir(out_dir.clone());
-    let _ = std::fs::create_dir_all(bytecode_output_dir.clone());
+    let _ = std::fs::create_dir_all(bytecode_output_dir);
 
     // println!("cargo:warning=Shader files {:?}", shader_source_files);
 

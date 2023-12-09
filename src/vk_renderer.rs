@@ -1653,7 +1653,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
                 }?;
 
                 let entry_point =
-                    CString::new(smi.entry_point.clone()).expect("Failed conversion to CString");
+                    CString::new(smi.entry_point).expect("Failed conversion to CString");
 
                 Some((bytecode, entry_point))
             })
@@ -1887,7 +1887,7 @@ impl UniqueRenderpass {
                 .load_op(AttachmentLoadOp::CLEAR)
                 .store_op(AttachmentStoreOp::STORE)
                 .stencil_store_op(AttachmentStoreOp::STORE)
-                .stencil_load_op(AttachmentLoadOp::LOAD)
+                .stencil_load_op(AttachmentLoadOp::CLEAR)
                 .initial_layout(ImageLayout::UNDEFINED)
                 .final_layout(ImageLayout::GENERAL)
                 .build(),
