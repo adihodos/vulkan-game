@@ -2263,19 +2263,14 @@ impl VulkanRenderer {
         vk_instance: &ash::Instance,
         vk_entry: &ash::Entry,
     ) -> VkResult<vk::SurfaceKHR> {
-        use std::mem::transmute;
-        // use winit::platform::unix::WindowExtUnix;
         use winit::platform::x11::WindowExtX11;
-
-        let native_window = win.xlib_window().expect("Failed to query native window id");
-        let native_display = win.xlib_display().expect("Failed to query native display");
 
         let xlib_surface = ash::extensions::khr::XlibSurface::new(vk_entry, vk_instance);
         unsafe {
             xlib_surface.create_xlib_surface(
                 &vk::XlibSurfaceCreateInfoKHR::builder()
-                    .dpy(native_display as *mut ash::vk::Display)
-                    .window(transmute::<u64, ash::vk::Window>(native_window))
+                    .dpy(win.xlib_display().unwrap() as _)
+                    .window(win.xlib_window().unwrap() as _)
                     .build(),
                 None,
             )

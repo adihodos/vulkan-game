@@ -2007,6 +2007,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "starfury-game"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "chrono",
+ "crossbeam",
+ "enumflags2",
+ "flexi_logger",
+ "fnv",
+ "gilrs",
+ "gltf",
+ "image",
+ "imgui",
+ "itertools",
+ "ktx2",
+ "log",
+ "memoffset 0.6.5",
+ "mmap-rs",
+ "nalgebra",
+ "nalgebra-glm",
+ "num",
+ "num-derive 0.4.0",
+ "num-traits",
+ "palette",
+ "rand",
+ "rand_distr",
+ "rapier3d",
+ "raw-window-handle",
+ "rayon",
+ "ron",
+ "serde",
+ "slice-of-array",
+ "smallvec",
+ "strum",
+ "strum_macros",
+ "thiserror",
+ "tokio",
+ "windows-sys 0.45.0",
+ "winit",
+ "x11",
+]
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2075,18 +2118,18 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.43"
+version = "1.0.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a35fc5b8971143ca348fa6df4f024d4d55264f3468c71ad1c2f365b0a4d58c42"
+checksum = "f9a7210f5c9a7156bb50aa36aed4c95afb51df0df00713949448cf9e97d382d2"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.43"
+version = "1.0.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "463fe12d7993d3b327787537ce8dd4dfa058de32fc2b195ef3cde03dc4771e8f"
+checksum = "266b2e40bc00e5a6c09c3584011e08b06f123c00362c92b975ba9843aaaa14b8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2210,48 +2253,6 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
-
-[[package]]
-name = "vulkan-experiments"
-version = "0.1.0"
-dependencies = [
- "ash",
- "chrono",
- "crossbeam",
- "enumflags2",
- "flexi_logger",
- "fnv",
- "gilrs",
- "gltf",
- "image",
- "imgui",
- "itertools",
- "ktx2",
- "log",
- "memoffset 0.9.0",
- "mmap-rs",
- "nalgebra",
- "nalgebra-glm",
- "num",
- "num-derive 0.4.0",
- "num-traits",
- "palette",
- "rand",
- "rand_distr",
- "rapier3d",
- "raw-window-handle",
- "rayon",
- "ron",
- "serde",
- "slice-of-array",
- "smallvec",
- "strum",
- "strum_macros",
- "tokio",
- "windows-sys 0.48.0",
- "winit",
- "x11",
-]
 
 [[package]]
 name = "walkdir"
