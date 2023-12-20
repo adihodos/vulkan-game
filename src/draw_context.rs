@@ -30,7 +30,7 @@ pub struct DrawContext<'a> {
     pub frame_id: u32,
     pub viewport: Viewport,
     pub scissor: Rect2D,
-
+    pub global_ubo_handle: u32,
     pub cam_position: nalgebra_glm::Vec3,
     pub view_matrix: nalgebra_glm::Mat4,
     pub projection: nalgebra_glm::Mat4,

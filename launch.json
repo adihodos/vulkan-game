@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'vulkan-experiments'",
+            "name": "Debug executable 'starfury-game'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=vulkan-experiments",
-                    "--package=vulkan-experiments"
+                    "--bin=starfury-game",
+                    "--package=starfury-game"
                 ],
                 "filter": {
-                    "name": "vulkan-experiments",
+                    "name": "starfury-game",
                     "kind": "bin"
                 }
             },
@@ -25,16 +25,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'vulkan-experiments'",
+            "name": "Debug unit tests in executable 'starfury-game'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=vulkan-experiments",
-                    "--package=vulkan-experiments"
+                    "--bin=starfury-game",
+                    "--package=starfury-game"
                 ],
                 "filter": {
-                    "name": "vulkan-experiments",
+                    "name": "starfury-game",
                     "kind": "bin"
                 }
             },

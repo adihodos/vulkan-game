@@ -3,68 +3,46 @@
 // for gl_DrawID
 #extension GL_ARB_shader_draw_parameters : require
 
-#if defined(BINDLESS_VS_SETUP)
-
-struct GlobalData {
-  mat4 matrices[4];
-  vec4 vectors[16];
-  uint integers[64];
+struct GlobalUniformData {
+  mat4 projection_view;
+  mat4 view;
+  uint frameId;
 };
 
-layout (set = 0, binding = 0) readonly buffer BufferGlobalData {
-  GlobalData data[];
-} g_BufferGlobal;
+layout (std140, set = 0, binding = 0) uniform GlobalData_t {
+  GlobalUniformData data[];
+} g_GlobalUniform[];
 
-struct InstanceRenderInfo {
-  mat4 model;
-  uint mtl_coll_offset;
+struct UiBackendData {
+  mat4 ortho;
+  uint atlas;
 };
 
-layout (std430, set = 1, binding = 0) readonly buffer InstancedData_t {
-  InstanceRenderInfo data[]; 
-} instances;
-
-#endif
-
-#if defined(BINDLESS_FS_SETUP)
-
-struct pbr_data_t {
-  vec4 base_color_factor;
-  float metallic_factor;
-  float roughness_factor;
-  uint colormap_id;
-  uint metallic_roughness_id;
-  uint normal_id;
+struct SkyboxData {
+  uint globalUboHandle;
+  uint skyboxPrefiltered;
+  uint skyboxIrradiance;
+  uint skyboxBRDFLut;
 };
 
-layout (std140, set = 2, binding = 0) readonly buffer primitive_pbr_data_t {
-  pbr_data_t entry[];
-} primitives_pbr_data;
+layout (set = 1, binding = 0) readonly buffer GlobalUiData {
+  UiBackendData arr[];
+} g_GlobalUiData[];
 
-layout (set = 3, binding = 0) uniform sampler2D g_s_colormaps[];
-layout (set = 4, binding = 0) uniform sampler2D g_s_metal_roughness_maps[];
-layout (set = 5, binding = 0) uniform sampler2D g_s_normal_maps[];
+layout (set = 1, binding = 0) readonly buffer GlobalSkyboxData {
+  SkyboxData arr[];
+} g_GlobalSkyboxData[];
 
-layout (std140, set = 6, binding = 0) uniform pbr_lighting_data_t {
-  vec3 eye_pos;
-  uint skybox;
-} lighting_data;
+layout (set = 2, binding = 0) uniform sampler2D g_Global2DTextures[];
+layout (set = 2, binding = 0) uniform samplerCube g_GlobalCubeTextures[];
 
-layout (set = 7, binding = 0) uniform samplerCube s_irradiance[];
-layout (set = 8, binding = 0) uniform samplerCube s_prefiltered[];
-layout (set = 9, binding = 0) uniform sampler2D s_brdf_lut[];
+layout (push_constant) uniform GlobalPushConstant {
+  uint id;
+} g_GlobalPushConst;  
 
-layout (set = 10, binding = 0) uniform sampler2D s_misc_textures[];
-layout (set = 11, binding = 0) uniform sampler2DArray s_misc_arr_textures[];
-
-struct GlobalData {
-  mat4 matrices[4];
-  vec4 vectors[16];
-  uint integers[64];
-};
-
-layout (set = 12, binding = 0) readonly buffer BufferGlobalData {
-  GlobalData data[];
-} g_BufferGlobal;
-
-#endif
+// unpack a frameid and resource handle
+// return uvec2{resource, frame}
+uvec2 unpack_frame_and_resource_data() {
+  const uint id = g_GlobalPushConst.id;
+  return uvec2(id >> 4, id & 0xF);
+}

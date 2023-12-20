@@ -20,6 +20,7 @@ use std::{collections::HashMap, mem::size_of, path::Path, time::Instant};
 
 use crate::{
     app_config::AppConfig,
+    bindless::{BindlessResourceHandle2, BindlessResourceSystem},
     imported_geometry::{GeometryNode, GeometryVertex, ImportedGeometry},
     math::AABB3,
     pbr::PbrMaterial,
@@ -193,6 +194,19 @@ pub struct MissileSmokePoint {
     pub pt: glm::Vec3,
 }
 
+pub struct CachedTexture {
+    pub img: UniqueImageWithView,
+    pub handle: BindlessResourceHandle2,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct GlobalUniformBufferBindless {
+    projection_view: glm::Mat4,
+    view: glm::Mat4,
+    frame: u32,
+    pad: [u32; 3],
+}
+
 pub struct ResourceSystem {
     pub g_vertex_buffer: UniqueBuffer,
     pub g_index_buffer: UniqueBuffer,
@@ -207,6 +221,10 @@ pub struct ResourceSystem {
     samplers: SamplerResourceTable,
     resource_table: HashMap<BindlessResourceKind, Vec<UniqueImageWithView>>,
     effect_table: HashMap<EffectType, UniqueGraphicsPipeline>,
+    pub bindless: BindlessResourceSystem,
+    textures: HashMap<String, CachedTexture>,
+    ubo_bindless: UniqueBuffer,
+    ubo_bindless_handle: BindlessResourceHandle2,
 }
 
 impl ResourceSystem {
@@ -238,6 +256,40 @@ impl ResourceSystem {
             .address_mode_w(SamplerAddressMode::CLAMP_TO_EDGE)
             .border_color(ash::vk::BorderColor::INT_OPAQUE_BLACK)
             .max_anisotropy(1f32)
+    }
+
+    pub fn add_texture_bindless(
+        &mut self,
+        id: &str,
+        renderer: &VulkanRenderer,
+        img: UniqueImageWithView,
+        sampler_info: Option<SamplerDescription>,
+    ) -> BindlessResourceHandle2 {
+	let si = sampler_info.map(|s| *s).unwrap_or_else(|| Self::default_sampler());
+	
+        let sampler = self.samplers.get_sampler(&si, renderer);
+        let handle = self
+            .bindless
+            .register_image(renderer, img.image_view(), sampler);
+        self.textures
+            .insert(id.to_string(), CachedTexture { img, handle });
+        handle
+    }
+
+    pub fn get_texture(&mut self, id: &str) -> BindlessResourceHandle2 {
+        self.textures
+            .get(id)
+            .map(|cached_tex| cached_tex.handle)
+            .expect(&format!("Texture {id} not found"))
+    }
+
+    pub fn bindless_setup(&self) -> BindlessSetup {
+        BindlessSetup {
+            pipeline_layout: self.bindless.bindless_pipeline_layout(),
+            descriptor_set: self.bindless.descriptor_sets(),
+            ubo: self.ubo_bindless.buffer,
+            ubo_handle: self.ubo_bindless_handle,
+        }
     }
 
     pub fn add_texture(
@@ -319,6 +371,22 @@ impl ResourceSystem {
 
     pub fn create(renderer: &VulkanRenderer, app_config: &AppConfig) -> Option<Self> {
         let s = Instant::now();
+
+        let mut bindless =
+            BindlessResourceSystem::new(renderer).expect("Failed to create bindless system");
+        let mut textures = HashMap::<String, CachedTexture>::new();
+
+        let ubo_bindless = UniqueBuffer::with_capacity(
+            renderer,
+            BufferUsageFlags::UNIFORM_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            1,
+            std::mem::size_of::<GlobalUniformBufferBindless>(),
+            renderer.max_inflight_frames(),
+        )
+        .expect("Failed to create bindless UBO");
+
+        let ubo_bindless_handle = bindless.register_uniform_buffer(renderer, &ubo_bindless);
 
         let mut sampler_table = SamplerResourceTable::new();
 
@@ -1003,6 +1071,10 @@ impl ResourceSystem {
                 (EffectType::BasicEmissive, emissive_effect),
             ]
             .into(),
+            bindless,
+            textures,
+            ubo_bindless,
+            ubo_bindless_handle,
         })
     }
 
@@ -1140,7 +1212,7 @@ impl std::fmt::Display for SubmeshId {
 }
 
 #[derive(Copy, Clone)]
-pub struct SamplerDescription(ash::vk::SamplerCreateInfo);
+pub struct SamplerDescription(pub ash::vk::SamplerCreateInfo);
 
 impl std::ops::Deref for SamplerDescription {
     type Target = ash::vk::SamplerCreateInfo;
@@ -1253,4 +1325,11 @@ impl SamplerResourceTable {
 pub struct PipelineLayoutDescription<'a> {
     pub layout: PipelineLayout,
     pub descriptor_sets_layouts: &'a [DescriptorSetLayout],
+}
+
+pub struct BindlessSetup<'a> {
+    pub pipeline_layout: ash::vk::PipelineLayout,
+    pub ubo: ash::vk::Buffer,
+    pub descriptor_set: &'a [DescriptorSet],
+    pub ubo_handle: BindlessResourceHandle2,
 }

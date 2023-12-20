@@ -37,26 +37,28 @@ use ash::{
         ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags, ImageView,
         ImageViewCreateInfo, ImageViewType, MappedMemoryRange, MemoryAllocateInfo, MemoryMapFlags,
         MemoryPropertyFlags, MemoryRequirements, Offset2D, Offset3D, PhysicalDevice,
-        PhysicalDeviceFeatures, PhysicalDeviceFeatures2, PhysicalDeviceMemoryProperties,
-        PhysicalDeviceProperties, PhysicalDeviceType, PhysicalDeviceVulkan11Features,
-        PhysicalDeviceVulkan12Features, Pipeline, PipelineBindPoint, PipelineCache,
-        PipelineCacheCreateInfo, PipelineColorBlendAttachmentState,
-        PipelineColorBlendStateCreateInfo, PipelineDepthStencilStateCreateInfo,
-        PipelineDynamicStateCreateInfo, PipelineInputAssemblyStateCreateInfo, PipelineLayout,
-        PipelineLayoutCreateInfo, PipelineMultisampleStateCreateInfo,
-        PipelineRasterizationStateCreateInfo, PipelineShaderStageCreateInfo, PipelineStageFlags,
-        PipelineVertexInputStateCreateInfo, PipelineViewportStateCreateInfo, PolygonMode,
-        PresentInfoKHR, PresentModeKHR, PrimitiveTopology, PushConstantRange, Queue, QueueFlags,
-        Rect2D, RenderPass, RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags,
-        SamplerCreateInfo, Semaphore, SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo,
-        ShaderStageFlags, SharingMode, SubmitInfo, SubpassContents, SubpassDependency,
-        SubpassDescription, SurfaceCapabilitiesKHR, SurfaceFormatKHR, SurfaceKHR,
-        SwapchainCreateInfoKHR, SwapchainKHR, VertexInputAttributeDescription,
-        VertexInputBindingDescription, Viewport, QUEUE_FAMILY_IGNORED, SUBPASS_EXTERNAL,
-        WHOLE_SIZE,
+        PhysicalDeviceFeatures, PhysicalDeviceFeatures2, PhysicalDeviceLimits,
+        PhysicalDeviceMemoryProperties, PhysicalDeviceProperties, PhysicalDeviceType,
+        PhysicalDeviceVulkan11Features, PhysicalDeviceVulkan12Features, Pipeline,
+        PipelineBindPoint, PipelineCache, PipelineCacheCreateInfo,
+        PipelineColorBlendAttachmentState, PipelineColorBlendStateCreateInfo,
+        PipelineDepthStencilStateCreateInfo, PipelineDynamicStateCreateInfo,
+        PipelineInputAssemblyStateCreateInfo, PipelineLayout, PipelineLayoutCreateInfo,
+        PipelineMultisampleStateCreateInfo, PipelineRasterizationStateCreateInfo,
+        PipelineShaderStageCreateInfo, PipelineStageFlags, PipelineVertexInputStateCreateInfo,
+        PipelineViewportStateCreateInfo, PolygonMode, PresentInfoKHR, PresentModeKHR,
+        PrimitiveTopology, PushConstantRange, Queue, QueueFlags, Rect2D, RenderPass,
+        RenderPassBeginInfo, RenderPassCreateInfo, SampleCountFlags, SamplerCreateInfo, Semaphore,
+        SemaphoreCreateInfo, ShaderModule, ShaderModuleCreateInfo, ShaderStageFlags, SharingMode,
+        SubmitInfo, SubpassContents, SubpassDependency, SubpassDescription, SurfaceCapabilitiesKHR,
+        SurfaceFormatKHR, SurfaceKHR, SwapchainCreateInfoKHR, SwapchainKHR,
+        VertexInputAttributeDescription, VertexInputBindingDescription, Viewport,
+        QUEUE_FAMILY_IGNORED, SUBPASS_EXTERNAL, WHOLE_SIZE,
     },
     Device, Entry, Instance,
 };
+
+use crate::ProgramError;
 
 #[derive(Clone, Debug)]
 pub struct UniqueDeviceMemory {
@@ -985,6 +987,29 @@ pub struct UniqueDescriptorPool {
     device: *const Device,
 }
 
+impl UniqueDescriptorPool {
+    pub fn new(
+        renderer: &VulkanRenderer,
+        pool_sizes: &[DescriptorPoolSize],
+        max_sets: u32,
+    ) -> Result<Self, ProgramError> {
+        let dpool = unsafe {
+            renderer.graphics_device().create_descriptor_pool(
+                &ash::vk::DescriptorPoolCreateInfo::builder()
+                    .flags(ash::vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
+                    .pool_sizes(&pool_sizes)
+                    .max_sets(max_sets),
+                None,
+            )
+        }?;
+
+        Ok(Self {
+            dpool,
+            device: renderer.graphics_device() as *const _,
+        })
+    }
+}
+
 pub struct DescriptorPoolBuilder {
     pools: Vec<DescriptorPoolSize>,
 }
@@ -1092,9 +1117,104 @@ impl UniqueSwapchain {
     }
 }
 
+pub fn align_to(size: usize, align: usize) -> usize {
+    if size != 0 {
+        (size + align - 1) & !(align - 1)
+    } else {
+        size
+    }
+}
+
+pub fn compute_align_from_usage(
+    limits: &PhysicalDeviceLimits,
+    usage: BufferUsageFlags,
+    memory_flags: MemoryPropertyFlags,
+) -> usize {
+    let align_size = if memory_flags.intersects(MemoryPropertyFlags::HOST_VISIBLE)
+        && !memory_flags.intersects(MemoryPropertyFlags::HOST_COHERENT)
+    {
+        if usage.intersects(BufferUsageFlags::UNIFORM_BUFFER) {
+	    limits.min_uniform_buffer_offset_alignment
+	} else {
+	    limits.non_coherent_atom_size
+	}
+    } else {
+        if usage.intersects(BufferUsageFlags::UNIFORM_BUFFER) {
+            limits.min_uniform_buffer_offset_alignment
+        } else if usage.intersects(
+            BufferUsageFlags::UNIFORM_TEXEL_BUFFER | BufferUsageFlags::STORAGE_TEXEL_BUFFER,
+        ) {
+            limits.min_texel_buffer_offset_alignment
+        } else if usage.intersects(BufferUsageFlags::STORAGE_BUFFER) {
+            limits.min_storage_buffer_offset_alignment
+        } else {
+            limits.non_coherent_atom_size
+        }
+    };
+
+    align_size as usize
+}
+
+// pub struct UniqueSharedMemoryBuffer {
+//     pub handle: Buffer,
+//     pub memory: DeviceMemory,
+//     pub alignment: usize,
+//     pub items: usize,
+//     pub item_size: usize,
+//     pub slabs: usize,
+//     pub slab_id: usize,
+//     device: *const Device
+// }
+//
+// impl UniqueSharedMemoryBuffer {
+//     pub fn create(        vks: &VulkanRenderer,
+//         usage: BufferUsageFlags,
+//         memory_flags: MemoryPropertyFlags,
+//         items: usize,
+//         item_size: usize,
+// 			  slabs: u32) -> Result<Vec<Self>, ProgramError>
+//     {
+// 	        let align_size =
+//             compute_align_from_usage(&ds.device_properties.limits, usage, memory_flags);
+//
+//         let chunk_allocation_size = items * item_size;
+//         let aligned_chunk_size = align_to(chunk_allocation_size, align_size);
+//
+//         let size = items * item_size * inflight_frames as usize;
+// 	let aligned_size = align_to(size, align_size);
+//
+//         let buffer = unsafe {
+//             ds.graphics_device.create_buffer(
+//                 &BufferCreateInfo::builder()
+//                     .size(aligned_size as DeviceSize)
+//                     .usage(usage)
+//                     .sharing_mode(SharingMode::EXCLUSIVE)
+//                     .queue_family_indices(&[ds.queue_family_index]),
+//                 None,
+//             )
+//         }?;
+//
+//         let memory_req = unsafe { ds.graphics_device.get_buffer_memory_requirements(buffer) };
+//         let mem_heap = choose_memory_type(&ds.device_memory, &memory_req, memory_flags);
+//
+//         let buffer_memory = unsafe {
+//             ds.graphics_device.allocate_memory(
+//                 &MemoryAllocateInfo::builder()
+//                     .allocation_size(memory_req.size)
+//                     .memory_type_index(mem_heap),
+//                 None,
+//             )
+//         }?;
+//
+//     }
+// }
+
 pub struct UniqueBuffer {
     pub buffer: Buffer,
     pub memory: DeviceMemory,
+    pub memory_align: usize,
+    pub items: usize,
+    pub aligned_slab_size: usize,
     device: *const Device,
 }
 
@@ -1108,6 +1228,94 @@ impl std::ops::Drop for UniqueBuffer {
 }
 
 impl UniqueBuffer {
+    pub fn map_whole(
+        &self,
+        renderer: &VulkanRenderer,
+    ) -> Result<ScopedBufferMapping, ProgramError> {
+        ScopedBufferMapping::create(renderer, self, ash::vk::WHOLE_SIZE, 0).ok_or_else(|| {
+            ProgramError::GraphicsSystemError(ash::vk::Result::ERROR_MEMORY_MAP_FAILED)
+        })
+    }
+
+    pub fn map_for_frame(
+        &self,
+        renderer: &VulkanRenderer,
+        frame_id: u32,
+    ) -> Result<ScopedBufferMapping, ProgramError> {
+        ScopedBufferMapping::create(
+            renderer,
+            self,
+            self.aligned_slab_size as DeviceSize,
+            (self.aligned_slab_size * frame_id as usize) as DeviceSize,
+        )
+        .ok_or_else(|| ProgramError::GraphicsSystemError(ash::vk::Result::ERROR_MEMORY_MAP_FAILED))
+    }
+
+    pub fn with_capacity(
+        ds: &VulkanRenderer,
+        usage: BufferUsageFlags,
+        memory_flags: MemoryPropertyFlags,
+        items: usize,
+        item_size: usize,
+        inflight_frames: u32,
+    ) -> Result<UniqueBuffer, ProgramError> {
+        let align_size =
+            compute_align_from_usage(&ds.device_properties.limits, usage, memory_flags);
+
+        let chunk_allocation_size = items * item_size;
+        let aligned_chunk_size = align_to(chunk_allocation_size, align_size);
+
+        let aligned_size = aligned_chunk_size * inflight_frames as usize;
+
+        let buffer = unsafe {
+            ds.graphics_device.create_buffer(
+                &BufferCreateInfo::builder()
+                    .size(aligned_size as DeviceSize)
+                    .usage(usage)
+                    .sharing_mode(SharingMode::EXCLUSIVE)
+                    .queue_family_indices(&[ds.queue_family_index]),
+                None,
+            )
+        }?;
+
+        let memory_req = unsafe { ds.graphics_device.get_buffer_memory_requirements(buffer) };
+        let mem_heap = choose_memory_type(&ds.device_memory, &memory_req, memory_flags);
+
+        let buffer_memory = unsafe {
+            ds.graphics_device.allocate_memory(
+                &MemoryAllocateInfo::builder()
+                    .allocation_size(memory_req.size)
+                    .memory_type_index(mem_heap),
+                None,
+            )
+        }?;
+
+        unsafe {
+            ds.graphics_device
+                .bind_buffer_memory(buffer, buffer_memory, 0)?;
+        }
+
+        log::debug!(
+            "Create buffer:\n\tItem size {item_size}, items {items}, chunks {inflight_frames},\n\
+	     \tAlignment {align_size}\n\
+	     \tChunk aligned size {aligned_chunk_size}\n\
+	     \tsize: allocated size {}\n\
+	     \tVK object + memory object {:?} -> {:?}",
+            memory_req.size,
+            buffer,
+            buffer_memory,
+        );
+
+        Ok(Self {
+            device: ds.graphics_device() as *const _,
+            buffer,
+            memory: buffer_memory,
+            memory_align: align_size,
+            aligned_slab_size: aligned_chunk_size,
+            items,
+        })
+    }
+
     pub fn new(
         renderer: &VulkanRenderer,
         usage: BufferUsageFlags,
@@ -1156,6 +1364,9 @@ impl UniqueBuffer {
             buffer,
             memory,
             device: graphics_device as *const _,
+            memory_align: 1,
+            aligned_slab_size: 1,
+            items: 1,
         })
     }
 
@@ -1230,6 +1441,34 @@ pub struct Cpu2GpuBuffer<T: Sized> {
 }
 
 impl<T: Sized> Cpu2GpuBuffer<T> {
+    pub fn aligned_item_size(&self) -> usize {
+        self.buffer.memory_align
+    }
+
+    pub fn new(
+        renderer: &VulkanRenderer,
+        usage: BufferUsageFlags,
+        items: usize,
+        max_frames: usize,
+    ) -> Result<Self, ProgramError> {
+        let buffer = UniqueBuffer::with_capacity(
+            renderer,
+            usage,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            items,
+            std::mem::size_of::<T>(),
+            max_frames as u32,
+        )?;
+        let bytes_one_frame = (buffer.memory_align * items) as DeviceSize;
+        let align = buffer.memory_align as DeviceSize;
+
+        Ok(Self {
+            buffer,
+            bytes_one_frame,
+            align,
+            _phantom: std::marker::PhantomData,
+        })
+    }
     pub fn create(
         renderer: &VulkanRenderer,
         usage: BufferUsageFlags,
@@ -1626,6 +1865,107 @@ impl<'a> GraphicsPipelineBuilder<'a> {
         self
     }
 
+    pub fn build_bindless(
+        self,
+        graphics_device: &Device,
+        pipeline_cache: PipelineCache,
+        master_layout: PipelineLayout,
+        renderpass: RenderPass,
+        subpass: u32,
+    ) -> Result<BindlessPipeline, ProgramError> {
+        let built_shader_modules = self
+            .shader_stages
+            .iter()
+            .filter_map(|smi| {
+                let bytecode = match &smi.source {
+                    ShaderModuleSource::File(path) => {
+                        UniqueShaderModule::from_file(graphics_device, path)
+                    }
+                    ShaderModuleSource::Bytes(bytecode) => {
+                        UniqueShaderModule::from_bytecode(graphics_device, bytecode)
+                    }
+                }?;
+
+                let entry_point =
+                    CString::new(smi.entry_point).expect("Failed conversion to CString");
+
+                Some((bytecode, entry_point))
+            })
+            .collect::<Vec<_>>();
+
+        if built_shader_modules.len() != self.shader_stages.len() {
+            log::info!("Failed to build all required shader modules");
+            return Err(ProgramError::GraphicsSystemError(
+                ash::vk::Result::ERROR_UNKNOWN,
+            ));
+        }
+
+        let shader_stages_create_info = self
+            .shader_stages
+            .iter()
+            .zip(built_shader_modules.iter())
+            .map(|(mi, (module, entry_pt))| {
+                PipelineShaderStageCreateInfo::builder()
+                    .name(entry_pt.as_c_str())
+                    .stage(mi.stage)
+                    .module(module.handle)
+                    .build()
+            })
+            .collect::<Vec<_>>();
+
+        let mut vsb = PipelineViewportStateCreateInfo::builder();
+        if self.viewports.is_empty() {
+            vsb = vsb.viewport_count(1);
+        } else {
+            vsb = vsb.viewports(&self.viewports);
+        }
+
+        if self.scissors.is_empty() {
+            vsb = vsb.scissor_count(1);
+        } else {
+            vsb = vsb.scissors(&self.scissors);
+        }
+
+        let pipelines_create_info = [GraphicsPipelineCreateInfo::builder()
+            .input_assembly_state(&self.input_assembly_state)
+            .vertex_input_state(
+                &PipelineVertexInputStateCreateInfo::builder()
+                    .vertex_attribute_descriptions(&self.vertex_input_attrib_desc)
+                    .vertex_binding_descriptions(&self.vertex_input_attrib_bindings)
+                    .build(),
+            )
+            .stages(&shader_stages_create_info)
+            .depth_stencil_state(&self.depth_stencil_state)
+            .multisample_state(&self.multisample_state)
+            .rasterization_state(&self.raster_state)
+            .dynamic_state(
+                &PipelineDynamicStateCreateInfo::builder().dynamic_states(&self.dynamic_state),
+            )
+            .layout(master_layout)
+            .render_pass(renderpass)
+            .subpass(subpass)
+            .viewport_state(&vsb.build())
+            .color_blend_state(
+                &PipelineColorBlendStateCreateInfo::builder()
+                    .attachments(&self.colorblend_state)
+                    .blend_constants([1f32; 4])
+                    .build(),
+            )
+            .build()];
+
+        match unsafe {
+            graphics_device.create_graphics_pipelines(pipeline_cache, &pipelines_create_info, None)
+        } {
+            Ok(pipelines) => Ok(BindlessPipeline {
+                handle: pipelines[0],
+                layout: master_layout,
+                device: graphics_device as *const _,
+            }),
+
+            Err((pipelines, err)) => Err(ProgramError::GraphicsSystemError(err)),
+        }
+    }
+
     pub fn build(
         self,
         graphics_device: &Device,
@@ -1776,6 +2116,20 @@ impl<'a> GraphicsPipelineBuilder<'a> {
     pub fn dynamic_states(mut self, dyn_states: &[DynamicState]) -> Self {
         self.dynamic_state.extend_from_slice(dyn_states);
         self
+    }
+}
+
+pub struct BindlessPipeline {
+    pub handle: Pipeline,
+    pub layout: PipelineLayout,
+    device: *const Device,
+}
+
+impl std::ops::Drop for BindlessPipeline {
+    fn drop(&mut self) {
+        unsafe {
+            (*self.device).destroy_pipeline(self.handle, None);
+        }
     }
 }
 

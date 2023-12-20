@@ -1,54 +1,115 @@
 use std::path::Path;
 
 use ash::vk::{
-    DynamicState, Filter, PipelineBindPoint,
+    BufferUsageFlags, DynamicState, Filter, MemoryPropertyFlags, PipelineBindPoint,
     SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags,
 };
 
 use crate::{
-    app_config::AppConfig,
+    bindless::BindlessResourceHandle2,
     draw_context::{DrawContext, InitContext},
+    resource_system::SamplerDescription,
     vk_renderer::{
-        GraphicsPipelineBuilder, ShaderModuleDescription,
-        ShaderModuleSource, UniqueGraphicsPipeline, UniqueImageWithView, VulkanRenderer,
-    }, resource_system::BindlessResourceKind,
+        BindlessPipeline, GraphicsPipelineBuilder, ShaderModuleDescription, ShaderModuleSource,
+        UniqueBuffer, UniqueImageWithView,
+    },
+    ProgramError,
 };
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+struct SkyboxData {
+    global_ubo_handle: u32,
+    skybox_prefiltered: u32,
+    skybox_irradiance: u32,
+    skybox_brdf: u32,
+}
+
+#[derive(Copy, Clone)]
+struct SkyboxResource {
+    prefiltered: BindlessResourceHandle2,
+    irradiance: BindlessResourceHandle2,
+    brdf_lut: BindlessResourceHandle2,
+}
 
 pub struct Skybox {
     pub id: u32,
-    count: u32,
-    pipeline: UniqueGraphicsPipeline,
+
+    pipeline: BindlessPipeline,
+    ssbo: UniqueBuffer,
+    ssbo_handles: Vec<BindlessResourceHandle2>,
+    skyboxes: Vec<SkyboxResource>,
 }
 
 impl Skybox {
     pub fn create(init_ctx: &mut InitContext) -> Option<Self> {
-        let loaded = Self::load_skyboxes(init_ctx);
-        if loaded == 0 {
+        let ssbo = UniqueBuffer::with_capacity(
+            init_ctx.renderer,
+            BufferUsageFlags::STORAGE_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            1,
+            std::mem::size_of::<SkyboxData>(),
+            init_ctx.renderer.max_inflight_frames(),
+        )
+        .expect("xxx");
+
+        let ssbo_handles = init_ctx.rsys.bindless.register_chunked_ssbo(
+            init_ctx.renderer,
+            &ssbo,
+            init_ctx.renderer.max_inflight_frames() as usize,
+        );
+
+        let skyboxes = Self::load_skyboxes(init_ctx);
+        if skyboxes.len() == 0 {
             return None;
         }
 
-	let (layout, descriptor_layouts) = init_ctx.rsys.pipeline_layout();
 
         Some(Self {
             id: 0,
-            count: loaded,
-            pipeline: Self::create_pipeline(
-                init_ctx.cfg,
-                init_ctx.renderer,
-                layout,
-                descriptor_layouts
-            )?,
+            ssbo,
+            ssbo_handles,
+            skyboxes,
+            pipeline: Self::create_pipeline(init_ctx).expect("xxx"),
         })
     }
 
     pub fn draw(&self, draw_context: &DrawContext) {
         let graphics_device = draw_context.renderer.graphics_device();
 
+        let skybox = self.skyboxes[self.id as usize];
+
+        let skybox_data = SkyboxData {
+            global_ubo_handle: draw_context.global_ubo_handle,
+            skybox_prefiltered: skybox.prefiltered.handle(),
+            skybox_irradiance: skybox.irradiance.handle(),
+            skybox_brdf: skybox.brdf_lut.handle(),
+        };
+
+        self.ssbo
+            .map_for_frame(draw_context.renderer, draw_context.frame_id)
+            .map(|mut buf| unsafe {
+                std::ptr::copy_nonoverlapping(
+                    &skybox_data as *const _,
+                    buf.as_mut_ptr() as *mut SkyboxData,
+                    1,
+                );
+            }).expect("Failed to map/update SSBO");
+
+        let ssbo_handle = self.ssbo_handles[draw_context.frame_id as usize].handle();
+
         unsafe {
             graphics_device.cmd_bind_pipeline(
                 draw_context.cmd_buff,
                 PipelineBindPoint::GRAPHICS,
-                self.pipeline.pipeline,
+                self.pipeline.handle,
+            );
+            graphics_device.cmd_push_constants(
+                draw_context.cmd_buff,
+                self.pipeline.layout,
+                ShaderStageFlags::ALL,
+                0,
+                &ssbo_handle.to_le_bytes(),
             );
             graphics_device.cmd_set_viewport(draw_context.cmd_buff, 0, &[draw_context.viewport]);
             graphics_device.cmd_set_scissor(draw_context.cmd_buff, 0, &[draw_context.scissor]);
@@ -56,13 +117,14 @@ impl Skybox {
         }
     }
 
-    fn load_skyboxes(init_ctx: &mut InitContext) -> u32 {
+    fn load_skyboxes(init_ctx: &mut InitContext) -> Vec<SkyboxResource> {
         let scene = &init_ctx.cfg.scene;
         let skybox_work_pkg = init_ctx
             .renderer
             .create_work_package()
             .expect("Failed to create work package");
         let mut loaded = 0u32;
+        let mut skyboxes = Vec::<SkyboxResource>::new();
 
         scene
             .skyboxes
@@ -91,13 +153,13 @@ impl Skybox {
                     &skybox_texture_dir.clone().join("skybox.brdf.lut.ktx2"),
                 )?;
 
-                Some((base_color, irradiance, brdf_lut))
+                Some((base_color, irradiance, brdf_lut, skybox_desc.tag.clone()))
             })
-            .for_each(|(specular, irradiance, brdf_lut)| {
+            .for_each(|(specular, irradiance, brdf_lut, tag)| {
                 loaded += 1;
 
-                let sampler_spec = init_ctx.rsys.get_sampler(
-                    &SamplerCreateInfo::builder()
+                let sampler_spec = SamplerDescription(
+                    *SamplerCreateInfo::builder()
                         .min_filter(Filter::LINEAR)
                         .mag_filter(Filter::LINEAR)
                         .mipmap_mode(SamplerMipmapMode::LINEAR)
@@ -109,18 +171,17 @@ impl Skybox {
                         .max_anisotropy(1f32)
                         .compare_op(ash::vk::CompareOp::NEVER)
                         .border_color(ash::vk::BorderColor::INT_OPAQUE_BLACK),
-                    init_ctx.renderer,
                 );
 
-                init_ctx.rsys.add_texture(
+                let prefiltered_handle = init_ctx.rsys.add_texture_bindless(
+                    &format!("skybox/{tag}/prefiltered"),
+                    init_ctx.renderer,
                     specular,
-                    BindlessResourceKind::SamplerEnvMapPrefiltered,
                     Some(sampler_spec),
-                    init_ctx.renderer,
                 );
 
-                let sampler_irradiance = init_ctx.rsys.get_sampler(
-                    &SamplerCreateInfo::builder()
+                let sampler_irradiance = SamplerDescription(
+                    *SamplerCreateInfo::builder()
                         .min_filter(Filter::LINEAR)
                         .mag_filter(Filter::LINEAR)
                         .mipmap_mode(SamplerMipmapMode::LINEAR)
@@ -132,59 +193,60 @@ impl Skybox {
                         .max_anisotropy(1f32)
                         .compare_op(ash::vk::CompareOp::NEVER)
                         .border_color(ash::vk::BorderColor::INT_OPAQUE_BLACK),
-                    init_ctx.renderer,
                 );
 
-                init_ctx.rsys.add_texture(
+                let irradiance_handle = init_ctx.rsys.add_texture_bindless(
+                    &format!("skybox/{tag}/irradiance"),
+                    init_ctx.renderer,
                     irradiance,
-                    BindlessResourceKind::SamplerEnvMapIrradiance,
                     Some(sampler_irradiance),
-                    init_ctx.renderer,
                 );
-                init_ctx.rsys.add_texture(
+
+                let brdf_lut_handle = init_ctx.rsys.add_texture_bindless(
+                    &format!("skybox/{tag}/brdf_lut"),
+                    init_ctx.renderer,
                     brdf_lut,
-                    BindlessResourceKind::SamplerEnvMapBRDFLut,
                     None,
-                    init_ctx.renderer,
                 );
+
+                skyboxes.push(SkyboxResource {
+                    prefiltered: prefiltered_handle,
+                    irradiance: irradiance_handle,
+                    brdf_lut: brdf_lut_handle,
+                })
             });
 
         if loaded != 0 {
             init_ctx.renderer.push_work_package(skybox_work_pkg);
         }
 
-        loaded
+        skyboxes
     }
 
-    fn create_pipeline(
-        app_config: &AppConfig,
-        renderer: &VulkanRenderer,
-        pipeline_layout: std::rc::Rc<ash::vk::PipelineLayout>,
-        desc_sets_layout: std::rc::Rc<Vec<ash::vk::DescriptorSetLayout>>,
-    ) -> Option<UniqueGraphicsPipeline> {
+    fn create_pipeline(init_ctx: &mut InitContext) -> Result<BindlessPipeline, ProgramError> {
         GraphicsPipelineBuilder::new()
             .shader_stages(&[
                 ShaderModuleDescription {
                     stage: ShaderStageFlags::VERTEX,
                     source: ShaderModuleSource::File(
-                        &app_config.engine.shader_path("skybox.vert.spv"),
+                        &init_ctx.cfg.engine.shader_path("skybox.bindless.vert.spv"),
                     ),
                     entry_point: "main",
                 },
                 ShaderModuleDescription {
                     stage: ShaderStageFlags::FRAGMENT,
                     source: ShaderModuleSource::File(
-                        &app_config.engine.shader_path("skybox.frag.spv"),
+                        &init_ctx.cfg.engine.shader_path("skybox.bindless.frag.spv"),
                     ),
                     entry_point: "main",
                 },
             ])
             .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
-            .build(
-                renderer.graphics_device(),
-                renderer.pipeline_cache(),
-                (pipeline_layout, desc_sets_layout),
-                renderer.renderpass(),
+            .build_bindless(
+                init_ctx.renderer.graphics_device(),
+                init_ctx.renderer.pipeline_cache(),
+                init_ctx.rsys.bindless.bindless_pipeline_layout(),
+                init_ctx.renderer.renderpass(),
                 0,
             )
     }

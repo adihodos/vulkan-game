@@ -4,6 +4,8 @@ use std::{
     rc::Rc,
 };
 
+use ash::vk::{BufferUsageFlags, MemoryPropertyFlags, PipelineBindPoint};
+use itertools::UniqueBy;
 use nalgebra::Point3;
 use nalgebra_glm as glm;
 use nalgebra_glm::Vec4;
@@ -12,6 +14,7 @@ use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 
 use crate::{
     app_config::{AppConfig, PlayerShipConfig},
+    bindless::BindlessResourceHandle2,
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, FrameRenderContext, InitContext, UpdateContext},
     drawing_system::DrawingSys,
@@ -29,7 +32,7 @@ use crate::{
     sprite_batch::{SpriteBatch, TextureRegion},
     starfury::Starfury,
     ui_backend::UiBackend,
-    vk_renderer::VulkanRenderer,
+    vk_renderer::{RendererWorkPackage, UniqueBuffer, VulkanRenderer},
     window::{GamepadInputState, InputState},
 };
 
@@ -110,6 +113,14 @@ impl PlayerShipOptions {
     }
 }
 
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct GlobalUniformData {
+    projection_view: glm::Mat4,
+    view: glm::Mat4,
+    frame_id: u32,
+}
+
 struct Statistics {
     total_instances: u32,
     visible_instances: u32,
@@ -135,6 +146,8 @@ pub struct GameWorld {
     resource_sys: ResourceSystem,
     drawing_sys: RefCell<DrawingSys>,
     ui: RefCell<UiBackend>,
+    ubo_bindless: UniqueBuffer,
+    ubo_bindless_handles: Vec<BindlessResourceHandle2>,
 }
 
 impl GameWorld {
@@ -194,6 +207,22 @@ impl GameWorld {
             rsys: &mut rsys,
         })?;
 
+        let ubo_bindless = UniqueBuffer::with_capacity(
+            renderer,
+            BufferUsageFlags::UNIFORM_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            1,
+            std::mem::size_of::<GlobalUniformData>(),
+            renderer.max_inflight_frames(),
+        )
+        .expect("xxx");
+
+        let ubo_bindless_handles = rsys.bindless.register_chunked_uniform(
+            renderer,
+            &ubo_bindless,
+            renderer.max_inflight_frames() as usize,
+        );
+
         Some(GameWorld {
             draw_opts: RefCell::new(DebugOptions::default()),
             skybox,
@@ -219,6 +248,8 @@ impl GameWorld {
             resource_sys: rsys,
             drawing_sys: RefCell::new(DrawingSys::create(renderer)?),
             ui,
+            ubo_bindless,
+            ubo_bindless_handles,
         })
     }
 
@@ -331,6 +362,7 @@ impl GameWorld {
             frame_id: frame_context.frame_id,
             viewport: frame_context.viewport,
             scissor: frame_context.scissor,
+	    global_ubo_handle: self.ubo_bindless_handles[frame_context.frame_id as usize].handle(),
             view_matrix,
             cam_position,
             projection,
@@ -339,15 +371,49 @@ impl GameWorld {
             debug_draw: self.debug_draw_overlay.clone(),
         };
 
-        self.drawing_sys
-            .borrow_mut()
-            .setup_bindless(self.skybox.id, &draw_context);
+        let globals = GlobalUniformData {
+            projection_view: projection * view_matrix,
+            view: view_matrix,
+	    frame_id: frame_context.frame_id
+        };
 
+        self.ubo_bindless
+            .map_for_frame(frame_context.renderer, frame_context.frame_id)
+            .map(|mut b| unsafe {
+                std::ptr::copy_nonoverlapping(
+                    &globals as *const _,
+                    b.as_mut_ptr() as *mut GlobalUniformData,
+                    1,
+                );
+            })
+            .expect("xxxx");
+
+        //
+        // setup bindless
+        unsafe {
+            let bindless = self.resource_sys.bindless_setup();
+            frame_context
+                .renderer
+                .graphics_device()
+                .cmd_bind_descriptor_sets(
+                    frame_context.cmd_buff,
+                    PipelineBindPoint::GRAPHICS,
+                    bindless.pipeline_layout,
+                    0,
+                    bindless.descriptor_set,
+                    &[],
+                );
+        }
+
+        // self.drawing_sys
+        //     .borrow_mut()
+        //     .setup_bindless(self.skybox.id, &draw_context);
+        //
         self.skybox.draw(&draw_context);
-
-        self.starfury
-            .borrow()
-            .draw(&draw_context, &mut self.drawing_sys.borrow_mut());
+        //
+        // self.starfury
+        //     .borrow()
+        //     .draw(&draw_context, &mut self.drawing_sys.borrow_mut());
 
         //
         // draw ze enemies Hans, ja ja wunderbar
@@ -362,20 +428,20 @@ impl GameWorld {
         };
 
         {
-            let mut draw_sys = self.drawing_sys.borrow_mut();
-            visible_instances.iter().for_each(|(_, inst_transform)| {
-                draw_sys.add_mesh(
-                    self.shadows_swarm.mesh_id,
-                    None,
-                    None,
-                    &inst_transform.to_matrix(),
-                    EffectType::Pbr,
-                );
-            });
-            self.missile_sys.borrow().draw(&draw_context, &mut draw_sys);
+            // let mut draw_sys = self.drawing_sys.borrow_mut();
+            // visible_instances.iter().for_each(|(_, inst_transform)| {
+            //     draw_sys.add_mesh(
+            //         self.shadows_swarm.mesh_id,
+            //         None,
+            //         None,
+            //         &inst_transform.to_matrix(),
+            //         EffectType::Pbr,
+            //     );
+            // });
+            // self.missile_sys.borrow().draw(&draw_context, &mut draw_sys);
         }
 
-        self.drawing_sys.borrow_mut().draw(&draw_context);
+        // self.drawing_sys.borrow_mut().draw(&draw_context);
 
         // self.draw_objects(&draw_context);
 
@@ -404,9 +470,9 @@ impl GameWorld {
             ui.draw_frame(&draw_context);
         }
 
-        self.draw_crosshair(&draw_context);
-        self.draw_locked_target_indicator(&draw_context);
-        self.sprite_batch.borrow_mut().render(&draw_context);
+        // self.draw_crosshair(&draw_context);
+        // self.draw_locked_target_indicator(&draw_context);
+        // self.sprite_batch.borrow_mut().render(&draw_context);
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {

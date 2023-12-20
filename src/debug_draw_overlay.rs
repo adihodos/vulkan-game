@@ -48,7 +48,8 @@ impl DebugDrawOverlay {
             renderer.device_properties().limits.non_coherent_atom_size,
         );
 
-        let lines_gpu = UniqueBuffer::new(
+        let lines_gpu =
+	    UniqueBuffer::new(
             renderer,
             BufferUsageFlags::VERTEX_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE,
@@ -405,88 +406,88 @@ impl DebugDrawOverlay {
         self.lines_cpu.clear();
     }
 
-    pub fn draw(&mut self, renderer: &VulkanRenderer, view_projection: &glm::Mat4) {
-        ScopedBufferMapping::create(
-            renderer,
-            &self.lines_gpu,
-            Self::MAX_LINES * size_of::<Line>() as DeviceSize,
-            self.aligned_lines_size * Self::MAX_LINES * renderer.current_frame_id() as DeviceSize,
-        )
-        .map(|buffer_mapping| unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.lines_cpu.as_ptr(),
-                buffer_mapping.memptr() as *mut Line,
-                self.lines_cpu.len(),
-            );
-        });
-
-        ScopedBufferMapping::create(
-            renderer,
-            &self.uniforms,
-            size_of::<glm::Mat4>() as DeviceSize,
-            self.aligned_ubo_size * renderer.current_frame_id() as DeviceSize,
-        )
-        .map(|mapping| unsafe {
-            let mtx_slice = view_projection.as_slice();
-            std::ptr::copy_nonoverlapping(
-                mtx_slice.as_ptr(),
-                mapping.memptr() as *mut f32,
-                mtx_slice.len(),
-            );
-        });
-
-        unsafe {
-            renderer.graphics_device().cmd_bind_pipeline(
-                renderer.current_command_buffer(),
-                PipelineBindPoint::GRAPHICS,
-                self.pipeline.pipeline,
-            );
-
-            let viewports = [renderer.viewport()];
-            let scissors = [renderer.scissor()];
-
-            renderer.graphics_device().cmd_set_viewport(
-                renderer.current_command_buffer(),
-                0,
-                &viewports,
-            );
-            renderer.graphics_device().cmd_set_scissor(
-                renderer.current_command_buffer(),
-                0,
-                &scissors,
-            );
-
-            let vertex_buffers = [self.lines_gpu.buffer];
-            let vertex_offsets = [self.aligned_lines_size
-                * Self::MAX_LINES
-                * renderer.current_frame_id() as DeviceSize];
-
-            renderer.graphics_device().cmd_bind_vertex_buffers(
-                renderer.current_command_buffer(),
-                0,
-                &vertex_buffers,
-                &vertex_offsets,
-            );
-
-            let descriptor_offsets = [self.aligned_ubo_size as u32 * renderer.current_frame_id()];
-            renderer.graphics_device().cmd_bind_descriptor_sets(
-                renderer.current_command_buffer(),
-                PipelineBindPoint::GRAPHICS,
-                *self.pipeline.layout(),
-                0,
-                &self.descriptor_set,
-                &descriptor_offsets,
-            );
-
-            renderer.graphics_device().cmd_draw(
-                renderer.current_command_buffer(),
-                self.lines_cpu.len() as u32,
-                1,
-                0,
-                0,
-            );
-        }
-    }
+    // pub fn draw(&mut self, renderer: &VulkanRenderer, view_projection: &glm::Mat4) {
+    //     ScopedBufferMapping::create(
+    //         renderer,
+    //         &self.lines_gpu,
+    //         Self::MAX_LINES * size_of::<Line>() as DeviceSize,
+    //         self.aligned_lines_size * Self::MAX_LINES * renderer.current_frame_id() as DeviceSize,
+    //     )
+    //     .map(|buffer_mapping| unsafe {
+    //         std::ptr::copy_nonoverlapping(
+    //             self.lines_cpu.as_ptr(),
+    //             buffer_mapping.memptr() as *mut Line,
+    //             self.lines_cpu.len(),
+    //         );
+    //     });
+    // 
+    //     ScopedBufferMapping::create(
+    //         renderer,
+    //         &self.uniforms,
+    //         size_of::<glm::Mat4>() as DeviceSize,
+    //         self.aligned_ubo_size * renderer.current_frame_id() as DeviceSize,
+    //     )
+    //     .map(|mapping| unsafe {
+    //         let mtx_slice = view_projection.as_slice();
+    //         std::ptr::copy_nonoverlapping(
+    //             mtx_slice.as_ptr(),
+    //             mapping.memptr() as *mut f32,
+    //             mtx_slice.len(),
+    //         );
+    //     });
+    // 
+    //     unsafe {
+    //         renderer.graphics_device().cmd_bind_pipeline(
+    //             renderer.current_command_buffer(),
+    //             PipelineBindPoint::GRAPHICS,
+    //             self.pipeline.pipeline,
+    //         );
+    // 
+    //         let viewports = [renderer.viewport()];
+    //         let scissors = [renderer.scissor()];
+    // 
+    //         renderer.graphics_device().cmd_set_viewport(
+    //             renderer.current_command_buffer(),
+    //             0,
+    //             &viewports,
+    //         );
+    //         renderer.graphics_device().cmd_set_scissor(
+    //             renderer.current_command_buffer(),
+    //             0,
+    //             &scissors,
+    //         );
+    // 
+    //         let vertex_buffers = [self.lines_gpu.buffer];
+    //         let vertex_offsets = [self.aligned_lines_size
+    //             * Self::MAX_LINES
+    //             * renderer.current_frame_id() as DeviceSize];
+    // 
+    //         renderer.graphics_device().cmd_bind_vertex_buffers(
+    //             renderer.current_command_buffer(),
+    //             0,
+    //             &vertex_buffers,
+    //             &vertex_offsets,
+    //         );
+    // 
+    //         let descriptor_offsets = [self.aligned_ubo_size as u32 * renderer.current_frame_id()];
+    //         renderer.graphics_device().cmd_bind_descriptor_sets(
+    //             renderer.current_command_buffer(),
+    //             PipelineBindPoint::GRAPHICS,
+    //             *self.pipeline.layout(),
+    //             0,
+    //             &self.descriptor_set,
+    //             &descriptor_offsets,
+    //         );
+    // 
+    //         renderer.graphics_device().cmd_draw(
+    //             renderer.current_command_buffer(),
+    //             self.lines_cpu.len() as u32,
+    //             1,
+    //             0,
+    //             0,
+    //         );
+    //     }
+    // }
 }
 
 impl rapier3d::pipeline::DebugRenderBackend for DebugDrawOverlay {

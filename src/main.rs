@@ -25,6 +25,13 @@ mod ui_backend;
 mod vk_renderer;
 mod window;
 mod drawing_system;
+mod bindless;
+
+#[derive(Copy, Clone, Debug, thiserror::Error)]
+pub enum ProgramError {
+    #[error("Graphics api (Vulkan) error")]
+    GraphicsSystemError(#[from] ash::vk::Result)
+}
 
 pub fn main() {
     self::window::MainWindow::run();

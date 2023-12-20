@@ -1,10 +1,9 @@
 use ash::vk::{
-    BlendFactor, BlendOp, BufferUsageFlags, ColorComponentFlags,
-    CullModeFlags, DeviceSize,
-    DynamicState, Extent2D, Extent3D, Format, FrontFace,
-    ImageCreateInfo, ImageLayout, ImageTiling, ImageType, ImageUsageFlags, IndexType, MemoryPropertyFlags, Offset2D,
-    PipelineBindPoint, PipelineColorBlendAttachmentState, PipelineRasterizationStateCreateInfo,
-    PolygonMode, PrimitiveTopology, Rect2D, SampleCountFlags, ShaderStageFlags, SharingMode,
+    BlendFactor, BlendOp, BufferUsageFlags, ColorComponentFlags, CullModeFlags, DeviceSize,
+    DynamicState, Extent2D, Extent3D, Format, FrontFace, ImageCreateInfo, ImageLayout, ImageTiling,
+    ImageType, ImageUsageFlags, IndexType, MemoryPropertyFlags, Offset2D, PipelineBindPoint,
+    PipelineColorBlendAttachmentState, PipelineRasterizationStateCreateInfo, PolygonMode,
+    PrimitiveTopology, Rect2D, SampleCountFlags, ShaderStageFlags, SharingMode,
     VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
 };
 use memoffset::offset_of;
@@ -21,13 +20,11 @@ use winit::{
 };
 
 use crate::{
+    bindless::BindlessResourceHandle2,
     draw_context::{DrawContext, InitContext},
-    resource_system::{BindlessResourceHandle, BindlessResourceKind, PushConstVertex},
     vk_renderer::{
-        GraphicsPipelineBuilder, ImageCopySource,
-        ScopedBufferMapping, ShaderModuleDescription, ShaderModuleSource, UniqueBuffer,
-        UniqueGraphicsPipeline, UniqueImageWithView,
-        VulkanRenderer,
+        BindlessPipeline, GraphicsPipelineBuilder, ImageCopySource, ShaderModuleDescription,
+        ShaderModuleSource, UniqueBuffer, UniqueImageWithView,
     },
 };
 
@@ -239,20 +236,28 @@ fn to_imgui_key(keycode: VirtualKeyCode) -> Option<Key> {
     }
 }
 
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct GlobalUiData {
+    ortho: [f32; 16],
+    atlas: u32,
+    pad: [u32; 3],
+}
+
 pub struct UiBackend {
     imgui: imgui::Context,
-    vertex_bytes_one_frame: DeviceSize,
-    index_bytes_one_frame: DeviceSize,
-    pipeline: UniqueGraphicsPipeline,
-    vertex_buffer: UniqueBuffer,
-    index_buffer: UniqueBuffer,
+    vbuffer: UniqueBuffer,
+    ibuffer: UniqueBuffer,
     platform: WinitPlatform,
-    font_atlas: BindlessResourceHandle,
+    bindles_pp: BindlessPipeline,
+    bindles_fa: BindlessResourceHandle2,
+    bindless_ssbo: UniqueBuffer,
+    bindless_ssbo_handles: Vec<BindlessResourceHandle2>,
 }
 
 impl UiBackend {
     const MAX_VERTICES: u32 = 8192;
-    const MAX_INDICES: u32 = 16535;
+    const MAX_INDICES: u32 = 16536;
 
     /// Scales a logical size coming from winit using the current DPI mode.
     ///
@@ -317,38 +322,25 @@ impl UiBackend {
     }
 
     pub fn new(init_ctx: &mut InitContext) -> Option<UiBackend> {
-        let vertex_bytes_one_frame = UiBackend::MAX_VERTICES
-            * VulkanRenderer::aligned_size_of_type::<UiVertex>(
-                init_ctx
-                    .renderer
-                    .device_properties()
-                    .limits
-                    .non_coherent_atom_size,
-            ) as u32;
-
-        let vertex_buffer_size = vertex_bytes_one_frame * init_ctx.renderer.max_inflight_frames();
-        let vertex_buffer = UniqueBuffer::new(
+        let vbuffer = UniqueBuffer::with_capacity(
             init_ctx.renderer,
             BufferUsageFlags::VERTEX_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE,
-            vertex_buffer_size as DeviceSize,
-        )?;
+            Self::MAX_VERTICES as usize,
+            std::mem::size_of::<UiVertex>(),
+            init_ctx.renderer.max_inflight_frames(),
+        )
+        .expect("Failed to create VB");
 
-        let index_bytes_one_frame = UiBackend::MAX_INDICES
-            * VulkanRenderer::aligned_size_of_type::<UiIndex>(
-                init_ctx
-                    .renderer
-                    .device_properties()
-                    .limits
-                    .non_coherent_atom_size,
-            ) as u32;
-        let index_buffer_size = index_bytes_one_frame * init_ctx.renderer.max_inflight_frames();
-        let index_buffer = UniqueBuffer::new(
+        let ibuffer = UniqueBuffer::with_capacity(
             init_ctx.renderer,
             BufferUsageFlags::INDEX_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE,
-            index_buffer_size as DeviceSize,
-        )?;
+            Self::MAX_INDICES as usize,
+            std::mem::size_of::<UiIndex>(),
+            init_ctx.renderer.max_inflight_frames(),
+        )
+        .expect("Failed to create IB");
 
         let mut imgui = Self::init_imgui();
         let hidpi_mode = HiDpiMode::Default;
@@ -446,13 +438,13 @@ impl UiBackend {
                 bytes: (font_atlas_image.width * font_atlas_image.height) as DeviceSize,
             }],
         )?;
-	init_ctx.renderer.push_work_package(copy_tex_work_pkg);
+        init_ctx.renderer.push_work_package(copy_tex_work_pkg);
 
-        let font_atlas_handle = init_ctx.rsys.add_texture(
-            font_atlas_trexture,
-            BindlessResourceKind::SamplerMiscTextures,
-            None,
+        let font_atlas_handle = init_ctx.rsys.add_texture_bindless(
+            "ui/fonts/fontatlas",
             init_ctx.renderer,
+            font_atlas_trexture,
+            None,
         );
 
         let pipeline = GraphicsPipelineBuilder::new()
@@ -487,12 +479,16 @@ impl UiBackend {
             .shader_stages(&[
                 ShaderModuleDescription {
                     stage: ShaderStageFlags::VERTEX,
-                    source: ShaderModuleSource::File(Path::new("data/shaders/ui.vert.spv")),
+                    source: ShaderModuleSource::File(Path::new(
+                        "data/shaders/ui.bindless.vert.spv",
+                    )),
                     entry_point: "main",
                 },
                 ShaderModuleDescription {
                     stage: ShaderStageFlags::FRAGMENT,
-                    source: ShaderModuleSource::File(Path::new("data/shaders/ui.frag.spv")),
+                    source: ShaderModuleSource::File(Path::new(
+                        "data/shaders/ui.bindless.frag.spv",
+                    )),
                     entry_point: "main",
                 },
             ])
@@ -519,25 +515,41 @@ impl UiBackend {
                     .build(),
             )
             .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
-            .build(
+            .build_bindless(
                 init_ctx.renderer.graphics_device(),
                 init_ctx.renderer.pipeline_cache(),
-		init_ctx.rsys.pipeline_layout(),
+                init_ctx.rsys.bindless.bindless_pipeline_layout(),
                 init_ctx.renderer.renderpass(),
                 0,
-            )?;
+            )
+            .expect("xxxxxx");
 
         imgui.fonts().tex_id = imgui::TextureId::new(font_atlas_handle.handle() as usize);
 
+        let bindless_ssbo = UniqueBuffer::with_capacity(
+            init_ctx.renderer,
+            BufferUsageFlags::STORAGE_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            1,
+            size_of::<GlobalUiData>(),
+            init_ctx.renderer.max_inflight_frames(),
+        )
+        .expect("xxxx");
+        let bindless_ssbo_handles = init_ctx.rsys.bindless.register_chunked_ssbo(
+            init_ctx.renderer,
+            &bindless_ssbo,
+            init_ctx.renderer.max_inflight_frames() as usize,
+        );
+
         Some(UiBackend {
             imgui,
-            vertex_bytes_one_frame: vertex_bytes_one_frame as u64,
-            index_bytes_one_frame: index_bytes_one_frame as u64,
-            font_atlas: font_atlas_handle,
-            pipeline,
-            vertex_buffer,
-            index_buffer,
+            vbuffer,
+            ibuffer,
             platform,
+            bindles_pp: pipeline,
+            bindles_fa: font_atlas_handle,
+            bindless_ssbo,
+            bindless_ssbo_handles,
         })
     }
 
@@ -561,21 +573,15 @@ impl UiBackend {
         //
         // Push vertices + indices 2 GPU
         {
-            let vertex_buffer_mapping = ScopedBufferMapping::create(
-                frame_context.renderer,
-                &self.vertex_buffer,
-                self.vertex_bytes_one_frame,
-                self.vertex_bytes_one_frame * frame_context.frame_id as u64,
-            )
-            .expect("Failed to map UI vertex buffer");
+            let vertex_buffer_mapping = self
+                .vbuffer
+                .map_for_frame(frame_context.renderer, frame_context.frame_id)
+                .expect("Failed to map VB");
 
-            let index_buffer_mapping = ScopedBufferMapping::create(
-                frame_context.renderer,
-                &self.index_buffer,
-                self.index_bytes_one_frame,
-                self.index_bytes_one_frame * frame_context.frame_id as u64,
-            )
-            .expect("Failed to map UI index buffer");
+            let index_buffer_mapping = self
+                .ibuffer
+                .map_for_frame(frame_context.renderer, frame_context.frame_id)
+                .expect("Failed to map IB");
 
             let _ = draw_data.draw_lists().fold(
                 (0isize, 0isize),
@@ -608,12 +614,13 @@ impl UiBackend {
             graphics_device.cmd_bind_pipeline(
                 frame_context.cmd_buff,
                 PipelineBindPoint::GRAPHICS,
-                self.pipeline.pipeline,
+                self.bindles_pp.handle,
             );
 
-            let vertex_buffers = [self.vertex_buffer.buffer];
-            let vertex_buffer_offsets =
-                [(self.vertex_bytes_one_frame * frame_context.frame_id as u64) as DeviceSize];
+            let vertex_buffers = [self.vbuffer.buffer];
+            let vertex_buffer_offsets = [(self.vbuffer.aligned_slab_size
+                * frame_context.frame_id as usize)
+                as DeviceSize];
 
             graphics_device.cmd_bind_vertex_buffers(
                 frame_context.cmd_buff,
@@ -624,8 +631,8 @@ impl UiBackend {
 
             graphics_device.cmd_bind_index_buffer(
                 frame_context.cmd_buff,
-                self.index_buffer.buffer,
-                (self.index_bytes_one_frame * frame_context.frame_id as u64) as DeviceSize,
+                self.ibuffer.buffer,
+                (self.ibuffer.aligned_slab_size * frame_context.frame_id as usize) as DeviceSize,
                 IndexType::UINT16,
             );
 
@@ -645,55 +652,46 @@ impl UiBackend {
                 -1f32 - draw_data.display_pos[1] * scale[1],
             ];
 
-            let transform = [
-                scale[0],
-                0.0f32,
-                0.0f32,
-                0.0f32,
-                0.0f32,
-                scale[1],
-                0.0f32,
-                0.0f32,
-                0.0f32,
-                0.0f32,
-                1.0f32,
-                0.0f32,
-                translate[0],
-                translate[1],
-                0.0f32,
-                1.0f32,
-            ];
+            let data = GlobalUiData {
+                ortho: [
+                    scale[0],
+                    0.0f32,
+                    0.0f32,
+                    0.0f32,
+                    0.0f32,
+                    scale[1],
+                    0.0f32,
+                    0.0f32,
+                    0.0f32,
+                    0.0f32,
+                    1.0f32,
+                    0.0f32,
+                    translate[0],
+                    translate[1],
+                    0.0f32,
+                    1.0f32,
+                ],
+                atlas: self.bindles_fa.handle(),
+                pad: [0u32; 3],
+            };
 
-            // let transform_gpu = std::slice::from_raw_parts(
-            //     transform.as_ptr() as *const u8,
-            //     transform.len() * size_of::<f32>(),
-            // );
+            self.bindless_ssbo
+                .map_for_frame(frame_context.renderer, frame_context.frame_id)
+                .map(|mut b| {
+                    let dst_ptr = b.as_mut_ptr() as *mut GlobalUiData;
+                    std::ptr::copy_nonoverlapping(&data as *const _, dst_ptr, 1);
+                })
+                .expect("Failed to map ssbo");
 
-	    use nalgebra_glm::Mat4;
-	    let pcv = PushConstVertex {
-		model: Mat4::from_column_slice(&transform),
-		atlas_id: self.font_atlas.handle()
-	    };
+            let ui_pushconst = self.bindless_ssbo_handles[frame_context.frame_id as usize].handle();
 
             graphics_device.cmd_push_constants(
                 frame_context.cmd_buff,
-                *self.pipeline.layout(),
+                self.bindles_pp.layout,
                 ShaderStageFlags::ALL,
                 0,
-                pcv.as_ref()
+                &ui_pushconst.to_le_bytes(),
             );
-
-            // graphics_device.cmd_push_constants(
-            //     frame_context.cmd_buff,
-            //     self.pipeline.layout,
-            //     ShaderStageFlags::FRAGMENT,
-            //     PushConstVertex::SIZE,
-            //     PushConstFragment {
-            //         tex: self.font_atlas.handle(),
-            //         array: 0,
-            //     }
-            //     .as_ref(),
-            // );
 
             //
             // Will project scissor/clipping rectangles into framebuffer space
