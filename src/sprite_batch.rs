@@ -1,37 +1,28 @@
 use crate::{
-    app_config::AppConfig,
     bindless::BindlessResourceHandle2,
     color_palettes::StdColors,
     draw_context::{DrawContext, InitContext},
-    math,
     vk_renderer::{
-        BindlessPipeline, Cpu2GpuBuffer, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
-        ImageInfo, ShaderModuleDescription, ShaderModuleSource, UniqueBuffer,
-        UniqueGraphicsPipeline, UniqueImageWithView, UniqueSampler, VulkanRenderer,
+        BindlessPipeline, GraphicsPipelineBuilder, ImageInfo, ShaderModuleDescription,
+        ShaderModuleSource, UniqueBuffer, UniqueImageWithView,
     },
     ProgramError,
 };
 use ash::vk::{
-    BlendFactor, BlendOp, BufferUsageFlags, ColorComponentFlags, DescriptorBufferInfo,
-    DescriptorImageInfo, DescriptorSet, DescriptorSetAllocateInfo, DescriptorSetLayoutBinding,
-    DescriptorType, DeviceSize, DynamicState, Filter, Format, ImageLayout, IndexType,
-    MemoryPropertyFlags, PipelineBindPoint, PipelineColorBlendAttachmentState, PrimitiveTopology,
-    SamplerAddressMode, SamplerMipmapMode, ShaderStageFlags, VertexInputAttributeDescription,
-    VertexInputBindingDescription, VertexInputRate, WriteDescriptorSet,
+    BlendFactor, BlendOp, BufferUsageFlags, ColorComponentFlags, DeviceSize, DynamicState, Format,
+    IndexType, MemoryPropertyFlags, PipelineBindPoint, PipelineColorBlendAttachmentState,
+    PrimitiveTopology, ShaderStageFlags, VertexInputAttributeDescription,
+    VertexInputBindingDescription, VertexInputRate,
 };
 use memoffset::offset_of;
 use nalgebra_glm as glm;
 
 pub struct SpriteBatch {
-    // ubo_transforms: Cpu2GpuBuffer<glm::Mat4>,
     vertex_buffer: UniqueBuffer,
     index_buffer: UniqueBuffer,
     vertices_cpu: Vec<SpriteVertex>,
     indices_cpu: Vec<u16>,
-    // descriptor_sets: Vec<DescriptorSet>,
     pipeline: BindlessPipeline,
-    // sampler: UniqueSampler,
-    // texture: UniqueImageWithView,
     atlas: TextureAtlas,
     texture_atlas_handle: BindlessResourceHandle2,
     texture_info: ImageInfo,
@@ -559,7 +550,7 @@ impl SpriteBatch {
             );
 
             let push_const =
-                (draw_context.global_ubo_handle << 16) | (self.texture_atlas_handle.handle());
+                (draw_context.global_ubo_handle) | (self.texture_atlas_handle.handle() << 16);
 
             graphics_device.cmd_push_constants(
                 draw_context.cmd_buff,

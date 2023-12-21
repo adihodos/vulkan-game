@@ -56,6 +56,9 @@ impl MainWindow {
                 .default(flexi_logger::LevelFilter::Debug)
                 .build(),
         )
+        .log_to_file(flexi_logger::FileSpec::default())
+        .write_mode(flexi_logger::WriteMode::BufferAndFlush)
+        .duplicate_to_stderr(flexi_logger::Duplicate::All)
         .adaptive_format_for_stderr(flexi_logger::AdaptiveFormat::Detailed)
         .start()
         .unwrap_or_else(|e| {
