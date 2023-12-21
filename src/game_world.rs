@@ -118,6 +118,7 @@ impl PlayerShipOptions {
 struct GlobalUniformData {
     projection_view: glm::Mat4,
     view: glm::Mat4,
+    orthographic: glm::Mat4,
     frame_id: u32,
 }
 
@@ -182,7 +183,6 @@ impl GameWorld {
         let starfury = Starfury::new(&rsys, &mut physics_engine);
         let shadows_swarm = ShadowFighterSwarm::new(&mut physics_engine, &rsys);
 
-        let sprites = SpriteBatch::create(renderer, cfg)?;
         let missile_sys = MissileSys::new(&InitContext {
             window,
             renderer,
@@ -206,6 +206,14 @@ impl GameWorld {
             cfg,
             rsys: &mut rsys,
         })?;
+
+        let sprites = SpriteBatch::new(&mut InitContext {
+            window,
+            renderer,
+            cfg,
+            rsys: &mut rsys,
+        })
+        .expect("Failed to create sprite batch sys");
 
         let ubo_bindless = UniqueBuffer::with_capacity(
             renderer,
@@ -362,7 +370,7 @@ impl GameWorld {
             frame_id: frame_context.frame_id,
             viewport: frame_context.viewport,
             scissor: frame_context.scissor,
-	    global_ubo_handle: self.ubo_bindless_handles[frame_context.frame_id as usize].handle(),
+            global_ubo_handle: self.ubo_bindless_handles[frame_context.frame_id as usize].handle(),
             view_matrix,
             cam_position,
             projection,
@@ -374,7 +382,15 @@ impl GameWorld {
         let globals = GlobalUniformData {
             projection_view: projection * view_matrix,
             view: view_matrix,
-	    frame_id: frame_context.frame_id
+            frame_id: frame_context.frame_id,
+            orthographic: math::orthographic(
+                0f32,
+                draw_context.viewport.width,
+                0f32,
+                draw_context.viewport.height,
+                1f32,
+                0f32,
+            ),
         };
 
         self.ubo_bindless
@@ -470,9 +486,9 @@ impl GameWorld {
             ui.draw_frame(&draw_context);
         }
 
-        // self.draw_crosshair(&draw_context);
-        // self.draw_locked_target_indicator(&draw_context);
-        // self.sprite_batch.borrow_mut().render(&draw_context);
+        self.draw_crosshair(&draw_context);
+        self.draw_locked_target_indicator(&draw_context);
+        self.sprite_batch.borrow_mut().render(&draw_context);
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {

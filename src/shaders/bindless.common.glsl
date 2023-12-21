@@ -6,6 +6,7 @@
 struct GlobalUniformData {
   mat4 projection_view;
   mat4 view;
+  mat4 orthographic;
   uint frameId;
 };
 
@@ -34,6 +35,7 @@ layout (set = 1, binding = 0) readonly buffer GlobalSkyboxData {
 } g_GlobalSkyboxData[];
 
 layout (set = 2, binding = 0) uniform sampler2D g_Global2DTextures[];
+layout (set = 2, binding = 0) uniform sampler2DArray g_Global2DArrayTextures[];
 layout (set = 2, binding = 0) uniform samplerCube g_GlobalCubeTextures[];
 
 layout (push_constant) uniform GlobalPushConstant {
