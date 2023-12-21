@@ -215,6 +215,14 @@ impl GameWorld {
         })
         .expect("Failed to create sprite batch sys");
 
+        let dbg_overlay = DebugDrawOverlay::new(&mut InitContext {
+            window,
+            renderer,
+            cfg,
+            rsys: &mut rsys,
+        })
+        .expect("Failed to create debug draw overlay");
+
         let ubo_bindless = UniqueBuffer::with_capacity(
             renderer,
             BufferUsageFlags::UNIFORM_BUFFER,
@@ -240,9 +248,7 @@ impl GameWorld {
             physics_engine: RefCell::new(physics_engine),
             camera: RefCell::new(FlightCamera::new(75f32, aspect, 0.1f32, 5000f32)),
             dbg_camera: RefCell::new(FirstPersonCamera::new(75f32, aspect, 0.1f32, 5000f32)),
-            debug_draw_overlay: std::rc::Rc::new(RefCell::new(
-                DebugDrawOverlay::create(renderer).expect("Failed to create debug draw overlay"),
-            )),
+            debug_draw_overlay: std::rc::Rc::new(RefCell::new(dbg_overlay)),
             sparks_sys: RefCell::new(SparksSystem::create(renderer, cfg)?),
             player_opts: PlayerShipOptions::new(&cfg.player, &sprites),
             sprite_batch: RefCell::new(sprites),
@@ -360,6 +366,12 @@ impl GameWorld {
         // start a visibility check early
         let visible_objects_future = self.object_visibility_check();
 
+        if self.debug_options().debug_draw_physics {
+            self.physics_engine
+                .borrow_mut()
+                .debug_draw(&mut self.debug_draw_overlay.borrow_mut());
+        }
+
         let physics = self.physics_engine.borrow();
 
         let draw_context = DrawContext {
@@ -459,19 +471,12 @@ impl GameWorld {
 
         // self.drawing_sys.borrow_mut().draw(&draw_context);
 
-        // self.draw_objects(&draw_context);
+        self.draw_objects(&draw_context);
 
-        // if self.debug_options().debug_draw_physics {
-        //     self.physics_engine
-        //         .borrow_mut()
-        //         .debug_draw(&mut self.debug_draw_overlay.borrow_mut());
-        // }
-
-        // self.debug_draw_overlay
-        //     .borrow_mut()
-        //     .draw(frame_context.renderer, &draw_context.projection_view);
-
-        // self.debug_draw_overlay.borrow_mut().clear();
+        self.draw_crosshair(&draw_context);
+        self.draw_locked_target_indicator(&draw_context);
+        self.sprite_batch.borrow_mut().render(&draw_context);
+        self.debug_draw_overlay.borrow_mut().draw(&draw_context);
 
         {
             let mut u = RefMut::map(self.ui.borrow_mut(), |ui| {
@@ -485,47 +490,43 @@ impl GameWorld {
             ui.apply_cursor_before_render(frame_context.window);
             ui.draw_frame(&draw_context);
         }
-
-        self.draw_crosshair(&draw_context);
-        self.draw_locked_target_indicator(&draw_context);
-        self.sprite_batch.borrow_mut().render(&draw_context);
     }
 
     fn draw_objects(&self, draw_context: &DrawContext) {
-        // if self.debug_options().debug_draw_world_axis {
-        //     self.debug_draw_overlay
-        //         .borrow_mut()
-        //         .world_space_coord_sys(self.draw_opts.borrow().world_axis_length);
-        // }
+        if self.debug_options().debug_draw_world_axis {
+            self.debug_draw_overlay
+                .borrow_mut()
+                .world_space_coord_sys(self.draw_opts.borrow().world_axis_length);
+        }
 
         //         if self.debug_options().debug_draw_mesh {
-        //             // let aabb = self.render_state.borrow()[game_object.handle.0 as usize]
-        //             //     .render_pos
-        //             //     .to_homogeneous()
-        //             //     * object_renderable.geometry.aabb;
-
-        //             // draw_context.debug_draw.borrow_mut().add_aabb(
-        //             //     &aabb.min,
-        //             //     &aabb.max,
-        //             //     0xFF_00_00_FF,
-        //             // );
+        //             let aabb = self.render_state.borrow()[game_object.handle.0 as usize]
+        //                 .render_pos
+        //                 .to_homogeneous()
+        //                 * object_renderable.geometry.aabb;
+        //
+        //             draw_context.debug_draw.borrow_mut().add_aabb(
+        //                 &aabb.min,
+        //                 &aabb.max,
+        //                 0xFF_00_00_FF,
+        //             );
         //         }
-
+        //
         //         if self.debug_options().debug_draw_nodes_bounding {
         //             let geometry = self
         //                 .resource_cache
         //                 .get_pbr_geometry_info(self.starfury.renderable);
-
+        //
         //             let transform = self
         //                 .physics_engine
         //                 .borrow()
         //                 .get_rigid_body(self.starfury.rigid_body_handle)
         //                 .position()
         //                 .to_homogeneous();
-
+        //
         //             geometry.nodes.iter().for_each(|node| {
         //                 let aabb = transform * node.aabb;
-
+        //
         //                 use crate::color_palettes::StdColors;
         //                 draw_context.debug_draw.borrow_mut().add_aabb(
         //                     &aabb.min,

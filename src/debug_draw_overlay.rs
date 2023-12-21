@@ -1,24 +1,23 @@
-use std::{mem::size_of, path::Path};
+use std::mem::size_of;
 
 use ash::vk::{
-    BufferUsageFlags, DescriptorBufferInfo, DescriptorSet, DescriptorSetAllocateInfo,
-    DescriptorSetLayoutBinding, DescriptorType, DeviceSize, DynamicState, Format,
-    MemoryPropertyFlags, PipelineBindPoint, PrimitiveTopology, ShaderStageFlags,
-    VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
-    WriteDescriptorSet,
+    BufferUsageFlags, DeviceSize, DynamicState, Format, MemoryPropertyFlags, PipelineBindPoint,
+    PrimitiveTopology, ShaderStageFlags, VertexInputAttributeDescription,
+    VertexInputBindingDescription, VertexInputRate,
 };
 use memoffset::offset_of;
 use nalgebra_glm as glm;
 
 use crate::{
     color_palettes::StdColors,
+    draw_context::{DrawContext, InitContext},
     frustrum::{Frustrum, FrustrumPlane},
     plane::Plane,
     vk_renderer::{
-        GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder, ScopedBufferMapping,
-        ShaderModuleDescription, ShaderModuleSource, UniqueBuffer, UniqueGraphicsPipeline,
-        VulkanRenderer,
+        BindlessPipeline, GraphicsPipelineBuilder, ShaderModuleDescription, ShaderModuleSource,
+        UniqueBuffer,
     },
+    ProgramError,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -31,43 +30,22 @@ struct Line {
 }
 
 pub struct DebugDrawOverlay {
-    aligned_lines_size: DeviceSize,
-    aligned_ubo_size: DeviceSize,
-    descriptor_set: Vec<DescriptorSet>,
     lines_gpu: UniqueBuffer,
-    uniforms: UniqueBuffer,
-    pipeline: UniqueGraphicsPipeline,
+    pipeline: BindlessPipeline,
     lines_cpu: Vec<Line>,
 }
 
 impl DebugDrawOverlay {
     const MAX_LINES: u64 = 4096;
 
-    pub fn create(renderer: &VulkanRenderer) -> Option<DebugDrawOverlay> {
-        let aligned_lines_size = VulkanRenderer::aligned_size_of_type::<Line>(
-            renderer.device_properties().limits.non_coherent_atom_size,
-        );
-
-        let lines_gpu =
-	    UniqueBuffer::new(
-            renderer,
+    pub fn new(init_ctx: &mut InitContext) -> Result<Self, ProgramError> {
+        let lines_gpu = UniqueBuffer::with_capacity(
+            init_ctx.renderer,
             BufferUsageFlags::VERTEX_BUFFER,
             MemoryPropertyFlags::HOST_VISIBLE,
-            aligned_lines_size * Self::MAX_LINES * renderer.max_inflight_frames() as u64,
-        )?;
-
-        let aligned_ubo_size = VulkanRenderer::aligned_size_of_type::<glm::Mat4>(
-            renderer
-                .device_properties()
-                .limits
-                .min_uniform_buffer_offset_alignment,
-        );
-
-        let uniforms = UniqueBuffer::new(
-            renderer,
-            BufferUsageFlags::UNIFORM_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE,
-            aligned_ubo_size * renderer.max_inflight_frames() as DeviceSize,
+            Self::MAX_LINES as usize,
+            std::mem::size_of::<Line>(),
+            init_ctx.renderer.max_inflight_frames(),
         )?;
 
         let pipeline = GraphicsPipelineBuilder::new()
@@ -108,78 +86,41 @@ impl DebugDrawOverlay {
             .shader_stages(&[
                 ShaderModuleDescription {
                     stage: ShaderStageFlags::VERTEX,
-                    source: ShaderModuleSource::File(Path::new("data/shaders/dbg.draw.vert.spv")),
+                    source: ShaderModuleSource::File(
+                        &init_ctx.cfg.engine.shader_path("dbg.draw.vert.spv"),
+                    ),
+
                     entry_point: "main",
                 },
                 ShaderModuleDescription {
                     stage: ShaderStageFlags::GEOMETRY,
-                    source: ShaderModuleSource::File(Path::new("data/shaders/dbg.draw.geom.spv")),
+                    source: ShaderModuleSource::File(
+                        &init_ctx.cfg.engine.shader_path("dbg.draw.geom.spv"),
+                    ),
                     entry_point: "main",
                 },
                 ShaderModuleDescription {
                     stage: ShaderStageFlags::FRAGMENT,
-                    source: ShaderModuleSource::File(Path::new("data/shaders/dbg.draw.frag.spv")),
+                    source: ShaderModuleSource::File(
+                        &init_ctx.cfg.engine.shader_path("dbg.draw.frag.spv"),
+                    ),
                     entry_point: "main",
                 },
             ])
             .add_dynamic_state(DynamicState::SCISSOR)
             .add_dynamic_state(DynamicState::VIEWPORT)
-            .build(
-                renderer.graphics_device(),
-                renderer.pipeline_cache(),
-                GraphicsPipelineLayoutBuilder::new()
-                    .set(
-                        0,
-                        &[DescriptorSetLayoutBinding::builder()
-                            .stage_flags(ShaderStageFlags::GEOMETRY)
-                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                            .descriptor_count(1)
-                            .binding(0)
-                            .build()],
-                    )
-                    .build(renderer.graphics_device())?,
-                renderer.renderpass(),
+            .build_bindless(
+                init_ctx.renderer.graphics_device(),
+                init_ctx.renderer.pipeline_cache(),
+                init_ctx.rsys.bindless_setup().pipeline_layout,
+                init_ctx.renderer.renderpass(),
                 0,
             )?;
 
-        let descriptor_set = unsafe {
-            renderer.graphics_device().allocate_descriptor_sets(
-                &DescriptorSetAllocateInfo::builder()
-                    .set_layouts(&pipeline.descriptor_layouts())
-                    .descriptor_pool(renderer.descriptor_pool())
-                    .build(),
-            )
-        }
-        .map_err(|e| log::error!("Failed to allocate descriptor sets: {}", e))
-        .ok()?;
-
-        let buff_info = [DescriptorBufferInfo::builder()
-            .buffer(uniforms.buffer)
-            .offset(0)
-            .range(size_of::<glm::Mat4>() as DeviceSize)
-            .build()];
-
-        let write_desc_set = [WriteDescriptorSet::builder()
-            .dst_set(descriptor_set[0])
-            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-            .dst_binding(0)
-            .buffer_info(&buff_info)
-            .build()];
-
-        unsafe {
-            renderer
-                .graphics_device()
-                .update_descriptor_sets(&write_desc_set, &[]);
-        }
-
-        Some(DebugDrawOverlay {
-            aligned_lines_size,
-            aligned_ubo_size,
-            descriptor_set,
+        Ok(Self {
             lines_gpu,
-            uniforms,
             pipeline,
-            lines_cpu: Vec::with_capacity(Self::MAX_LINES as usize),
+            lines_cpu: vec![],
         })
     }
 
@@ -402,92 +343,65 @@ impl DebugDrawOverlay {
         });
     }
 
-    pub fn clear(&mut self) {
+    pub fn draw(&mut self, draw_ctx: &DrawContext) {
+        if self.lines_cpu.is_empty() {
+            return;
+        }
+
+        let _ = self
+            .lines_gpu
+            .map_for_frame(draw_ctx.renderer, draw_ctx.frame_id)
+            .map(|mut gpu_buff| unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.lines_cpu.as_ptr(),
+                    gpu_buff.as_mut_ptr() as *mut Line,
+                    self.lines_cpu.len(),
+                );
+            });
+
+        unsafe {
+            draw_ctx.renderer.graphics_device().cmd_bind_pipeline(
+                draw_ctx.cmd_buff,
+                PipelineBindPoint::GRAPHICS,
+                self.pipeline.handle,
+            );
+
+            let viewports = [draw_ctx.renderer.viewport()];
+            let scissors = [draw_ctx.renderer.scissor()];
+
+            draw_ctx
+                .renderer
+                .graphics_device()
+                .cmd_set_viewport(draw_ctx.cmd_buff, 0, &viewports);
+
+            draw_ctx
+                .renderer
+                .graphics_device()
+                .cmd_set_scissor(draw_ctx.cmd_buff, 0, &scissors);
+
+            let vertex_buffers = [self.lines_gpu.buffer];
+            let vertex_offsets = [
+                self.lines_gpu.aligned_slab_size as DeviceSize * draw_ctx.frame_id as DeviceSize
+            ];
+
+            draw_ctx.renderer.graphics_device().cmd_bind_vertex_buffers(
+                draw_ctx.cmd_buff,
+                0,
+                &vertex_buffers,
+                &vertex_offsets,
+            );
+
+            draw_ctx.renderer.graphics_device().cmd_draw(
+                draw_ctx.cmd_buff,
+                self.lines_cpu.len() as u32,
+                1,
+                0,
+                0,
+            );
+        }
+
         self.lines_cpu.clear();
     }
-
-    // pub fn draw(&mut self, renderer: &VulkanRenderer, view_projection: &glm::Mat4) {
-    //     ScopedBufferMapping::create(
-    //         renderer,
-    //         &self.lines_gpu,
-    //         Self::MAX_LINES * size_of::<Line>() as DeviceSize,
-    //         self.aligned_lines_size * Self::MAX_LINES * renderer.current_frame_id() as DeviceSize,
-    //     )
-    //     .map(|buffer_mapping| unsafe {
-    //         std::ptr::copy_nonoverlapping(
-    //             self.lines_cpu.as_ptr(),
-    //             buffer_mapping.memptr() as *mut Line,
-    //             self.lines_cpu.len(),
-    //         );
-    //     });
-    // 
-    //     ScopedBufferMapping::create(
-    //         renderer,
-    //         &self.uniforms,
-    //         size_of::<glm::Mat4>() as DeviceSize,
-    //         self.aligned_ubo_size * renderer.current_frame_id() as DeviceSize,
-    //     )
-    //     .map(|mapping| unsafe {
-    //         let mtx_slice = view_projection.as_slice();
-    //         std::ptr::copy_nonoverlapping(
-    //             mtx_slice.as_ptr(),
-    //             mapping.memptr() as *mut f32,
-    //             mtx_slice.len(),
-    //         );
-    //     });
-    // 
-    //     unsafe {
-    //         renderer.graphics_device().cmd_bind_pipeline(
-    //             renderer.current_command_buffer(),
-    //             PipelineBindPoint::GRAPHICS,
-    //             self.pipeline.pipeline,
-    //         );
-    // 
-    //         let viewports = [renderer.viewport()];
-    //         let scissors = [renderer.scissor()];
-    // 
-    //         renderer.graphics_device().cmd_set_viewport(
-    //             renderer.current_command_buffer(),
-    //             0,
-    //             &viewports,
-    //         );
-    //         renderer.graphics_device().cmd_set_scissor(
-    //             renderer.current_command_buffer(),
-    //             0,
-    //             &scissors,
-    //         );
-    // 
-    //         let vertex_buffers = [self.lines_gpu.buffer];
-    //         let vertex_offsets = [self.aligned_lines_size
-    //             * Self::MAX_LINES
-    //             * renderer.current_frame_id() as DeviceSize];
-    // 
-    //         renderer.graphics_device().cmd_bind_vertex_buffers(
-    //             renderer.current_command_buffer(),
-    //             0,
-    //             &vertex_buffers,
-    //             &vertex_offsets,
-    //         );
-    // 
-    //         let descriptor_offsets = [self.aligned_ubo_size as u32 * renderer.current_frame_id()];
-    //         renderer.graphics_device().cmd_bind_descriptor_sets(
-    //             renderer.current_command_buffer(),
-    //             PipelineBindPoint::GRAPHICS,
-    //             *self.pipeline.layout(),
-    //             0,
-    //             &self.descriptor_set,
-    //             &descriptor_offsets,
-    //         );
-    // 
-    //         renderer.graphics_device().cmd_draw(
-    //             renderer.current_command_buffer(),
-    //             self.lines_cpu.len() as u32,
-    //             1,
-    //             0,
-    //             0,
-    //         );
-    //     }
-    // }
 }
 
 impl rapier3d::pipeline::DebugRenderBackend for DebugDrawOverlay {
@@ -498,9 +412,10 @@ impl rapier3d::pipeline::DebugRenderBackend for DebugDrawOverlay {
         b: rapier3d::prelude::Point<rapier3d::prelude::Real>,
         color: [f32; 4],
     ) {
-        let color: palette::rgb::PackedRgba  = palette::Srgba::new(color[0], color[1], color[2], color[3])
-            .into_format()
-            .into();
+        let color: palette::rgb::PackedRgba =
+            palette::Srgba::new(color[0], color[1], color[2], color[3])
+                .into_format()
+                .into();
         self.add_line(
             a.to_homogeneous().xyz(),
             b.to_homogeneous().xyz(),
