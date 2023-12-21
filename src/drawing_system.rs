@@ -1,7 +1,11 @@
 use ash::vk::{DeviceSize, DrawIndexedIndirectCommand};
 
-use crate::{resource_system::{EffectType, MeshId, SubmeshId, GlobalLightingData, InstanceRenderInfo}, vk_renderer::{Cpu2GpuBuffer, VulkanRenderer}, draw_context::DrawContext};
 use crate::resource_system::GlobalTransforms;
+use crate::{
+    draw_context::DrawContext,
+    resource_system::{EffectType, GlobalLightingData, InstanceRenderInfo, MeshId, SubmeshId},
+    vk_renderer::{Cpu2GpuBuffer, VulkanRenderer},
+};
 
 struct DrawRequest {
     effect: EffectType,

@@ -1,12 +1,10 @@
 use ash::vk::{
-        DescriptorBufferInfo, DescriptorPoolSize, DescriptorSet, DescriptorSetLayout,
-        DescriptorType, DeviceSize, PipelineLayout, WriteDescriptorSet,
-    };
+    DescriptorBufferInfo, DescriptorPoolSize, DescriptorSet, DescriptorSetLayout, DescriptorType,
+    DeviceSize, PipelineLayout, WriteDescriptorSet,
+};
 
 use crate::{
-    vk_renderer::{
-        UniqueBuffer, UniqueDescriptorPool, UniqueImageView, UniqueSampler, VulkanRenderer,
-    },
+    vk_renderer::{UniqueBuffer, UniqueDescriptorPool, VulkanRenderer},
     ProgramError,
 };
 
@@ -66,12 +64,6 @@ pub struct BindlessResourceSystem {
 }
 
 impl BindlessResourceSystem {
-    // 4 bits for frame id, 28 for resource handle
-    pub fn make_push_constant(frame: u32, resource: BindlessResourceHandle2) -> u32 {
-        assert!(frame <= 0xF);
-        (frame & 0xF) | (resource.handle() << 4)
-    }
-
     pub fn descriptor_sets(&self) -> &[DescriptorSet] {
         &self.descriptor_sets
     }
@@ -131,7 +123,10 @@ impl BindlessResourceSystem {
             )
         }?;
 
-	log::info!("Allocated {} descriptor sets for bindless pipelines", descriptor_sets.len());
+        log::info!(
+            "Allocated {} descriptor sets for bindless pipelines",
+            descriptor_sets.len()
+        );
 
         let bindless_pipeline_layout = unsafe {
             vks.graphics_device().create_pipeline_layout(
