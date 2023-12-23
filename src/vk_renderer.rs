@@ -7,7 +7,6 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     ffi::{c_char, c_void, CStr, CString},
-    mem::size_of,
     ptr::copy_nonoverlapping,
 };
 
@@ -32,12 +31,12 @@ use ash::{
         DescriptorSetLayoutCreateInfo, DescriptorType, DeviceCreateInfo, DeviceMemory,
         DeviceQueueCreateInfo, DeviceSize, DynamicState, Extent2D, Extent3D, Fence,
         FenceCreateFlags, FenceCreateInfo, Format, FormatFeatureFlags, Framebuffer,
-        FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Image, ImageAspectFlags,
-        ImageCreateFlags, ImageCreateInfo, ImageLayout, ImageMemoryBarrier, ImageSubresourceLayers,
-        ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags, ImageView,
-        ImageViewCreateInfo, ImageViewType, MappedMemoryRange, MemoryAllocateInfo, MemoryMapFlags,
-        MemoryPropertyFlags, MemoryRequirements, Offset2D, Offset3D, PhysicalDevice,
-        PhysicalDeviceFeatures, PhysicalDeviceFeatures2, PhysicalDeviceLimits,
+        FramebufferCreateInfo, FrontFace, GraphicsPipelineCreateInfo, Handle, Image,
+        ImageAspectFlags, ImageCreateFlags, ImageCreateInfo, ImageLayout, ImageMemoryBarrier,
+        ImageSubresourceLayers, ImageSubresourceRange, ImageTiling, ImageType, ImageUsageFlags,
+        ImageView, ImageViewCreateInfo, ImageViewType, MappedMemoryRange, MemoryAllocateInfo,
+        MemoryMapFlags, MemoryPropertyFlags, MemoryRequirements, ObjectType, Offset2D, Offset3D,
+        PhysicalDevice, PhysicalDeviceFeatures, PhysicalDeviceFeatures2, PhysicalDeviceLimits,
         PhysicalDeviceMemoryProperties, PhysicalDeviceProperties, PhysicalDeviceType,
         PhysicalDeviceVulkan11Features, PhysicalDeviceVulkan12Features, Pipeline,
         PipelineBindPoint, PipelineCache, PipelineCacheCreateInfo,
@@ -60,10 +59,20 @@ use ash::{
 
 use crate::ProgramError;
 
+pub trait ObjectDebugTag {
+    fn get_type_and_handle(&self) -> (ObjectType, u64);
+}
+
 #[derive(Clone, Debug)]
 pub struct UniqueDeviceMemory {
     pub memory: DeviceMemory,
     device: *const Device,
+}
+
+impl ObjectDebugTag for UniqueDeviceMemory {
+    fn get_type_and_handle(&self) -> (ObjectType, u64) {
+        (ObjectType::DEVICE_MEMORY, self.memory.as_raw())
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -174,6 +183,12 @@ pub struct UniqueImage {
     pub memory: DeviceMemory,
     pub info: ImageInfo,
     device: *const Device,
+}
+
+impl ObjectDebugTag for UniqueImage {
+    fn get_type_and_handle(&self) -> (ObjectType, u64) {
+        (ObjectType::IMAGE, self.image.as_raw())
+    }
 }
 
 impl UniqueImage {
@@ -772,6 +787,12 @@ pub struct UniqueImageView {
     device: *const Device,
 }
 
+impl ObjectDebugTag for UniqueImageView {
+    fn get_type_and_handle(&self) -> (ObjectType, u64) {
+        (ObjectType::IMAGE_VIEW, self.view.as_raw())
+    }
+}
+
 impl UniqueImageView {
     pub fn new(
         graphics_device: &Device,
@@ -1134,10 +1155,10 @@ pub fn compute_align_from_usage(
         && !memory_flags.intersects(MemoryPropertyFlags::HOST_COHERENT)
     {
         if usage.intersects(BufferUsageFlags::UNIFORM_BUFFER) {
-	    limits.min_uniform_buffer_offset_alignment
-	} else {
-	    limits.non_coherent_atom_size
-	}
+            limits.min_uniform_buffer_offset_alignment
+        } else {
+            limits.non_coherent_atom_size
+        }
     } else {
         if usage.intersects(BufferUsageFlags::UNIFORM_BUFFER) {
             limits.min_uniform_buffer_offset_alignment
@@ -1155,60 +1176,6 @@ pub fn compute_align_from_usage(
     align_size as usize
 }
 
-// pub struct UniqueSharedMemoryBuffer {
-//     pub handle: Buffer,
-//     pub memory: DeviceMemory,
-//     pub alignment: usize,
-//     pub items: usize,
-//     pub item_size: usize,
-//     pub slabs: usize,
-//     pub slab_id: usize,
-//     device: *const Device
-// }
-//
-// impl UniqueSharedMemoryBuffer {
-//     pub fn create(        vks: &VulkanRenderer,
-//         usage: BufferUsageFlags,
-//         memory_flags: MemoryPropertyFlags,
-//         items: usize,
-//         item_size: usize,
-// 			  slabs: u32) -> Result<Vec<Self>, ProgramError>
-//     {
-// 	        let align_size =
-//             compute_align_from_usage(&ds.device_properties.limits, usage, memory_flags);
-//
-//         let chunk_allocation_size = items * item_size;
-//         let aligned_chunk_size = align_to(chunk_allocation_size, align_size);
-//
-//         let size = items * item_size * inflight_frames as usize;
-// 	let aligned_size = align_to(size, align_size);
-//
-//         let buffer = unsafe {
-//             ds.graphics_device.create_buffer(
-//                 &BufferCreateInfo::builder()
-//                     .size(aligned_size as DeviceSize)
-//                     .usage(usage)
-//                     .sharing_mode(SharingMode::EXCLUSIVE)
-//                     .queue_family_indices(&[ds.queue_family_index]),
-//                 None,
-//             )
-//         }?;
-//
-//         let memory_req = unsafe { ds.graphics_device.get_buffer_memory_requirements(buffer) };
-//         let mem_heap = choose_memory_type(&ds.device_memory, &memory_req, memory_flags);
-//
-//         let buffer_memory = unsafe {
-//             ds.graphics_device.allocate_memory(
-//                 &MemoryAllocateInfo::builder()
-//                     .allocation_size(memory_req.size)
-//                     .memory_type_index(mem_heap),
-//                 None,
-//             )
-//         }?;
-//
-//     }
-// }
-
 pub struct UniqueBuffer {
     pub buffer: Buffer,
     pub memory: DeviceMemory,
@@ -1216,6 +1183,12 @@ pub struct UniqueBuffer {
     pub items: usize,
     pub aligned_slab_size: usize,
     device: *const Device,
+}
+
+impl ObjectDebugTag for UniqueBuffer {
+    fn get_type_and_handle(&self) -> (ObjectType, u64) {
+        (ObjectType::BUFFER, self.buffer.as_raw())
+    }
 }
 
 impl std::ops::Drop for UniqueBuffer {
@@ -1373,39 +1346,36 @@ impl UniqueBuffer {
     pub fn gpu_only_buffer<T: Sized>(
         renderer: &VulkanRenderer,
         usage: BufferUsageFlags,
-        memory_type: MemoryPropertyFlags,
         data: &[&[T]],
-        alignment: Option<u64>,
-    ) -> Option<UniqueBuffer> {
+    ) -> Result<Self, ProgramError> {
         let items_count = data
             .iter()
-            .fold(0u64, |count, data_chunk| count + data_chunk.len() as u64);
+            .fold(0, |count, data_chunk| count + data_chunk.len());
 
-        let bytes_size = alignment
-            .map(|align| VulkanRenderer::aligned_size_of_type::<T>(align) * items_count)
-            .unwrap_or_else(|| items_count * size_of::<T>() as u64);
-
-        let gpu_buffer = Self::new(
+        let gpu_buffer = Self::with_capacity(
             renderer,
             usage | BufferUsageFlags::TRANSFER_DST,
-            memory_type,
-            bytes_size,
+            MemoryPropertyFlags::DEVICE_LOCAL,
+            items_count,
+            std::mem::size_of::<T>(),
+            1,
         )?;
-        let staging_buffer = Self::new(
+
+        let staging_buffer = Self::with_capacity(
             renderer,
             usage | BufferUsageFlags::TRANSFER_SRC,
             MemoryPropertyFlags::HOST_VISIBLE,
-            bytes_size,
+            items_count,
+            std::mem::size_of::<T>(),
+            1,
         )?;
 
-        //
-        // CPU -> GPU staging buffer
-        ScopedBufferMapping::create(renderer, &staging_buffer, WHOLE_SIZE, 0).map(|mapping| {
+        staging_buffer.map_whole(renderer).map(|mut staging_buf| {
             let _ = data.iter().fold(0, |items, src_buf| {
                 unsafe {
                     copy_nonoverlapping(
                         src_buf.as_ptr(),
-                        (mapping.memptr() as *mut T).offset(items as isize),
+                        (staging_buf.as_mut_ptr() as *mut T).offset(items as isize),
                         src_buf.len(),
                     );
                 }
@@ -1423,13 +1393,13 @@ impl UniqueBuffer {
                 &[BufferCopy::builder()
                     .src_offset(0)
                     .dst_offset(0)
-                    .size(bytes_size)
+                    .size(gpu_buffer.aligned_slab_size as DeviceSize)
                     .build()],
             );
         }
 
         renderer.res_loader.add_staging_buffer(staging_buffer);
-        Some(gpu_buffer)
+        Ok(gpu_buffer)
     }
 }
 
@@ -1575,6 +1545,12 @@ impl<'a> std::ops::DerefMut for ScopedBufferMapping<'a> {
 pub struct UniqueSampler {
     pub sampler: ash::vk::Sampler,
     device: *const Device,
+}
+
+impl ObjectDebugTag for UniqueSampler {
+    fn get_type_and_handle(&self) -> (ObjectType, u64) {
+        (ObjectType::SAMPLER, self.sampler.as_raw())
+    }
 }
 
 impl UniqueSampler {
@@ -2125,6 +2101,12 @@ pub struct BindlessPipeline {
     device: *const Device,
 }
 
+impl ObjectDebugTag for BindlessPipeline {
+    fn get_type_and_handle(&self) -> (ObjectType, u64) {
+        (ObjectType::PIPELINE, self.handle.as_raw())
+    }
+}
+
 impl std::ops::Drop for BindlessPipeline {
     fn drop(&mut self) {
         unsafe {
@@ -2576,7 +2558,7 @@ pub struct VulkanRenderer {
     graphics_device: std::pin::Pin<std::boxed::Box<Device>>,
     phys_device: PhysicalDevice,
     debug_utils_msg: DebugUtilsMessengerEXT,
-    debug_utils: DebugUtils,
+    pub debug_utils: DebugUtils,
     vk_instance: Instance,
     vk_entry: Entry,
 }
@@ -2748,6 +2730,7 @@ impl VulkanRenderer {
         let required_extensions = [
             vk::KhrSurfaceFn::name(),
             vk::ExtDebugUtilsFn::name(),
+            // vk::ExtDebugMarkerFn::name(),
             vk::KhrWin32SurfaceFn::name(),
         ];
 
@@ -2755,6 +2738,7 @@ impl VulkanRenderer {
         let required_extensions = [
             vk::KhrSurfaceFn::name(),
             vk::ExtDebugUtilsFn::name(),
+            // vk::ExtDebugMarkerFn::name(),
             vk::KhrXlibSurfaceFn::name(),
         ];
 
@@ -2996,6 +2980,22 @@ impl VulkanRenderer {
             vk_instance,
             vk_entry,
         })
+    }
+
+    pub fn debug_set_object_tag(&self, name: &str, tag: &dyn ObjectDebugTag) {
+        use ash::vk::DebugUtilsObjectNameInfoEXT;
+
+        let (object_type, object_handle) = tag.get_type_and_handle();
+
+        let _ = unsafe {
+            self.debug_utils.set_debug_utils_object_name(
+                self.graphics_device().handle(),
+                &DebugUtilsObjectNameInfoEXT::builder()
+                    .object_type(object_type)
+                    .object_handle(object_handle)
+                    .object_name(&CString::new(name).unwrap()),
+            )
+        };
     }
 
     pub fn current_frame_id(&self) -> u32 {

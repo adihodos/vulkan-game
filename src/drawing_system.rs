@@ -1,10 +1,13 @@
-use ash::vk::{DeviceSize, DrawIndexedIndirectCommand};
+use ash::vk::{
+    BufferUsageFlags, DrawIndexedIndirectCommand, Handle, MemoryPropertyFlags, ShaderStageFlags,
+};
 
-use crate::resource_system::GlobalTransforms;
 use crate::{
-    draw_context::DrawContext,
-    resource_system::{EffectType, GlobalLightingData, InstanceRenderInfo, MeshId, SubmeshId},
-    vk_renderer::{Cpu2GpuBuffer, VulkanRenderer},
+    bindless::BindlessResourceHandle,
+    draw_context::{DrawContext, InitContext},
+    resource_system::{EffectType, InstanceRenderInfo, MeshId, SubmeshId},
+    vk_renderer::UniqueBuffer,
+    ProgramError,
 };
 
 struct DrawRequest {
@@ -15,22 +18,80 @@ struct DrawRequest {
     obj2world: nalgebra_glm::Mat4,
 }
 
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct PbrRenderpassHandle {
+    ubo: u32,
+    instances: u32,
+    materials: u32,
+    skybox: u32,
+}
+
 pub struct DrawingSys {
-    drawcalls_buffer: Cpu2GpuBuffer<ash::vk::DrawIndexedIndirectCommand>,
+    pbr_renderpass_buff: UniqueBuffer,
+    pbr_renderpass_handles: Vec<BindlessResourceHandle>,
+    g_instances_buffer: UniqueBuffer,
+    g_inst_buf_handle: Vec<BindlessResourceHandle>,
+    drawcalls_buffer: UniqueBuffer,
     requests: Vec<DrawRequest>,
 }
 
 impl DrawingSys {
-    pub fn create(renderer: &VulkanRenderer) -> Option<Self> {
-        let drawcalls_buffer = Cpu2GpuBuffer::<ash::vk::DrawIndexedIndirectCommand>::create(
-            renderer,
-            ash::vk::BufferUsageFlags::INDIRECT_BUFFER,
-            renderer.device_properties().limits.non_coherent_atom_size,
-            128,
-            renderer.max_inflight_frames() as ash::vk::DeviceSize,
+    pub const MAX_INSTANCES: usize = 4096;
+
+    pub fn create(init_ctx: &mut InitContext) -> Result<Self, ProgramError> {
+        let pbr_renderpass_buff = UniqueBuffer::with_capacity(
+            init_ctx.renderer,
+            BufferUsageFlags::STORAGE_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            1,
+            std::mem::size_of::<PbrRenderpassHandle>(),
+            init_ctx.renderer.max_inflight_frames(),
         )?;
 
-        Some(Self {
+        init_ctx
+            .renderer
+            .debug_set_object_tag("Renderpass setup SSBO", &pbr_renderpass_buff);
+
+        let pbr_renderpass_handles = init_ctx.rsys.bindless.register_chunked_ssbo(
+            init_ctx.renderer,
+            &pbr_renderpass_buff,
+            init_ctx.renderer.max_inflight_frames() as usize,
+        );
+
+        let g_instances_buffer = UniqueBuffer::with_capacity(
+            init_ctx.renderer,
+            BufferUsageFlags::STORAGE_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            Self::MAX_INSTANCES,
+            std::mem::size_of::<InstanceRenderInfo>(),
+            init_ctx.renderer.max_inflight_frames(),
+        )?;
+
+        init_ctx
+            .renderer
+            .debug_set_object_tag("Instances SSBO", &g_instances_buffer);
+
+        let g_inst_buf_handle = init_ctx.rsys.bindless.register_chunked_ssbo(
+            init_ctx.renderer,
+            &g_instances_buffer,
+            init_ctx.renderer.max_inflight_frames() as usize,
+        );
+
+        let drawcalls_buffer = UniqueBuffer::with_capacity(
+            init_ctx.renderer,
+            BufferUsageFlags::INDIRECT_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            256,
+            std::mem::size_of::<DrawIndexedIndirectCommand>(),
+            init_ctx.renderer.max_inflight_frames(),
+        )?;
+
+        Ok(Self {
+            pbr_renderpass_buff,
+            pbr_renderpass_handles,
+            g_instances_buffer,
+            g_inst_buf_handle,
             drawcalls_buffer,
             requests: Vec::with_capacity(1024),
         })
@@ -53,90 +114,27 @@ impl DrawingSys {
         });
     }
 
-    pub fn setup_bindless(&self, skybox_id: u32, draw_ctx: &DrawContext) {
-        draw_ctx
-            .rsys
-            .g_transforms_buffer
-            .map_for_frame(draw_ctx.renderer, draw_ctx.frame_id as DeviceSize)
-            .map(|mut transforms_buffer| {
-                let transforms = GlobalTransforms {
-                    projection_view: draw_ctx.projection_view,
-                    view: draw_ctx.view_matrix,
-                };
-
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        &transforms as *const _,
-                        transforms_buffer.as_mut_ptr() as *mut GlobalTransforms,
-                        1,
-                    );
-                }
-            });
-
-        draw_ctx
-            .rsys
-            .g_lighting_buffer
-            .map_for_frame(draw_ctx.renderer, draw_ctx.frame_id as DeviceSize)
-            .map(|mut light_buffer| {
-                let light_data = GlobalLightingData {
-                    eye_pos: draw_ctx.cam_position,
-                    skybox: skybox_id,
-                };
-
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        &light_data as *const _,
-                        light_buffer.as_mut_ptr() as *mut GlobalLightingData,
-                        1,
-                    );
-                }
-            });
-
-        // 4 -> ubo tf globals, 0 0 0
-        // 64
-        // 4 -> ubo light , 0, 0, 0
-        use std::iter::{once, repeat};
-        let bindig_offsets = once(
-            draw_ctx
-                .rsys
-                .g_transforms_buffer
-                .offset_for_frame(draw_ctx.frame_id as DeviceSize) as u32,
-        )
-        .chain(repeat(0u32).take(3))
-        .chain(once(
-            draw_ctx
-                .rsys
-                .g_instances_buffer
-                .offset_for_frame(draw_ctx.frame_id as DeviceSize) as u32,
-        ))
-        .chain(repeat(0u32).take(15))
-        .chain(once(
-            draw_ctx
-                .rsys
-                .g_lighting_buffer
-                .offset_for_frame(draw_ctx.frame_id as DeviceSize) as u32,
-        ))
-        .chain(repeat(0u32).take(3))
-        .collect::<Vec<_>>();
-
-        let (p_layout, _) = draw_ctx.rsys.pipeline_layout();
-
-        unsafe {
-            draw_ctx
-                .renderer
-                .graphics_device()
-                .cmd_bind_descriptor_sets(
-                    draw_ctx.cmd_buff,
-                    ash::vk::PipelineBindPoint::GRAPHICS,
-                    *p_layout,
-                    0,
-                    &draw_ctx.rsys.descriptor_sets,
-                    &bindig_offsets,
-                );
-        }
-    }
-
     pub fn draw(&mut self, draw_ctx: &DrawContext) {
+        let _ = self
+            .pbr_renderpass_buff
+            .map_for_frame(draw_ctx.renderer, draw_ctx.frame_id)
+            .map(|mut pass_buff| {
+                let pass_setup = PbrRenderpassHandle {
+                    ubo: draw_ctx.global_ubo_handle,
+                    instances: self.g_inst_buf_handle[draw_ctx.frame_id as usize].handle(),
+                    materials: draw_ctx.rsys.material_buffer.handle(),
+                    skybox: draw_ctx.skybox_handle,
+                };
+
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        &pass_setup as *const _,
+                        pass_buff.as_mut_ptr() as *mut _,
+                        1,
+                    );
+                }
+            });
+
         self.requests
             .sort_unstable_by_key(|req| (req.effect, req.mesh, req.submesh));
 
@@ -202,10 +200,9 @@ impl DrawingSys {
                 drawcalls.push(drawcall);
             });
 
-        draw_ctx
-            .rsys
+        let _ = self
             .g_instances_buffer
-            .map_for_frame(draw_ctx.renderer, draw_ctx.frame_id as DeviceSize)
+            .map_for_frame(draw_ctx.renderer, draw_ctx.frame_id)
             .map(|mut instance_buffer| unsafe {
                 std::ptr::copy_nonoverlapping(
                     instance_data.as_ptr(),
@@ -214,8 +211,9 @@ impl DrawingSys {
                 );
             });
 
-        self.drawcalls_buffer
-            .map_for_frame(draw_ctx.renderer, draw_ctx.frame_id as DeviceSize)
+        let _ = self
+            .drawcalls_buffer
+            .map_for_frame(draw_ctx.renderer, draw_ctx.frame_id)
             .map(|mut drawcalls_buffer| unsafe {
                 std::ptr::copy_nonoverlapping(
                     drawcalls.as_ptr(),
@@ -261,23 +259,36 @@ impl DrawingSys {
             );
         }
 
-        let draw_cmd_buff_offset = self
-            .drawcalls_buffer
-            .offset_for_frame(draw_ctx.frame_id as DeviceSize);
+        let ssbo_pbr_setup_handle = self.pbr_renderpass_handles[draw_ctx.frame_id as usize]
+            .handle()
+            .to_le_bytes();
+
+        let draw_cmd_buff_offset =
+            self.drawcalls_buffer.aligned_slab_size * draw_ctx.frame_id as usize;
+
         draw_cmds.iter().for_each(|cmd| unsafe {
-            let pipeline = draw_ctx.rsys.get_effect(cmd.effect).pipeline;
+            let pipeline = draw_ctx.rsys.get_effect(cmd.effect).handle;
             draw_ctx.renderer.graphics_device().cmd_bind_pipeline(
                 draw_ctx.cmd_buff,
                 ash::vk::PipelineBindPoint::GRAPHICS,
                 pipeline,
             );
+
+            draw_ctx.renderer.graphics_device().cmd_push_constants(
+                draw_ctx.cmd_buff,
+                draw_ctx.rsys.bindless.bindless_pipeline_layout(),
+                ShaderStageFlags::ALL,
+                0,
+                &ssbo_pbr_setup_handle,
+            );
+
             draw_ctx
                 .renderer
                 .graphics_device()
                 .cmd_draw_indexed_indirect(
                     draw_ctx.cmd_buff,
-                    self.drawcalls_buffer.buffer.buffer,
-                    draw_cmd_buff_offset
+                    self.drawcalls_buffer.buffer,
+                    draw_cmd_buff_offset as u64
                         + cmd.offset as u64
                             * std::mem::size_of::<DrawIndexedIndirectCommand>() as u64,
                     cmd.calls,

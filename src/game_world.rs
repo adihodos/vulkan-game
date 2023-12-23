@@ -1,11 +1,9 @@
 use std::{
-    borrow::Borrow,
     cell::{RefCell, RefMut},
     rc::Rc,
 };
 
 use ash::vk::{BufferUsageFlags, MemoryPropertyFlags, PipelineBindPoint};
-use itertools::UniqueBy;
 use nalgebra::Point3;
 use nalgebra_glm as glm;
 use nalgebra_glm::Vec4;
@@ -14,7 +12,7 @@ use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 
 use crate::{
     app_config::{AppConfig, PlayerShipConfig},
-    bindless::BindlessResourceHandle2,
+    bindless::BindlessResourceHandle,
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, FrameRenderContext, InitContext, UpdateContext},
     drawing_system::DrawingSys,
@@ -119,6 +117,7 @@ struct GlobalUniformData {
     projection_view: glm::Mat4,
     view: glm::Mat4,
     orthographic: glm::Mat4,
+    eye_position: glm::Vec3,
     frame_id: u32,
 }
 
@@ -148,7 +147,7 @@ pub struct GameWorld {
     drawing_sys: RefCell<DrawingSys>,
     ui: RefCell<UiBackend>,
     ubo_bindless: UniqueBuffer,
-    ubo_bindless_handles: Vec<BindlessResourceHandle2>,
+    ubo_bindless_handles: Vec<BindlessResourceHandle>,
 }
 
 impl GameWorld {
@@ -239,6 +238,14 @@ impl GameWorld {
             renderer.max_inflight_frames() as usize,
         );
 
+        let draw_sys = DrawingSys::create(&mut InitContext {
+            window,
+            renderer,
+            cfg,
+            rsys: &mut rsys,
+        })
+        .expect("oopsie");
+
         Some(GameWorld {
             draw_opts: RefCell::new(DebugOptions::default()),
             skybox,
@@ -260,7 +267,7 @@ impl GameWorld {
             rt,
             missile_sys: RefCell::new(missile_sys),
             resource_sys: rsys,
-            drawing_sys: RefCell::new(DrawingSys::create(renderer)?),
+            drawing_sys: RefCell::new(draw_sys),
             ui,
             ubo_bindless,
             ubo_bindless_handles,
@@ -387,6 +394,7 @@ impl GameWorld {
             cam_position,
             projection,
             inverse_projection,
+            skybox_handle: self.skybox.ssbo_for_frame(frame_context.frame_id).handle(),
             projection_view: projection * view_matrix,
             debug_draw: self.debug_draw_overlay.clone(),
         };
@@ -403,6 +411,7 @@ impl GameWorld {
                 1f32,
                 0f32,
             ),
+            eye_position: self.camera.borrow().position,
         };
 
         self.ubo_bindless
@@ -433,15 +442,10 @@ impl GameWorld {
                 );
         }
 
-        // self.drawing_sys
-        //     .borrow_mut()
-        //     .setup_bindless(self.skybox.id, &draw_context);
-        //
         self.skybox.draw(&draw_context);
-        //
-        // self.starfury
-        //     .borrow()
-        //     .draw(&draw_context, &mut self.drawing_sys.borrow_mut());
+
+        self.starfury
+            .draw(&draw_context, &mut self.drawing_sys.borrow_mut());
 
         //
         // draw ze enemies Hans, ja ja wunderbar
@@ -469,7 +473,7 @@ impl GameWorld {
             // self.missile_sys.borrow().draw(&draw_context, &mut draw_sys);
         }
 
-        // self.drawing_sys.borrow_mut().draw(&draw_context);
+        self.drawing_sys.borrow_mut().draw(&draw_context);
 
         self.draw_objects(&draw_context);
 

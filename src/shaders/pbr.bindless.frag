@@ -1,6 +1,6 @@
 #version 460 core
 
-#extension GL_EXT_nonuniform_qualifier : require
+#include "bindless.common.glsl"
 
 layout (location = 0) in vs_out_fs_in {
   vec3 pos;
@@ -13,34 +13,35 @@ layout (location = 0) in vs_out_fs_in {
   flat uint mtl_offset;
 } fs_in;
 
-#include "pbr.layout.frag.h"
-
 layout (location = 0) out vec4 FinalFragColor;
 
 const float PI = 3.14159265359;
+
+// irradiance + prefiltered -> samplerCube
+// colormap, metallic, normal, brdf -> sampler2D array
 
 //
 // PBR code adapted from https://learnopengl.com/PBR/Lighting
 
 // ----------------------------------------------------------------------------
 // Easy trick to get tangent-normals to world-space to keep PBR code simplified.
-																    
+															    
 vec3 getNormalFromMap(vec3 normal)
-  {
-    vec3 tangentNormal = normal * 2.0 - 1.0;
+{
+  vec3 tangentNormal = normal * 2.0 - 1.0;
 
-    vec3 Q1  = dFdx(fs_in.pos);
-    vec3 Q2  = dFdy(fs_in.pos);
-    vec2 st1 = dFdx(fs_in.uv);
-    vec2 st2 = dFdy(fs_in.uv);
+  vec3 Q1  = dFdx(fs_in.pos);
+  vec3 Q2  = dFdy(fs_in.pos);
+  vec2 st1 = dFdx(fs_in.uv);
+  vec2 st2 = dFdy(fs_in.uv);
 
-    vec3 N   = normalize(fs_in.normal);
-    vec3 T  = normalize(Q1*st2.t - Q2*st1.t);
-    vec3 B  = -normalize(cross(N, T));
-    mat3 TBN = mat3(T, B, N);
+  vec3 N   = normalize(fs_in.normal);
+  vec3 T  = normalize(Q1*st2.t - Q2*st1.t);
+  vec3 B  = -normalize(cross(N, T));
+  mat3 TBN = mat3(T, B, N);
 
-    return normalize(TBN * tangentNormal);
-  }
+  return normalize(TBN * tangentNormal);
+}
 // ----------------------------------------------------------------------------
 float DistributionGGX(vec3 N, vec3 H, float roughness)
 {
@@ -108,11 +109,16 @@ vec4 toLinear(vec4 sRGB)
 }
 
 void main() {
-  const pbr_data_t pbr = primitives_pbr_data.entry[fs_in.primitive_id + fs_in.mtl_offset];
+  const uint i = g_GlobalPushConst.id;
+  const PbrRenderpassHandles handles = g_GlobalPbrHandles[nonuniformEXT(i)].arr[0];
+  
+  const PbrData pbr = g_GlobalPbrData[nonuniformEXT(handles.pbrMtlHandle)].arr[ fs_in.primitive_id + fs_in.mtl_offset];
 
-  vec3 base_color = pbr.base_color_factor.rgb * texture(g_s_colormaps[pbr.colormap_id], fs_in.uv).rgb;
+  vec3 base_color = pbr.base_color_factor.rgb * texture(g_Global2DTextures[pbr.colormap_id], fs_in.uv).rgb;
+  
   vec3 albedo     = pow(base_color, vec3(2.2));
-  vec3 metallic_roughness = texture(g_s_metal_roughness_maps[pbr.metallic_roughness_id], fs_in.uv).rgb;
+  
+  vec3 metallic_roughness = texture(g_Global2DTextures[pbr.metallic_roughness_id], fs_in.uv).rgb;
   float metallic  = pbr.metallic_factor * metallic_roughness.b;
   float roughness = pbr.roughness_factor * metallic_roughness.g;
   float ao        = 1.0;
@@ -121,7 +127,7 @@ void main() {
     normalize(fs_in.normal);
   // getNormalFromMap(texture(g_s_normal_maps[pbr.normal_id], fs_in.uv).rgb);
 
-  vec3 V = normalize(lighting_data.eye_pos - fs_in.pos);
+  vec3 V = normalize(g_GlobalUniform[nonuniformEXT(handles.uboHandle)].data[0].eyePosition - fs_in.pos);
   vec3 R = reflect(-V, N);
 
   // calculate reflectance at normal incidence; if dia-electric (like plastic) use F0
@@ -162,9 +168,9 @@ void main() {
       // relationship the diffuse component (kD) should equal 1.0 - kS.
       vec3 kD = vec3(1.0) - kS;
       // multiply kD by the inverse metalness such that only non-metals 
-	   // have diffuse lighting, or a linear blend if partly metal (pure metals
-	   // have no diffuse light).
-	   kD *= 1.0 - metallic;	  
+      // have diffuse lighting, or a linear blend if partly metal (pure metals
+      // have no diffuse light).
+      kD *= 1.0 - metallic;	  
 
       // scale light by NdotL
       float NdotL = max(dot(N, L), 0.0);        
@@ -181,13 +187,15 @@ void main() {
   vec3 kD = 1.0 - kS;
   kD *= 1.0 - metallic;	  
 
-  vec3 irradiance = texture(s_irradiance[lighting_data.skybox], N).rgb;
+  const SkyboxData sky = g_GlobalSkyboxData[nonuniformEXT(handles.skyboxHandle)].arr[0];
+  
+  vec3 irradiance = texture(g_GlobalCubeTextures[sky.skyboxIrradiance], N).rgb;
   vec3 diffuse      = irradiance * albedo;
 
   // sample both the pre-filter map and the BRDF lut and combine them together as per the Split-Sum approximation to get the IBL specular part.
   const float MAX_REFLECTION_LOD = 8.0;
-  vec3 prefilteredColor = textureLod(s_prefiltered[lighting_data.skybox], R,  roughness * MAX_REFLECTION_LOD).rgb;    
-  vec2 brdf  = texture(s_brdf_lut[lighting_data.skybox], vec2(max(dot(N, V), 0.0), roughness)).rg;
+  vec3 prefilteredColor = textureLod(g_GlobalCubeTextures[sky.skyboxPrefiltered], R,  roughness * MAX_REFLECTION_LOD).rgb;    
+  vec2 brdf  = texture(g_Global2DTextures[sky.skyboxBRDFLut], vec2(max(dot(N, V), 0.0), roughness)).rg;
   vec3 specular = prefilteredColor * (F * brdf.x + brdf.y);
 
   vec3 ambient = (kD * diffuse + specular) * ao;

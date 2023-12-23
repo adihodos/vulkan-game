@@ -20,7 +20,7 @@ use winit::{
 };
 
 use crate::{
-    bindless::BindlessResourceHandle2,
+    bindless::BindlessResourceHandle,
     draw_context::{DrawContext, InitContext},
     vk_renderer::{
         BindlessPipeline, GraphicsPipelineBuilder, ImageCopySource, ShaderModuleDescription,
@@ -250,9 +250,9 @@ pub struct UiBackend {
     ibuffer: UniqueBuffer,
     platform: WinitPlatform,
     bindles_pp: BindlessPipeline,
-    bindles_fa: BindlessResourceHandle2,
+    bindles_fa: BindlessResourceHandle,
     bindless_ssbo: UniqueBuffer,
-    bindless_ssbo_handles: Vec<BindlessResourceHandle2>,
+    bindless_ssbo_handles: Vec<BindlessResourceHandle>,
 }
 
 impl UiBackend {

@@ -1,5 +1,5 @@
 use crate::{
-    bindless::BindlessResourceHandle2,
+    bindless::BindlessResourceHandle,
     color_palettes::StdColors,
     draw_context::{DrawContext, InitContext},
     vk_renderer::{
@@ -24,7 +24,7 @@ pub struct SpriteBatch {
     indices_cpu: Vec<u16>,
     pipeline: BindlessPipeline,
     atlas: TextureAtlas,
-    texture_atlas_handle: BindlessResourceHandle2,
+    texture_atlas_handle: BindlessResourceHandle,
     texture_info: ImageInfo,
 }
 

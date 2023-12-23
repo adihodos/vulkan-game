@@ -1,14 +1,9 @@
 use ash::vk::{
-    BufferUsageFlags, CullModeFlags, DescriptorBindingFlags, DescriptorBufferInfo,
-    DescriptorImageInfo, DescriptorPoolCreateInfo, DescriptorPoolSize, DescriptorSet,
-    DescriptorSetAllocateInfo, DescriptorSetLayout, DescriptorSetLayoutBinding,
-    DescriptorSetLayoutBindingFlagsCreateInfo, DescriptorSetLayoutCreateInfo, DescriptorType,
-    DeviceSize, DynamicState, Extent3D, Filter, Format, FrontFace, ImageLayout, ImageTiling,
-    ImageType, ImageUsageFlags, MemoryPropertyFlags, PipelineLayout, PipelineLayoutCreateInfo,
-    PipelineRasterizationStateCreateInfo, PolygonMode, PushConstantRange, SampleCountFlags,
+    BufferUsageFlags, CullModeFlags, DescriptorSet, DynamicState, Extent3D, Filter, Format,
+    FrontFace, Handle, ImageLayout, ImageTiling, ImageType, ImageUsageFlags, ObjectType,
+    PipelineLayout, PipelineRasterizationStateCreateInfo, PolygonMode, SampleCountFlags,
     SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, SharingMode,
     VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
-    WriteDescriptorSet,
 };
 use chrono::Duration;
 use memoffset::offset_of;
@@ -20,55 +15,23 @@ use std::{collections::HashMap, mem::size_of, path::Path, time::Instant};
 
 use crate::{
     app_config::AppConfig,
-    bindless::{BindlessResourceHandle2, BindlessResourceSystem},
+    bindless::{BindlessResourceHandle, BindlessResourceSystem},
     imported_geometry::{GeometryNode, GeometryVertex, ImportedGeometry},
     math::AABB3,
     pbr::PbrMaterial,
     vk_renderer::{
-        Cpu2GpuBuffer, GraphicsPipelineBuilder, ShaderModuleDescription, ShaderModuleSource,
-        UniqueBuffer, UniqueGraphicsPipeline, UniqueImage, UniqueImageView, UniqueImageWithView,
-        UniqueSampler, VulkanRenderer,
+        BindlessPipeline, GraphicsPipelineBuilder, ShaderModuleDescription, ShaderModuleSource,
+        UniqueBuffer, UniqueImage, UniqueImageView, UniqueImageWithView, UniqueSampler,
+        VulkanRenderer,
     },
+    ProgramError,
 };
 
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct GlobalTransforms {
-    pub projection_view: nalgebra_glm::Mat4,
-    pub view: nalgebra_glm::Mat4,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C)]
-pub struct GlobalLightingData {
-    pub eye_pos: nalgebra_glm::Vec3,
-    pub skybox: u32,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C, align(16))]
 pub struct InstanceRenderInfo {
     pub model: nalgebra_glm::Mat4,
     pub mtl_coll_offset: u32,
-}
-
-#[derive(Copy, Clone)]
-#[repr(C, align(16))]
-pub struct PushConstVertex {
-    pub model: nalgebra_glm::Mat4,
-    pub atlas_id: u32,
-}
-
-impl PushConstVertex {
-    pub const SIZE: u32 = std::mem::size_of::<Self>() as u32;
-}
-
-impl std::convert::AsRef<[u8]> for PushConstVertex {
-    fn as_ref(&self) -> &[u8] {
-        unsafe {
-            std::slice::from_raw_parts(self as *const _ as *const u8, std::mem::size_of::<Self>())
-        }
-    }
 }
 
 #[derive(Copy, Clone)]
@@ -118,75 +81,10 @@ impl MeshRenderInfo {
     }
 }
 
-#[derive(Copy, Clone, num_derive::FromPrimitive, Eq, PartialEq, Hash)]
-#[repr(u8)]
-pub enum BindlessResourceKind {
-    UniformBufferGlobalTansform,
-    StorageBufferInstanceData,
-    StorageBufferMaterialDef,
-    SamplerBaseColormap,
-    SamplerMetallicRoughnessColormap,
-    SamplerNormalMap,
-    UniformBufferGlobalLight,
-    SamplerEnvMapIrradiance,
-    SamplerEnvMapPrefiltered,
-    SamplerEnvMapBRDFLut,
-    SamplerMiscTextures,
-    SamplerMiscArrayTextures,
-}
-
-impl BindlessResourceKind {
-    fn to_descriptor_type(&self) -> ash::vk::DescriptorType {
-        match *self {
-            BindlessResourceKind::UniformBufferGlobalTansform
-            | BindlessResourceKind::UniformBufferGlobalLight => {
-                DescriptorType::UNIFORM_BUFFER_DYNAMIC
-            }
-            BindlessResourceKind::StorageBufferInstanceData => {
-                DescriptorType::STORAGE_BUFFER_DYNAMIC
-            }
-            BindlessResourceKind::StorageBufferMaterialDef => DescriptorType::STORAGE_BUFFER,
-            BindlessResourceKind::SamplerBaseColormap
-            | BindlessResourceKind::SamplerMetallicRoughnessColormap
-            | BindlessResourceKind::SamplerNormalMap
-            | BindlessResourceKind::SamplerEnvMapBRDFLut
-            | BindlessResourceKind::SamplerEnvMapPrefiltered
-            | BindlessResourceKind::SamplerEnvMapIrradiance
-            | BindlessResourceKind::SamplerMiscTextures
-            | BindlessResourceKind::SamplerMiscArrayTextures => {
-                DescriptorType::COMBINED_IMAGE_SAMPLER
-            }
-        }
-    }
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum EffectType {
     Pbr,
     BasicEmissive,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct BindlessResourceHandle {
-    rhandle: u64,
-}
-
-impl BindlessResourceHandle {
-    pub fn create(id: BindlessResourceKind, tbl_idx: u32) -> Self {
-        assert!(tbl_idx < 0xFF);
-        Self {
-            rhandle: ((id as u32) << 8) as u64 | (tbl_idx & 0xFF) as u64,
-        }
-    }
-
-    pub fn descriptor_type(&self) -> BindlessResourceKind {
-        use num::FromPrimitive;
-        BindlessResourceKind::from_u8(((self.rhandle & 0xFF00) >> 8) as u8).unwrap()
-    }
-
-    pub fn handle(&self) -> u32 {
-        (self.rhandle & 0xFF) as u32
-    }
 }
 
 #[derive(Copy, Clone)]
@@ -196,52 +94,27 @@ pub struct MissileSmokePoint {
 
 pub struct CachedTexture {
     pub img: UniqueImageWithView,
-    pub handle: BindlessResourceHandle2,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct GlobalUniformBufferBindless {
-    projection_view: glm::Mat4,
-    view: glm::Mat4,
-    frame: u32,
-    pad: [u32; 3],
+    pub handle: BindlessResourceHandle,
 }
 
 pub struct ResourceSystem {
     pub g_vertex_buffer: UniqueBuffer,
     pub g_index_buffer: UniqueBuffer,
     g_material_collection_buffer: UniqueBuffer,
-    pub g_transforms_buffer: Cpu2GpuBuffer<GlobalTransforms>,
-    pub g_lighting_buffer: Cpu2GpuBuffer<GlobalLightingData>,
-    pub g_instances_buffer: Cpu2GpuBuffer<InstanceRenderInfo>,
-    descriptor_pool: ash::vk::DescriptorPool,
-    pub descriptor_sets: Vec<DescriptorSet>,
+    pub material_buffer: BindlessResourceHandle,
     meshes: HashMap<MeshId, MeshRenderInfo>,
     materials: HashMap<String, u32>,
     samplers: SamplerResourceTable,
-    resource_table: HashMap<BindlessResourceKind, Vec<UniqueImageWithView>>,
-    effect_table: HashMap<EffectType, UniqueGraphicsPipeline>,
+    effect_table: HashMap<EffectType, BindlessPipeline>,
     pub bindless: BindlessResourceSystem,
     textures: HashMap<String, CachedTexture>,
-    ubo_bindless: UniqueBuffer,
-    ubo_bindless_handle: BindlessResourceHandle2,
 }
 
 impl ResourceSystem {
-    pub fn get_effect(&self, e: EffectType) -> &UniqueGraphicsPipeline {
+    pub fn get_effect(&self, e: EffectType) -> &BindlessPipeline {
         self.effect_table
             .get(&e)
             .expect(&format!("Effect {:?} not found", e))
-    }
-
-    pub fn pipeline_layout(
-        &self,
-    ) -> (
-        std::rc::Rc<PipelineLayout>,
-        std::rc::Rc<Vec<ash::vk::DescriptorSetLayout>>,
-    ) {
-        let p = self.get_effect(EffectType::Pbr);
-        (p.layout(), p.descriptor_layouts())
     }
 
     fn default_sampler() -> SamplerCreateInfo {
@@ -264,9 +137,11 @@ impl ResourceSystem {
         renderer: &VulkanRenderer,
         img: UniqueImageWithView,
         sampler_info: Option<SamplerDescription>,
-    ) -> BindlessResourceHandle2 {
-	let si = sampler_info.map(|s| *s).unwrap_or_else(|| Self::default_sampler());
-	
+    ) -> BindlessResourceHandle {
+        let si = sampler_info
+            .map(|s| *s)
+            .unwrap_or_else(|| Self::default_sampler());
+
         let sampler = self.samplers.get_sampler(&si, renderer);
         let handle = self
             .bindless
@@ -276,7 +151,7 @@ impl ResourceSystem {
         handle
     }
 
-    pub fn get_texture(&mut self, id: &str) -> BindlessResourceHandle2 {
+    pub fn get_texture(&mut self, id: &str) -> BindlessResourceHandle {
         self.textures
             .get(id)
             .map(|cached_tex| cached_tex.handle)
@@ -287,52 +162,7 @@ impl ResourceSystem {
         BindlessSetup {
             pipeline_layout: self.bindless.bindless_pipeline_layout(),
             descriptor_set: self.bindless.descriptor_sets(),
-            ubo: self.ubo_bindless.buffer,
-            ubo_handle: self.ubo_bindless_handle,
         }
-    }
-
-    pub fn add_texture(
-        &mut self,
-        texture: UniqueImageWithView,
-        id: BindlessResourceKind,
-        sampler: Option<ash::vk::Sampler>,
-        renderer: &VulkanRenderer,
-    ) -> BindlessResourceHandle {
-        let img_view = texture.image_view();
-
-        if let Some(tbl) = self.resource_table.get_mut(&id) {
-            tbl.push(texture);
-        } else {
-            self.resource_table.insert(id, vec![texture]);
-        };
-
-        let sampler =
-            sampler.unwrap_or_else(|| self.get_sampler(&Self::default_sampler(), renderer));
-
-        self.resource_table
-            .get(&id)
-            .map(|e| {
-                let res_handle = BindlessResourceHandle::create(id, (e.len() - 1) as u32);
-
-                unsafe {
-                    renderer.graphics_device().update_descriptor_sets(
-                        &[*WriteDescriptorSet::builder()
-                            .descriptor_type(id.to_descriptor_type())
-                            .dst_array_element(res_handle.handle())
-                            .dst_binding(0)
-                            .dst_set(self.descriptor_sets[id as usize])
-                            .image_info(&[*DescriptorImageInfo::builder()
-                                .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                                .image_view(img_view)
-                                .sampler(sampler)])],
-                        &[],
-                    );
-                }
-
-                res_handle
-            })
-            .unwrap()
     }
 
     pub fn get_sampler(
@@ -369,26 +199,28 @@ impl ResourceSystem {
             .expect(&format!("Node {submesh} of mesh {mesh_id} not found"))
     }
 
-    pub fn create(renderer: &VulkanRenderer, app_config: &AppConfig) -> Option<Self> {
+    pub fn create(renderer: &VulkanRenderer, app_config: &AppConfig) -> Result<Self, ProgramError> {
         let s = Instant::now();
 
         let mut bindless =
             BindlessResourceSystem::new(renderer).expect("Failed to create bindless system");
         let mut textures = HashMap::<String, CachedTexture>::new();
 
-        let ubo_bindless = UniqueBuffer::with_capacity(
-            renderer,
-            BufferUsageFlags::UNIFORM_BUFFER,
-            MemoryPropertyFlags::HOST_VISIBLE,
-            1,
-            std::mem::size_of::<GlobalUniformBufferBindless>(),
-            renderer.max_inflight_frames(),
-        )
-        .expect("Failed to create bindless UBO");
-
-        let ubo_bindless_handle = bindless.register_uniform_buffer(renderer, &ubo_bindless);
-
         let mut sampler_table = SamplerResourceTable::new();
+        let default_sampler = sampler_table.get_sampler(
+            &SamplerCreateInfo::builder()
+                .min_lod(0f32)
+                .max_lod(1f32)
+                .min_filter(Filter::LINEAR)
+                .mag_filter(Filter::LINEAR)
+                .mipmap_mode(SamplerMipmapMode::LINEAR)
+                .address_mode_u(SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_v(SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_w(SamplerAddressMode::CLAMP_TO_EDGE)
+                .border_color(ash::vk::BorderColor::INT_OPAQUE_BLACK)
+                .max_anisotropy(1f32),
+            renderer,
+        );
 
         let imported_geometries = app_config
             .scene
@@ -459,51 +291,36 @@ impl ResourceSystem {
             .map(|(_, g)| g.vertices())
             .collect::<SmallVec<[&[GeometryVertex]; 8]>>();
 
-        let g_vertex_buffer = UniqueBuffer::gpu_only_buffer(
-            renderer,
-            BufferUsageFlags::VERTEX_BUFFER,
-            MemoryPropertyFlags::DEVICE_LOCAL,
-            &vertex_data,
-            None,
-        )?;
+        let g_vertex_buffer =
+            UniqueBuffer::gpu_only_buffer(renderer, BufferUsageFlags::VERTEX_BUFFER, &vertex_data)?;
+
+        renderer.debug_set_object_tag("Global mesh buffer", &g_vertex_buffer);
 
         let index_data = imported_geometries
             .iter()
             .map(|(_, g)| g.indices())
             .collect::<SmallVec<[&[u32]; 8]>>();
 
-        let g_index_buffer = UniqueBuffer::gpu_only_buffer(
-            renderer,
-            BufferUsageFlags::INDEX_BUFFER,
-            MemoryPropertyFlags::DEVICE_LOCAL,
-            &index_data,
-            None,
-        )?;
+        let g_index_buffer =
+            UniqueBuffer::gpu_only_buffer(renderer, BufferUsageFlags::INDEX_BUFFER, &index_data)?;
+
+        renderer.debug_set_object_tag("Global index buffer", &g_index_buffer);
 
         //
-        // load default materials
-        let default_work_pkg = renderer.create_work_package()?;
+        // load default/null texture
+        let default_work_pkg = renderer
+            .create_work_package()
+            .expect("Failed to create work package");
 
-        let mut base_color_textures = vec![UniqueImageWithView::from_ktx(
+        let null_texture = UniqueImageWithView::from_ktx(
             renderer,
             &default_work_pkg,
             app_config.engine.texture_path("uv_grids/ash_uvgrid01.ktx2"),
         )
-        .expect("Failed to load default grid texture")];
+        .expect("Oopsie");
 
-        let mut metallic_roughness_textures = vec![UniqueImageWithView::from_ktx(
-            renderer,
-            &default_work_pkg,
-            app_config.engine.texture_path("uv_grids/ash_uvgrid01.ktx2"),
-        )
-        .expect("Failed to load default grid texture")];
-
-        let mut normals_textures = vec![UniqueImageWithView::from_ktx(
-            renderer,
-            &default_work_pkg,
-            app_config.engine.texture_path("uv_grids/ash_uvgrid01.ktx2"),
-        )
-        .expect("Failed to load default grid texture")];
+        let null_texture_handle =
+            bindless.register_image(renderer, null_texture.image_view(), default_sampler);
 
         renderer.push_work_package(default_work_pkg);
 
@@ -532,8 +349,7 @@ impl ResourceSystem {
 
             assert!(!g.pbr_materials().is_empty());
 
-            let base_color_texarray_offset = base_color_textures.len() as u32;
-            img_src.iter().for_each(|&bc_img| {
+            img_src.iter().enumerate().for_each(|(i, &bc_img)| {
                 let work_pkg = renderer
                     .create_work_package()
                     .expect("Failed to create work package");
@@ -563,14 +379,25 @@ impl ResourceSystem {
                 let img_view = UniqueImageView::from_image(renderer, &img)
                     .expect("Failed to create image view");
 
-                base_color_textures.push(UniqueImageWithView(img, img_view));
+                let texture_and_view = UniqueImageWithView(img, img_view);
+                let texture_handle = bindless.register_image(
+                    renderer,
+                    texture_and_view.image_view(),
+                    default_sampler,
+                );
+                textures.insert(
+                    format!("{name}/mtl_basecolor_{i}"),
+                    CachedTexture {
+                        img: texture_and_view,
+                        handle: texture_handle,
+                    },
+                );
                 renderer.push_work_package(work_pkg);
             });
 
             let (mr_width, mr_height, mr_img_src) = g.pbr_metallic_roughness_images();
-            let mr_texarray_offset = metallic_roughness_textures.len() as u32;
 
-            mr_img_src.iter().for_each(|&img_src| {
+            mr_img_src.iter().enumerate().for_each(|(i, &img_src)| {
                 let work_pkg = renderer
                     .create_work_package()
                     .expect("Failed to create work package");
@@ -599,17 +426,31 @@ impl ResourceSystem {
                 let img_view = UniqueImageView::from_image(renderer, &img)
                     .expect("Failed to create image view");
 
-                metallic_roughness_textures.push(UniqueImageWithView(img, img_view));
+                let texture_and_view = UniqueImageWithView(img, img_view);
+
+                let texture_handle = bindless.register_image(
+                    renderer,
+                    texture_and_view.image_view(),
+                    default_sampler,
+                );
+                textures.insert(
+                    format!("{name}/mtl_metallic_roughness_{i}"),
+                    CachedTexture {
+                        img: texture_and_view,
+                        handle: texture_handle,
+                    },
+                );
+
                 renderer.push_work_package(work_pkg);
             });
 
             let (nr_width, nr_height, nr_imgs) = g.pbr_normal_images();
-            let nr_texarray_offset = normals_textures.len() as u32;
 
-            normals_textures.extend(nr_imgs.iter().map(|&normal_img| {
+            nr_imgs.iter().enumerate().for_each(|(i, &normal_img)| {
                 let work_pkg = renderer
                     .create_work_package()
                     .expect("Failed to create work package");
+
                 let img = UniqueImage::with_data(
                     renderer,
                     &ImageCreateInfo::builder()
@@ -635,16 +476,50 @@ impl ResourceSystem {
                 let img_view = UniqueImageView::from_image(renderer, &img)
                     .expect("Failed to create image view");
 
+                let texture_and_view = UniqueImageWithView(img, img_view);
+
+                let texture_handle = bindless.register_image(
+                    renderer,
+                    texture_and_view.image_view(),
+                    default_sampler,
+                );
+
+                textures.insert(
+                    format!("{name}/mtl_normal_{i}"),
+                    CachedTexture {
+                        img: texture_and_view,
+                        handle: texture_handle,
+                    },
+                );
+
                 renderer.push_work_package(work_pkg);
+            });
 
-                UniqueImageWithView(img, img_view)
-            }));
+            material_collection.extend(g.pbr_materials().iter().map(|&mtl| {
+                let base_color = textures
+                    .get(&format!(
+                        "{name}/mtl_basecolor_{}",
+                        mtl.base_color_texarray_id
+                    ))
+                    .expect("oopsie");
 
-            material_collection.extend(g.pbr_materials().iter().map(|&mtl| PbrMaterial {
-                base_color_texarray_id: mtl.base_color_texarray_id + base_color_texarray_offset,
-                metallic_rough_texarray_id: mtl.metallic_rough_texarray_id + mr_texarray_offset,
-                normal_texarray_id: mtl.normal_texarray_id + nr_texarray_offset,
-                ..mtl
+                let metallic = textures
+                    .get(&format!(
+                        "{name}/mtl_metallic_roughness_{}",
+                        mtl.metallic_rough_texarray_id
+                    ))
+                    .expect("Oopsie");
+
+                let normal = textures
+                    .get(&format!("{name}/mtl_normal_{}", mtl.normal_texarray_id))
+                    .expect("Oppsie");
+
+                PbrMaterial {
+                    base_color_texarray_id: base_color.handle.handle(),
+                    metallic_rough_texarray_id: metallic.handle.handle(),
+                    normal_texarray_id: normal.handle.handle(),
+                    ..mtl
+                }
             }));
 
             let material_name = format!("{name}_default");
@@ -658,150 +533,15 @@ impl ResourceSystem {
         let g_material_collection_buffer = UniqueBuffer::gpu_only_buffer(
             renderer,
             BufferUsageFlags::STORAGE_BUFFER,
-            MemoryPropertyFlags::DEVICE_LOCAL,
             &[&material_collection],
-            Some(renderer.device_properties().limits.non_coherent_atom_size),
-        )
-        .expect("Failed to create global material definition buffer");
-
-        let g_transforms_buffer = Cpu2GpuBuffer::<GlobalTransforms>::create(
-            renderer,
-            BufferUsageFlags::UNIFORM_BUFFER,
-            renderer
-                .device_properties()
-                .limits
-                .min_uniform_buffer_offset_alignment,
-            1,
-            renderer.max_inflight_frames() as DeviceSize,
         )?;
 
-        let g_lighting_buffer = Cpu2GpuBuffer::<GlobalLightingData>::create(
-            renderer,
-            BufferUsageFlags::UNIFORM_BUFFER,
-            renderer
-                .device_properties()
-                .limits
-                .min_uniform_buffer_offset_alignment,
-            1,
-            renderer.max_inflight_frames() as DeviceSize,
-        )?;
-
-        let descriptor_pool = unsafe {
-            renderer.graphics_device().create_descriptor_pool(
-                &DescriptorPoolCreateInfo::builder()
-                    .max_sets(64)
-                    .pool_sizes(&[
-                        *DescriptorPoolSize::builder()
-                            .ty(DescriptorType::STORAGE_BUFFER)
-                            .descriptor_count(1024),
-                        *DescriptorPoolSize::builder()
-                            .ty(DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                            .descriptor_count(1024),
-                        *DescriptorPoolSize::builder()
-                            .ty(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .descriptor_count(1024),
-                        *DescriptorPoolSize::builder()
-                            .ty(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                            .descriptor_count(1024),
-                    ]),
-                None,
-            )
-        }
-        .expect("Failed to create bindless descriptor pool");
-
-        let layout_sbd = unsafe {
-            let mut flags = DescriptorSetLayoutBindingFlagsCreateInfo::builder()
-                .binding_flags(&[DescriptorBindingFlags::PARTIALLY_BOUND]);
-            renderer.graphics_device().create_descriptor_set_layout(
-                &DescriptorSetLayoutCreateInfo::builder()
-                    .push_next(&mut flags)
-                    .bindings(&[*DescriptorSetLayoutBinding::builder()
-                        .binding(0)
-                        .descriptor_count(16)
-                        .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                        .stage_flags(ShaderStageFlags::ALL)]),
-                None,
-            )
-        }
-        .expect("Failed to create set layout storage buffer dynamic");
-
-        let layout_sb = unsafe {
-            let mut flags = DescriptorSetLayoutBindingFlagsCreateInfo::builder()
-                .binding_flags(&[DescriptorBindingFlags::PARTIALLY_BOUND]);
-            renderer.graphics_device().create_descriptor_set_layout(
-                &DescriptorSetLayoutCreateInfo::builder()
-                    .push_next(&mut flags)
-                    .bindings(&[*DescriptorSetLayoutBinding::builder()
-                        .binding(0)
-                        .descriptor_count(64)
-                        .descriptor_type(DescriptorType::STORAGE_BUFFER)
-                        .stage_flags(ShaderStageFlags::ALL)]),
-                None,
-            )
-        }
-        .expect("Failed to create set layout storage buffer");
-
-        let layout_cs = unsafe {
-            let mut flags = DescriptorSetLayoutBindingFlagsCreateInfo::builder()
-                .binding_flags(&[DescriptorBindingFlags::PARTIALLY_BOUND]);
-            renderer.graphics_device().create_descriptor_set_layout(
-                &DescriptorSetLayoutCreateInfo::builder()
-                    .push_next(&mut flags)
-                    .bindings(&[*DescriptorSetLayoutBinding::builder()
-                        .binding(0)
-                        .descriptor_count(64)
-                        .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .stage_flags(ShaderStageFlags::ALL)]),
-                None,
-            )
-        }
-        .expect("Failed to create set layout combined image sampler");
-
-        let layout_ubd = unsafe {
-            let mut flags = DescriptorSetLayoutBindingFlagsCreateInfo::builder()
-                .binding_flags(&[DescriptorBindingFlags::PARTIALLY_BOUND]);
-            renderer.graphics_device().create_descriptor_set_layout(
-                &DescriptorSetLayoutCreateInfo::builder()
-                    .push_next(&mut flags)
-                    .bindings(&[*DescriptorSetLayoutBinding::builder()
-                        .binding(0)
-                        .descriptor_count(4)
-                        .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                        .stage_flags(ShaderStageFlags::ALL)]),
-                None,
-            )
-        }
-        .expect("Failed to create set layout uniform buffer dynamic");
-
-        let descriptor_set_layouts = std::rc::Rc::new(vec![
-            //
-            // uniform buffer
-            layout_ubd, //
-            // dyn storage buffers VS
-            layout_sbd, //
-            // storage buffer FS
-            layout_sb, layout_cs, layout_cs, layout_cs, layout_ubd, layout_cs, layout_cs,
-            layout_cs, //
-            // misc textures
-            layout_cs, //
-            // misc textures array
-            layout_cs,
-        ]);
-
-        let pipeline_layout = std::rc::Rc::new(
-            unsafe {
-                renderer.graphics_device().create_pipeline_layout(
-                    &PipelineLayoutCreateInfo::builder()
-                        .set_layouts(&descriptor_set_layouts)
-                        .push_constant_ranges(&[*PushConstantRange::builder()
-                            .stage_flags(ShaderStageFlags::ALL)
-                            .offset(0)
-                            .size(PushConstVertex::SIZE)]),
-                    None,
-                )
-            }
-            .expect("Failed to create bindless pipeline layout"),
+        renderer.debug_set_object_tag(
+            "PBR material definition SSBO",
+            &g_material_collection_buffer,
         );
+
+        let material_buffer = bindless.register_ssbo(renderer, &g_material_collection_buffer);
 
         let pipeline = GraphicsPipelineBuilder::new()
             .add_vertex_input_attribute_descriptions(&[
@@ -874,198 +614,28 @@ impl ResourceSystem {
                     .polygon_mode(PolygonMode::FILL)
                     .build(),
             )
-            .build(
+            .build_bindless(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
-                (
-                    std::rc::Rc::clone(&pipeline_layout),
-                    std::rc::Rc::clone(&descriptor_set_layouts),
-                ),
+                bindless.bindless_pipeline_layout(),
                 renderer.renderpass(),
                 0,
             )?;
 
-        let descriptor_sets = unsafe {
-            renderer.graphics_device().allocate_descriptor_sets(
-                &DescriptorSetAllocateInfo::builder()
-                    .descriptor_pool(descriptor_pool)
-                    .set_layouts(&pipeline.descriptor_layouts()),
-            )
-        }
-        .expect("Failed to allocate descriptor sets");
-
-        log::info!("Allocated {} descriptor sets", descriptor_sets.len());
-
-        let g_instances_buffer = Cpu2GpuBuffer::<InstanceRenderInfo>::create(
-            renderer,
-            BufferUsageFlags::STORAGE_BUFFER,
-            renderer.device_properties().limits.non_coherent_atom_size,
-            1024,
-            renderer.max_inflight_frames() as DeviceSize,
-        )?;
-
-        let default_sampler = sampler_table.get_sampler(
-            &SamplerCreateInfo::builder()
-                .min_lod(0f32)
-                .max_lod(1f32)
-                .min_filter(Filter::LINEAR)
-                .mag_filter(Filter::LINEAR)
-                .mipmap_mode(SamplerMipmapMode::LINEAR)
-                .address_mode_u(SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_v(SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_w(SamplerAddressMode::CLAMP_TO_EDGE)
-                .border_color(ash::vk::BorderColor::INT_OPAQUE_BLACK)
-                .max_anisotropy(1f32),
-            renderer,
-        );
-
-        log::info!(
-            "Base color maps: {}, Metallic maps {}, Normal maps {}",
-            base_color_textures.len(),
-            metallic_roughness_textures.len(),
-            normals_textures.len()
-        );
-
-        unsafe {
-            renderer.graphics_device().update_descriptor_sets(
-                &[
-                    *WriteDescriptorSet::builder()
-                        .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                        .dst_array_element(0)
-                        .dst_binding(0)
-                        .dst_set(
-                            descriptor_sets
-                                [BindlessResourceKind::UniformBufferGlobalTansform as usize],
-                        )
-                        .buffer_info(&[*DescriptorBufferInfo::builder()
-                            .buffer(g_transforms_buffer.buffer.buffer)
-                            .offset(0)
-                            .range(g_transforms_buffer.bytes_one_frame)]),
-                    *WriteDescriptorSet::builder()
-                        .descriptor_type(DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                        .dst_array_element(0)
-                        .dst_binding(0)
-                        .dst_set(
-                            descriptor_sets
-                                [BindlessResourceKind::StorageBufferInstanceData as usize],
-                        )
-                        .buffer_info(&[*DescriptorBufferInfo::builder()
-                            .buffer(g_instances_buffer.buffer.buffer)
-                            .offset(0)
-                            .range(g_instances_buffer.bytes_one_frame)]),
-                    *WriteDescriptorSet::builder()
-                        .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                        .dst_array_element(0)
-                        .dst_binding(0)
-                        .dst_set(
-                            descriptor_sets
-                                [BindlessResourceKind::UniformBufferGlobalLight as usize],
-                        )
-                        .buffer_info(&[*DescriptorBufferInfo::builder()
-                            .buffer(g_lighting_buffer.buffer.buffer)
-                            .offset(0)
-                            .range(g_lighting_buffer.bytes_one_frame)]),
-                    *WriteDescriptorSet::builder()
-                        .descriptor_type(DescriptorType::STORAGE_BUFFER)
-                        .dst_array_element(0)
-                        .dst_binding(0)
-                        .dst_set(
-                            descriptor_sets
-                                [BindlessResourceKind::StorageBufferMaterialDef as usize],
-                        )
-                        .buffer_info(&[*DescriptorBufferInfo::builder()
-                            .buffer(g_material_collection_buffer.buffer)
-                            .offset(0)
-                            .range(ash::vk::WHOLE_SIZE)]),
-                    *WriteDescriptorSet::builder()
-                        .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .dst_set(
-                            descriptor_sets[BindlessResourceKind::SamplerBaseColormap as usize],
-                        )
-                        .dst_binding(0)
-                        .dst_array_element(0)
-                        .image_info(
-                            &base_color_textures
-                                .iter()
-                                .map(|base_color_tex| {
-                                    DescriptorImageInfo::builder()
-                                        .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                                        .image_view(base_color_tex.image_view())
-                                        .sampler(default_sampler)
-                                        .build()
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
-                    *WriteDescriptorSet::builder()
-                        .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .dst_set(
-                            descriptor_sets
-                                [BindlessResourceKind::SamplerMetallicRoughnessColormap as usize],
-                        )
-                        .dst_binding(0)
-                        .dst_array_element(0)
-                        .image_info(
-                            &metallic_roughness_textures
-                                .iter()
-                                .map(|metallic_roughness_tex| {
-                                    *DescriptorImageInfo::builder()
-                                        .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                                        .image_view(metallic_roughness_tex.image_view())
-                                        .sampler(default_sampler)
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
-                    *WriteDescriptorSet::builder()
-                        .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .dst_set(descriptor_sets[BindlessResourceKind::SamplerNormalMap as usize])
-                        .dst_binding(0)
-                        .dst_array_element(0)
-                        .image_info(
-                            &normals_textures
-                                .iter()
-                                .map(|normal_tex| {
-                                    *DescriptorImageInfo::builder()
-                                        .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                                        .image_view(normal_tex.image_view())
-                                        .sampler(default_sampler)
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
-                ],
-                &[],
-            );
-        }
-
         let emissive_effect = Self::create_emissive_effect(
             renderer,
             app_config,
-            std::rc::Rc::clone(&pipeline_layout),
-            std::rc::Rc::clone(&descriptor_set_layouts),
+            bindless.bindless_pipeline_layout(),
         )?;
-        Some(ResourceSystem {
+
+        Ok(ResourceSystem {
             g_vertex_buffer,
+            material_buffer,
             g_index_buffer,
             g_material_collection_buffer,
-            g_transforms_buffer,
-            g_lighting_buffer,
-            g_instances_buffer,
-            descriptor_pool,
-            descriptor_sets,
             meshes,
             materials,
             samplers: sampler_table,
-            resource_table: [
-                (
-                    BindlessResourceKind::SamplerBaseColormap,
-                    base_color_textures,
-                ),
-                (
-                    BindlessResourceKind::SamplerMetallicRoughnessColormap,
-                    metallic_roughness_textures,
-                ),
-                (BindlessResourceKind::SamplerNormalMap, normals_textures),
-            ]
-            .into(),
             effect_table: [
                 (EffectType::Pbr, pipeline),
                 (EffectType::BasicEmissive, emissive_effect),
@@ -1073,8 +643,6 @@ impl ResourceSystem {
             .into(),
             bindless,
             textures,
-            ubo_bindless,
-            ubo_bindless_handle,
         })
     }
 
@@ -1083,9 +651,8 @@ impl ResourceSystem {
     fn create_emissive_effect(
         renderer: &VulkanRenderer,
         app_config: &AppConfig,
-        layout: std::rc::Rc<PipelineLayout>,
-        descriptor_layouts: std::rc::Rc<Vec<DescriptorSetLayout>>,
-    ) -> Option<UniqueGraphicsPipeline> {
+        layout: PipelineLayout,
+    ) -> Result<BindlessPipeline, ProgramError> {
         GraphicsPipelineBuilder::new()
             .add_vertex_input_attribute_descriptions(&[
                 VertexInputAttributeDescription {
@@ -1157,10 +724,10 @@ impl ResourceSystem {
                     .polygon_mode(PolygonMode::FILL)
                     .build(),
             )
-            .build(
+            .build_bindless(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
-                (layout, descriptor_layouts),
+                layout,
                 renderer.renderpass(),
                 0,
             )
@@ -1321,15 +888,7 @@ impl SamplerResourceTable {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct PipelineLayoutDescription<'a> {
-    pub layout: PipelineLayout,
-    pub descriptor_sets_layouts: &'a [DescriptorSetLayout],
-}
-
 pub struct BindlessSetup<'a> {
     pub pipeline_layout: ash::vk::PipelineLayout,
-    pub ubo: ash::vk::Buffer,
     pub descriptor_set: &'a [DescriptorSet],
-    pub ubo_handle: BindlessResourceHandle2,
 }

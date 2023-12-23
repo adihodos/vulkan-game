@@ -1,5 +1,7 @@
 #version 460 core
 
+#include "bindless.common.glsl"
+
 layout (location = 0) in vec3 vs_in_pos;
 layout (location = 1) in vec3 vs_in_normal;
 layout (location = 2) in vec2 vs_in_uv;
@@ -18,10 +20,13 @@ layout (location = 0) out vs_out_fs_in {
   flat uint mtl_offset;
 } vs_out;
 
-#include "pbr.layout.vert.h"
-
 void main() {
-  const InstanceRenderInfo inst_info = instances.data[gl_InstanceIndex];
+  const uint idx = g_GlobalPushConst.id;
+  const PbrRenderpassHandles handles = g_GlobalPbrHandles[nonuniformEXT(idx)].arr[0];
+  const uint ubo_idx = handles.uboHandle;
+  const uint inst_idx = handles.instHandle;
+  
+  const InstanceRenderInfo inst_info = g_GlobalInstances[nonuniformEXT(inst_idx)].data[gl_InstanceIndex];
   
   mat4 model = inst_info.model;
 
@@ -34,5 +39,5 @@ void main() {
   vs_out.instance_id = gl_InstanceIndex;
   vs_out.mtl_offset = inst_info.mtl_coll_offset;
 
-  gl_Position = g_data.projection_view * vec4(vs_out.pos, 1.0);
+  gl_Position = g_GlobalUniform[nonuniformEXT(ubo_idx)].data[0].projection_view * vec4(vs_out.pos, 1.0);
 }

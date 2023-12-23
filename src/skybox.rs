@@ -6,7 +6,7 @@ use ash::vk::{
 };
 
 use crate::{
-    bindless::BindlessResourceHandle2,
+    bindless::BindlessResourceHandle,
     draw_context::{DrawContext, InitContext},
     resource_system::SamplerDescription,
     vk_renderer::{
@@ -26,18 +26,17 @@ struct SkyboxData {
 }
 
 #[derive(Copy, Clone)]
-struct SkyboxResource {
-    prefiltered: BindlessResourceHandle2,
-    irradiance: BindlessResourceHandle2,
-    brdf_lut: BindlessResourceHandle2,
+pub struct SkyboxResource {
+    pub prefiltered: BindlessResourceHandle,
+    pub irradiance: BindlessResourceHandle,
+    pub brdf_lut: BindlessResourceHandle,
 }
 
 pub struct Skybox {
-    pub id: u32,
-
+    id: u32,
     pipeline: BindlessPipeline,
     ssbo: UniqueBuffer,
-    ssbo_handles: Vec<BindlessResourceHandle2>,
+    ssbo_handles: Vec<BindlessResourceHandle>,
     skyboxes: Vec<SkyboxResource>,
 }
 
@@ -64,7 +63,6 @@ impl Skybox {
             return None;
         }
 
-
         Some(Self {
             id: 0,
             ssbo,
@@ -72,6 +70,10 @@ impl Skybox {
             skyboxes,
             pipeline: Self::create_pipeline(init_ctx).expect("xxx"),
         })
+    }
+
+    pub fn ssbo_for_frame(&self, frame: u32) -> BindlessResourceHandle {
+        self.ssbo_handles[frame as usize]
     }
 
     pub fn draw(&self, draw_context: &DrawContext) {
@@ -94,7 +96,8 @@ impl Skybox {
                     buf.as_mut_ptr() as *mut SkyboxData,
                     1,
                 );
-            }).expect("Failed to map/update SSBO");
+            })
+            .expect("Failed to map/update SSBO");
 
         let ssbo_handle = self.ssbo_handles[draw_context.frame_id as usize].handle();
 

@@ -27,9 +27,9 @@ impl BindlessResourceType {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct BindlessResourceHandle2(u32);
+pub struct BindlessResourceHandle(u32);
 
-impl BindlessResourceHandle2 {
+impl BindlessResourceHandle {
     pub fn get_type(&self) -> BindlessResourceType {
         let bits = self.0 & 0b11;
         match bits {
@@ -57,9 +57,9 @@ pub struct BindlessResourceSystem {
     dpool: UniqueDescriptorPool,
     set_layouts: Vec<DescriptorSetLayout>,
     descriptor_sets: Vec<DescriptorSet>,
-    ssbos: Vec<BindlessResourceHandle2>,
-    samplers: Vec<BindlessResourceHandle2>,
-    ubos: Vec<BindlessResourceHandle2>,
+    ssbos: Vec<BindlessResourceHandle>,
+    samplers: Vec<BindlessResourceHandle>,
+    ubos: Vec<BindlessResourceHandle>,
     bindless_pipeline_layout: PipelineLayout,
 }
 
@@ -158,9 +158,9 @@ impl BindlessResourceSystem {
         &mut self,
         vks: &VulkanRenderer,
         ssbo: &UniqueBuffer,
-    ) -> BindlessResourceHandle2 {
+    ) -> BindlessResourceHandle {
         let idx = self.ssbos.len() as u32;
-        let handle = BindlessResourceHandle2::new(BindlessResourceType::Ssbo, idx);
+        let handle = BindlessResourceHandle::new(BindlessResourceType::Ssbo, idx);
         self.ssbos.push(handle);
 
         unsafe {
@@ -186,17 +186,17 @@ impl BindlessResourceSystem {
         vks: &VulkanRenderer,
         buff: &UniqueBuffer,
         count: usize,
-        bindless_handles: &mut Vec<BindlessResourceHandle2>,
+        bindless_handles: &mut Vec<BindlessResourceHandle>,
         desc_set: DescriptorSet,
         ty: BindlessResourceType,
-    ) -> Vec<BindlessResourceHandle2> {
+    ) -> Vec<BindlessResourceHandle> {
         let mut handles = vec![];
         let mut buffer_info = vec![];
         let mut buffer_writes = vec![];
 
         for i in 0..count {
             let idx = bindless_handles.len() as u32;
-            let handle = BindlessResourceHandle2::new(ty, idx);
+            let handle = BindlessResourceHandle::new(ty, idx);
             bindless_handles.push(handle);
             handles.push(handle);
 
@@ -230,7 +230,7 @@ impl BindlessResourceSystem {
         vks: &VulkanRenderer,
         ubo: &UniqueBuffer,
         count: usize,
-    ) -> Vec<BindlessResourceHandle2> {
+    ) -> Vec<BindlessResourceHandle> {
         Self::register_chunked_buffer(
             vks,
             ubo,
@@ -246,7 +246,7 @@ impl BindlessResourceSystem {
         vks: &VulkanRenderer,
         ssbo: &UniqueBuffer,
         count: usize,
-    ) -> Vec<BindlessResourceHandle2> {
+    ) -> Vec<BindlessResourceHandle> {
         Self::register_chunked_buffer(
             vks,
             ssbo,
@@ -262,9 +262,9 @@ impl BindlessResourceSystem {
         vks: &VulkanRenderer,
         imgview: ash::vk::ImageView,
         sampler: ash::vk::Sampler,
-    ) -> BindlessResourceHandle2 {
+    ) -> BindlessResourceHandle {
         let idx = self.samplers.len() as u32;
-        let handle = BindlessResourceHandle2::new(BindlessResourceType::CombinedImageSampler, idx);
+        let handle = BindlessResourceHandle::new(BindlessResourceType::CombinedImageSampler, idx);
         self.samplers.push(handle);
 
         unsafe {
@@ -290,9 +290,9 @@ impl BindlessResourceSystem {
         &mut self,
         vks: &VulkanRenderer,
         ubo: &UniqueBuffer,
-    ) -> BindlessResourceHandle2 {
+    ) -> BindlessResourceHandle {
         let idx = self.ubos.len() as u32;
-        let handle = BindlessResourceHandle2::new(BindlessResourceType::UniformBuffer, idx);
+        let handle = BindlessResourceHandle::new(BindlessResourceType::UniformBuffer, idx);
         self.ubos.push(handle);
 
         unsafe {

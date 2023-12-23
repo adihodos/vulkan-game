@@ -1,15 +1,15 @@
 use ash::vk::{CommandBuffer, Rect2D, Viewport};
 
 use crate::{
-    debug_draw_overlay::DebugDrawOverlay, game_world::QueuedCommand, physics_engine::PhysicsEngine,
-    resource_system::ResourceSystem, vk_renderer::VulkanRenderer, app_config::AppConfig,
+    app_config::AppConfig, debug_draw_overlay::DebugDrawOverlay, game_world::QueuedCommand,
+    physics_engine::PhysicsEngine, resource_system::ResourceSystem, vk_renderer::VulkanRenderer,
 };
 
 pub struct InitContext<'a> {
     pub window: &'a winit::window::Window,
     pub renderer: &'a VulkanRenderer,
     pub cfg: &'a AppConfig,
-    pub rsys: &'a mut ResourceSystem
+    pub rsys: &'a mut ResourceSystem,
 }
 
 pub struct FrameRenderContext<'a> {
@@ -31,6 +31,7 @@ pub struct DrawContext<'a> {
     pub viewport: Viewport,
     pub scissor: Rect2D,
     pub global_ubo_handle: u32,
+    pub skybox_handle: u32,
     pub cam_position: nalgebra_glm::Vec3,
     pub view_matrix: nalgebra_glm::Mat4,
     pub projection: nalgebra_glm::Mat4,
@@ -43,7 +44,7 @@ pub struct UpdateContext<'a> {
     pub frame_time: f64,
     pub physics_engine: &'a mut PhysicsEngine,
     pub queued_commands: Vec<QueuedCommand>,
-    pub camera_pos: nalgebra_glm::Vec3
+    pub camera_pos: nalgebra_glm::Vec3,
 }
 
 impl<'a> DrawContext<'a> {

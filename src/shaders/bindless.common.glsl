@@ -7,6 +7,7 @@ struct GlobalUniformData {
   mat4 projection_view;
   mat4 view;
   mat4 orthographic;
+  vec3 eyePosition;
   uint frameId;
 };
 
@@ -26,6 +27,31 @@ struct SkyboxData {
   uint skyboxBRDFLut;
 };
 
+struct InstanceRenderInfo {
+  mat4 model;
+  uint mtl_coll_offset;
+};
+
+struct PbrData {
+  vec4 base_color_factor;
+  float metallic_factor;
+  float roughness_factor;
+  uint colormap_id;
+  uint metallic_roughness_id;
+  uint normal_id;
+};
+
+struct PbrRenderpassHandles {
+  uint uboHandle;
+  uint instHandle;
+  uint pbrMtlHandle;
+  uint skyboxHandle;
+};
+
+layout (set = 1, binding = 0) readonly buffer GlobalInstanceData {
+  InstanceRenderInfo data[]; 
+} g_GlobalInstances[];
+
 layout (set = 1, binding = 0) readonly buffer GlobalUiData {
   UiBackendData arr[];
 } g_GlobalUiData[];
@@ -33,6 +59,14 @@ layout (set = 1, binding = 0) readonly buffer GlobalUiData {
 layout (set = 1, binding = 0) readonly buffer GlobalSkyboxData {
   SkyboxData arr[];
 } g_GlobalSkyboxData[];
+
+layout (set = 1, binding = 0) readonly buffer GlobalPbrData {
+  PbrData arr[];
+} g_GlobalPbrData[];
+
+layout (set = 1, binding = 0) readonly buffer GlobalPbrRenderpassHandles {
+  PbrRenderpassHandles arr[];
+} g_GlobalPbrHandles[];
 
 layout (set = 2, binding = 0) uniform sampler2D g_Global2DTextures[];
 layout (set = 2, binding = 0) uniform sampler2DArray g_Global2DArrayTextures[];
