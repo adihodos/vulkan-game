@@ -202,7 +202,7 @@ impl SparksSystem {
         let descriptor_sets = unsafe {
             renderer.graphics_device().allocate_descriptor_sets(
                 &DescriptorSetAllocateInfo::builder()
-                    .set_layouts(pipeline.descriptor_layouts())
+                    .set_layouts(&pipeline.descriptor_layouts())
                     .descriptor_pool(renderer.descriptor_pool())
                     .build(),
             )
@@ -351,7 +351,7 @@ impl SparksSystem {
                 .cmd_bind_descriptor_sets(
                     draw_context.cmd_buff,
                     PipelineBindPoint::GRAPHICS,
-                    self.pipeline.layout,
+                    *self.pipeline.layout(),
                     0,
                     &self.descriptor_sets,
                     &[self

@@ -3,8 +3,8 @@ use std::{collections::HashMap, mem::size_of};
 use crate::{math::AABB3, pbr::PbrMaterial};
 use ash::vk::DeviceSize;
 use gltf::{
-    buffer::{self},
-    image::{self},
+    buffer,
+    image,
     scene::Transform,
 };
 use mmap_rs::MmapOptions;
@@ -437,17 +437,43 @@ impl ImportedGeometry {
     }
 
     pub fn import_from_file<P: AsRef<std::path::Path>>(file_path: &P) -> Option<ImportedGeometry> {
-        let file = std::fs::File::open(file_path.as_ref()).expect(&format!(
-            "Failed to open geometry file {}",
-            file_path.as_ref().to_str().unwrap()
-        ));
+        let file = std::fs::File::open(file_path.as_ref())
+            .map_err(|e| {
+                log::error!(
+                    "Failed to open file {}, error: {e}",
+                    file_path.as_ref().display()
+                )
+            })
+            .ok()?;
 
-        let metadata = file.metadata().expect("Failed to query file metadata!");
+        let metadata = file
+            .metadata()
+            .map_err(|e| {
+                log::error!(
+                    "Failed to query file {} metadata, error: {e}",
+                    file_path.as_ref().display(),
+                )
+            })
+            .ok()?;
+
         let mapped_file = unsafe {
             MmapOptions::new(metadata.len() as usize)
-                .with_file(file, 0)
+                .map_err(|e| {
+                    log::error!(
+                        "Failed to create mapping options for file {}, error: {e}",
+                        file_path.as_ref().display()
+                    )
+                })
+                .ok()?
+                .with_file(&file, 0)
                 .map()
-                .expect("Failed to memory map file")
+                .map_err(|e| {
+                    log::error!(
+                        "Failed to mmap file {}, error: {e}",
+                        file_path.as_ref().display()
+                    )
+                })
+                .ok()?
         };
 
         let (gltf_doc, buffers, images) = gltf::import_slice(mapped_file.as_slice())

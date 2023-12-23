@@ -50,3 +50,20 @@ Thumbs.db
 /target
 /data
 imgui.ini
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Renderdoc
+*.rdc
+
+### direnv ###
+.direnv
+.envrc

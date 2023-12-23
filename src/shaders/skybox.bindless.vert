@@ -1,6 +1,6 @@
 #version 460 core
 
-#include "pbr.layout.vert.h"
+#include "bindless.common.glsl"
 
 layout (location = 0) out VS_OUT_FS_IN {
   vec3 texcoords;
@@ -17,7 +17,10 @@ const vec2 QUAD_VERTICES[] = vec2[](
 				    );
 
 void main() {
-  vs_out.texcoords = mat3(g_data.view) * vec3(QUAD_VERTICES[gl_VertexIndex], 1.0);
+  const SkyboxData skyboxData = g_GlobalSkyboxData[nonuniformEXT(g_GlobalPushConst.id)].arr[0];
+  const mat4 viewMatrix = g_GlobalUniform[nonuniformEXT(skyboxData.globalUboHandle)].data[0].view;
+  
+  vs_out.texcoords = mat3(viewMatrix) * vec3(QUAD_VERTICES[gl_VertexIndex], 1.0);
   vs_out.texcoords.y *= +1.0;
   gl_Position = vec4(QUAD_VERTICES[gl_VertexIndex], 1.0, 1.0);
 }

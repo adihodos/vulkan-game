@@ -1,36 +1,31 @@
 use crate::{
-    app_config::AppConfig,
+    bindless::BindlessResourceHandle,
     color_palettes::StdColors,
-    draw_context::DrawContext,
-    math,
+    draw_context::{DrawContext, InitContext},
     vk_renderer::{
-        Cpu2GpuBuffer, GraphicsPipelineBuilder, GraphicsPipelineLayoutBuilder,
-        ShaderModuleDescription, ShaderModuleSource, UniqueGraphicsPipeline, UniqueImageWithView,
-        UniqueSampler, VulkanRenderer,
+        BindlessPipeline, GraphicsPipelineBuilder, ImageInfo, ShaderModuleDescription,
+        ShaderModuleSource, UniqueBuffer, UniqueImageWithView,
     },
+    ProgramError,
 };
 use ash::vk::{
-    BlendFactor, BlendOp, BufferUsageFlags, ColorComponentFlags, DescriptorBufferInfo,
-    DescriptorImageInfo, DescriptorSet, DescriptorSetAllocateInfo, DescriptorSetLayoutBinding,
-    DescriptorType, DeviceSize, DynamicState, Filter, Format, ImageLayout, IndexType,
-    PipelineBindPoint, PipelineColorBlendAttachmentState, PrimitiveTopology, SamplerAddressMode,
-    SamplerMipmapMode, ShaderStageFlags, VertexInputAttributeDescription,
-    VertexInputBindingDescription, VertexInputRate, WriteDescriptorSet,
+    BlendFactor, BlendOp, BufferUsageFlags, ColorComponentFlags, DeviceSize, DynamicState, Format,
+    IndexType, MemoryPropertyFlags, PipelineBindPoint, PipelineColorBlendAttachmentState,
+    PrimitiveTopology, ShaderStageFlags, VertexInputAttributeDescription,
+    VertexInputBindingDescription, VertexInputRate,
 };
 use memoffset::offset_of;
 use nalgebra_glm as glm;
 
 pub struct SpriteBatch {
-    ubo_transforms: Cpu2GpuBuffer<glm::Mat4>,
-    vertex_buffer: Cpu2GpuBuffer<SpriteVertex>,
-    index_buffer: Cpu2GpuBuffer<u16>,
+    vertex_buffer: UniqueBuffer,
+    index_buffer: UniqueBuffer,
     vertices_cpu: Vec<SpriteVertex>,
     indices_cpu: Vec<u16>,
-    descriptor_sets: Vec<DescriptorSet>,
-    pipeline: UniqueGraphicsPipeline,
-    sampler: UniqueSampler,
-    texture: UniqueImageWithView,
+    pipeline: BindlessPipeline,
     atlas: TextureAtlas,
+    texture_atlas_handle: BindlessResourceHandle,
+    texture_info: ImageInfo,
 }
 
 #[derive(Copy, Clone, serde::Serialize, serde::Deserialize)]
@@ -73,24 +68,24 @@ struct TextureCoords {
 }
 
 impl TextureCoords {
-    fn new(texture: &UniqueImageWithView, region: TextureRegion) -> Self {
-        assert!(region.layer < texture.info().num_layers);
+    fn new(texture: &ImageInfo, region: TextureRegion) -> Self {
+        assert!(region.layer < texture.num_layers);
         //
         //
         let region = if region.width == 0 || region.height == 0 {
             TextureRegion {
-                width: texture.info().width,
-                height: texture.info().height,
+                width: texture.width,
+                height: texture.height,
                 ..region
             }
         } else {
             region
         };
 
-        let u = region.x as f32 / texture.info().width as f32;
-        let v = region.y as f32 / texture.info().height as f32;
-        let s = region.width as f32 / texture.info().width as f32;
-        let t = region.height as f32 / texture.info().height as f32;
+        let u = region.x as f32 / texture.width as f32;
+        let v = region.y as f32 / texture.height as f32;
+        let s = region.width as f32 / texture.width as f32;
+        let t = region.height as f32 / texture.height as f32;
 
         TextureCoords {
             layer: region.layer,
@@ -121,66 +116,60 @@ struct SpriteVertex {
 impl SpriteBatch {
     const MAX_SPRITES: u32 = 2048;
 
-    pub fn create(renderer: &VulkanRenderer, app_config: &AppConfig) -> Option<Self> {
-        let ubo_transforms = Cpu2GpuBuffer::<glm::Mat4>::create(
-            renderer,
-            BufferUsageFlags::UNIFORM_BUFFER,
-            renderer
-                .device_properties()
-                .limits
-                .min_uniform_buffer_offset_alignment,
-            1,
-            renderer.max_inflight_frames() as DeviceSize,
-        )?;
-
-        let vertex_buffer = Cpu2GpuBuffer::<SpriteVertex>::create(
-            renderer,
+    pub fn new(init_ctx: &mut InitContext) -> Result<Self, ProgramError> {
+        let vertex_buffer = UniqueBuffer::with_capacity(
+            init_ctx.renderer,
             BufferUsageFlags::VERTEX_BUFFER,
-            renderer.device_properties().limits.non_coherent_atom_size,
-            Self::MAX_SPRITES as DeviceSize,
-            renderer.max_inflight_frames() as DeviceSize,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            Self::MAX_SPRITES as usize,
+            std::mem::size_of::<SpriteVertex>(),
+            init_ctx.renderer.max_inflight_frames(),
         )?;
 
-        let index_buffer = Cpu2GpuBuffer::<u16>::create(
-            renderer,
+        let index_buffer = UniqueBuffer::with_capacity(
+            init_ctx.renderer,
             BufferUsageFlags::INDEX_BUFFER,
-            renderer.device_properties().limits.non_coherent_atom_size,
-            (Self::MAX_SPRITES * 6) as DeviceSize,
-            renderer.max_inflight_frames() as DeviceSize,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            (Self::MAX_SPRITES * 6) as usize,
+            std::mem::size_of::<u16>(),
+            init_ctx.renderer.max_inflight_frames(),
         )?;
 
         let texture_atlas: TextureAtlas = ron::de::from_reader(
-            std::fs::File::open(app_config.engine.texture_path("ui/reticles/crosshairs.ron"))
-                .expect("Failed to read texture atlas configuration file."),
+            std::fs::File::open(
+                init_ctx
+                    .cfg
+                    .engine
+                    .texture_path("ui/reticles/crosshairs.ron"),
+            )
+            .expect("Failed to read texture atlas configuration file."),
         )
         .expect("Invalid configuration file");
 
-        let tex_load_work_pkg = renderer.create_work_package()?;
-        let texture = UniqueImageWithView::from_ktx(
-            renderer,
+        let tex_load_work_pkg = init_ctx
+            .renderer
+            .create_work_package()
+            .ok_or_else(|| ProgramError::GraphicsSystemError(ash::vk::Result::ERROR_UNKNOWN))?;
+
+        let atlas_texture = UniqueImageWithView::from_ktx(
+            init_ctx.renderer,
             &tex_load_work_pkg,
-            app_config
+            init_ctx
+                .cfg
                 .engine
                 .texture_path(std::path::Path::new("ui/reticles").join(&texture_atlas.file)),
-        )?;
+        )
+        .ok_or_else(|| ProgramError::GraphicsSystemError(ash::vk::Result::ERROR_UNKNOWN))?;
+        init_ctx.renderer.push_work_package(tex_load_work_pkg);
 
-        renderer.push_work_package(tex_load_work_pkg);
+        let texture_info = *atlas_texture.info();
 
-        let sampler = UniqueSampler::new(
-            renderer.graphics_device(),
-            &ash::vk::SamplerCreateInfo::builder()
-                .min_lod(0f32)
-                .max_lod(1f32)
-                .min_filter(Filter::LINEAR)
-                .mag_filter(Filter::LINEAR)
-                .mipmap_mode(SamplerMipmapMode::LINEAR)
-                .address_mode_u(SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_v(SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_w(SamplerAddressMode::CLAMP_TO_EDGE)
-                .border_color(ash::vk::BorderColor::INT_OPAQUE_BLACK)
-                .max_anisotropy(1f32)
-                .build(),
-        )?;
+        let texture_atlas_handle = init_ctx.rsys.add_texture_bindless(
+            "ui/reticles",
+            init_ctx.renderer,
+            atlas_texture,
+            None,
+        );
 
         let pipeline = GraphicsPipelineBuilder::new()
             .add_vertex_input_attribute_descriptions(&[
@@ -221,14 +210,14 @@ impl SpriteBatch {
                 ShaderModuleDescription {
                     stage: ShaderStageFlags::VERTEX,
                     source: ShaderModuleSource::File(
-                        &app_config.engine.shader_path("sprites.vert.spv"),
+                        &init_ctx.cfg.engine.shader_path("sprites.bindless.vert.spv"),
                     ),
                     entry_point: "main",
                 },
                 ShaderModuleDescription {
                     stage: ShaderStageFlags::FRAGMENT,
                     source: ShaderModuleSource::File(
-                        &app_config.engine.shader_path("sprites.frag.spv"),
+                        &init_ctx.cfg.engine.shader_path("sprites.bindless.frag.spv"),
                     ),
                     entry_point: "main",
                 },
@@ -248,90 +237,23 @@ impl SpriteBatch {
                     .build(),
             )
             .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
-            .build(
-                renderer.graphics_device(),
-                renderer.pipeline_cache(),
-                GraphicsPipelineLayoutBuilder::new()
-                    .set(
-                        0,
-                        &[DescriptorSetLayoutBinding::builder()
-                            .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                            .stage_flags(ShaderStageFlags::VERTEX)
-                            .descriptor_count(1)
-                            .binding(0)
-                            .build()],
-                    )
-                    .set(
-                        1,
-                        &[DescriptorSetLayoutBinding::builder()
-                            .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                            .stage_flags(ShaderStageFlags::FRAGMENT)
-                            .descriptor_count(1)
-                            .binding(0)
-                            .build()],
-                    )
-                    .build(renderer.graphics_device())?,
-                renderer.renderpass(),
+            .build_bindless(
+                init_ctx.renderer.graphics_device(),
+                init_ctx.renderer.pipeline_cache(),
+                init_ctx.rsys.bindless_setup().pipeline_layout,
+                init_ctx.renderer.renderpass(),
                 0,
             )?;
 
-        let layouts = [
-            pipeline.descriptor_layouts()[0],
-            pipeline.descriptor_layouts()[1],
-        ];
-
-        let descriptor_sets = unsafe {
-            renderer.graphics_device().allocate_descriptor_sets(
-                &DescriptorSetAllocateInfo::builder()
-                    .set_layouts(&layouts)
-                    .descriptor_pool(renderer.descriptor_pool())
-                    .build(),
-            )
-        }
-        .map_err(|e| log::error!("Failed to allocate descriptor sets: {}", e))
-        .ok()?;
-
-        unsafe {
-            renderer.graphics_device().update_descriptor_sets(
-                &[
-                    WriteDescriptorSet::builder()
-                        .dst_set(descriptor_sets[0])
-                        .dst_binding(0)
-                        .dst_array_element(0)
-                        .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                        .buffer_info(&[DescriptorBufferInfo::builder()
-                            .buffer(ubo_transforms.buffer.buffer)
-                            .range(ubo_transforms.bytes_one_frame)
-                            .offset(0)
-                            .build()])
-                        .build(),
-                    WriteDescriptorSet::builder()
-                        .dst_set(descriptor_sets[1])
-                        .dst_binding(0)
-                        .dst_array_element(0)
-                        .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .image_info(&[DescriptorImageInfo::builder()
-                            .sampler(sampler.sampler)
-                            .image_view(texture.image_view())
-                            .image_layout(ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                            .build()])
-                        .build(),
-                ],
-                &[],
-            );
-        }
-
-        Some(Self {
-            ubo_transforms,
+        Ok(Self {
+            texture_info,
             vertex_buffer,
             index_buffer,
-            vertices_cpu: Vec::with_capacity(Self::MAX_SPRITES as usize),
-            indices_cpu: Vec::with_capacity((Self::MAX_SPRITES * 6) as usize),
-            descriptor_sets,
-            pipeline,
-            sampler,
-            texture,
+            texture_atlas_handle,
             atlas: texture_atlas,
+            pipeline,
+            vertices_cpu: vec![],
+            indices_cpu: vec![],
         })
     }
 
@@ -344,7 +266,7 @@ impl SpriteBatch {
         region: TextureRegion,
         color: Option<u32>,
     ) {
-        let texcoords = TextureCoords::new(&self.texture, region);
+        let texcoords = TextureCoords::new(&self.texture_info, region);
         let sprite_color = color.unwrap_or(StdColors::WHITE);
         let vertex_offset = self.vertices_cpu.len() as u16;
 
@@ -441,7 +363,7 @@ impl SpriteBatch {
         let v2 = v2 + o;
         let v3 = v3 + o;
 
-        let texcoords = TextureCoords::new(&self.texture, region);
+        let texcoords = TextureCoords::new(&self.texture_info, region);
         let sprite_color = color.unwrap_or(StdColors::WHITE);
         let vertex_offset = self.vertices_cpu.len() as u16;
 
@@ -535,7 +457,7 @@ impl SpriteBatch {
         let v2 = v2 + t;
         let v3 = v3 + t;
 
-        let texcoords = TextureCoords::new(&self.texture, region);
+        let texcoords = TextureCoords::new(&self.texture_info, region);
         let sprite_color = color.unwrap_or(StdColors::WHITE);
         let vertex_offset = self.vertices_cpu.len() as u16;
         self.vertices_cpu.extend_from_slice(&[
@@ -577,8 +499,9 @@ impl SpriteBatch {
             return;
         }
 
-        self.vertex_buffer
-            .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
+        let _ = self
+            .vertex_buffer
+            .map_for_frame(draw_context.renderer, draw_context.frame_id)
             .map(|vb| unsafe {
                 std::ptr::copy_nonoverlapping(
                     self.vertices_cpu.as_ptr(),
@@ -587,35 +510,15 @@ impl SpriteBatch {
                 );
             });
 
-        self.index_buffer
-            .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
+        let _ = self
+            .index_buffer
+            .map_for_frame(draw_context.renderer, draw_context.frame_id)
             .map(|ib| unsafe {
                 std::ptr::copy_nonoverlapping(
                     self.indices_cpu.as_ptr(),
                     ib.memptr() as *mut u16,
                     self.indices_cpu.len(),
                 );
-            });
-
-        self.ubo_transforms
-            .map_for_frame(draw_context.renderer, draw_context.frame_id as DeviceSize)
-            .map(|ubo| {
-                let ortho = math::orthographic(
-                    0f32,
-                    draw_context.viewport.width,
-                    0f32,
-                    draw_context.viewport.height,
-                    1f32,
-                    0f32,
-                );
-
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        &ortho as *const _,
-                        ubo.memptr() as *mut glm::Mat4,
-                        1,
-                    );
-                }
             });
 
         let graphics_device = draw_context.renderer.graphics_device();
@@ -625,36 +528,36 @@ impl SpriteBatch {
             graphics_device.cmd_bind_pipeline(
                 cmd_buf,
                 PipelineBindPoint::GRAPHICS,
-                self.pipeline.pipeline,
+                self.pipeline.handle,
             );
             graphics_device.cmd_set_viewport(cmd_buf, 0, &[draw_context.viewport]);
             graphics_device.cmd_set_scissor(cmd_buf, 0, &[draw_context.scissor]);
             graphics_device.cmd_bind_vertex_buffers(
                 cmd_buf,
                 0,
-                &[self.vertex_buffer.buffer.buffer],
-                &[self
-                    .vertex_buffer
-                    .offset_for_frame(draw_context.frame_id as DeviceSize)],
+                &[self.vertex_buffer.buffer],
+                &[
+                    (self.vertex_buffer.aligned_slab_size * draw_context.frame_id as usize)
+                        as DeviceSize,
+                ],
             );
             graphics_device.cmd_bind_index_buffer(
                 cmd_buf,
-                self.index_buffer.buffer.buffer,
-                self.index_buffer
-                    .offset_for_frame(draw_context.frame_id as DeviceSize),
+                self.index_buffer.buffer,
+                (self.index_buffer.aligned_slab_size * draw_context.frame_id as usize)
+                    as DeviceSize,
                 IndexType::UINT16,
             );
 
-            graphics_device.cmd_bind_descriptor_sets(
-                cmd_buf,
-                PipelineBindPoint::GRAPHICS,
+            let push_const =
+                (draw_context.global_ubo_handle) | (self.texture_atlas_handle.handle() << 16);
+
+            graphics_device.cmd_push_constants(
+                draw_context.cmd_buff,
                 self.pipeline.layout,
+                ShaderStageFlags::ALL,
                 0,
-                &self.descriptor_sets,
-                &[self
-                    .ubo_transforms
-                    .offset_for_frame(draw_context.frame_id as DeviceSize)
-                    as u32],
+                &push_const.to_le_bytes(),
             );
 
             graphics_device.cmd_draw_indexed(cmd_buf, self.indices_cpu.len() as u32, 1, 0, 0, 0);

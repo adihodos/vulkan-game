@@ -3,7 +3,7 @@ use nalgebra_glm as glm;
 use crate::{
     game_object::GameObjectPhysicsData,
     physics_engine::PhysicsEngine,
-    resource_cache::{PbrRenderableHandle, ResourceHolder},
+    resource_system::{ResourceSystem, MeshId}, math::AABB3,
 };
 
 #[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -30,7 +30,8 @@ impl std::default::Default for ShadowFighterSwarmParams {
 }
 
 pub struct ShadowFighterSwarm {
-    pub renderable: PbrRenderableHandle,
+    pub mesh_id: MeshId,
+    pub bounds: AABB3,
     pub params: ShadowFighterSwarmParams,
     pub instances_physics_data: Vec<GameObjectPhysicsData>,
 }
@@ -38,7 +39,7 @@ pub struct ShadowFighterSwarm {
 impl ShadowFighterSwarm {
     pub fn new(
         physics_engine: &mut PhysicsEngine,
-        resource_cache: &ResourceHolder,
+	rsys: &ResourceSystem,
     ) -> ShadowFighterSwarm {
         let swarm_params: ShadowFighterSwarmParams = ron::de::from_reader(
             std::fs::File::open("config/shadow.swarm.cfg.ron")
@@ -46,10 +47,9 @@ impl ShadowFighterSwarm {
         )
         .expect("Invalid shadow swam config file.");
 
-        let geometry_handle = resource_cache.get_pbr_geometry_handle(&"shadow.fighter");
-        let geometry = resource_cache.get_pbr_geometry_info(geometry_handle);
-
-        let aabb = geometry.aabb;
+	let mesh_id : MeshId = "shadow.fighter".into();
+        let mesh = rsys.get_mesh_info(mesh_id);	
+        let aabb = mesh.bounds;
 
         let instances_physics_data = (0..swarm_params.instance_count)
             .map(|instance_id| {
@@ -89,25 +89,11 @@ impl ShadowFighterSwarm {
             .collect::<Vec<_>>();
 
         ShadowFighterSwarm {
-            renderable: geometry_handle,
+	    mesh_id,
+	    bounds: aabb,
             params: swarm_params,
             instances_physics_data,
         }
-    }
-
-    pub fn write_default_config() {
-        use ron::ser::{to_writer_pretty, PrettyConfig};
-
-        let cfg_opts = PrettyConfig::new()
-            .depth_limit(8)
-            .separate_tuple_members(true);
-
-        to_writer_pretty(
-            std::fs::File::create("config/shadow.swarm.default.cfg.ron").expect("cykaaaaa"),
-            &ShadowFighterSwarmParams::default(),
-            cfg_opts.clone(),
-        )
-        .expect("Failed to write shadow sharm config");
     }
 
     pub fn instances(&self) -> &[GameObjectPhysicsData] {
