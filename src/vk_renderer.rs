@@ -178,6 +178,7 @@ pub struct ImageCopySource {
     pub bytes: DeviceSize,
 }
 
+#[derive(Debug)]
 pub struct UniqueImage {
     pub image: Image,
     pub memory: DeviceMemory,
@@ -782,6 +783,7 @@ impl std::ops::Drop for UniqueImage {
     }
 }
 
+#[derive(Debug)]
 pub struct UniqueImageView {
     pub view: ImageView,
     device: *const Device,
@@ -841,6 +843,7 @@ impl std::ops::Drop for UniqueImageView {
     }
 }
 
+#[derive(Debug)]
 pub struct UniqueImageWithView(pub UniqueImage, pub UniqueImageView);
 
 impl UniqueImageWithView {

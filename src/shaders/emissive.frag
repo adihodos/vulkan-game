@@ -1,6 +1,6 @@
 #version 460 core
 
-#extension GL_EXT_nonuniform_qualifier : require
+#include "bindless.common.glsl"
 
 layout (location = 0) in vs_out_fs_in {
   vec3 pos;
@@ -13,14 +13,17 @@ layout (location = 0) in vs_out_fs_in {
   flat uint mtl_offset;
 } fs_in;
 
-#include "pbr.layout.frag.h"
 
 layout (location = 0) out vec4 FinalFragColor;
 
 void main() {
-  const pbr_data_t pbr = primitives_pbr_data.entry[fs_in.mtl_offset];
+  const uint i = g_GlobalPushConst.id;
+  const PbrRenderpassHandles handles = g_GlobalPbrHandles[nonuniformEXT(i)].arr[0];
+  
+  const PbrData pbr = g_GlobalPbrData[nonuniformEXT(handles.pbrMtlHandle)].arr[ fs_in.primitive_id + fs_in.mtl_offset];
 
-  vec3 base_color = pbr.base_color_factor.rgb * texture(g_s_colormaps[pbr.colormap_id], fs_in.uv).rgb;
+  vec3 base_color = pbr.base_color_factor.rgb * texture(g_Global2DTextures[pbr.colormap_id], fs_in.uv).rgb;
+
   // vec3 albedo     = pow(base_color, vec3(2.2));
   FinalFragColor = vec4(base_color, 1.0);
 }

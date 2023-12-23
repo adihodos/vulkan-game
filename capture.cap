@@ -5,7 +5,7 @@
         "commandLine": "",
         "environment": [
         ],
-        "executable": "/home/adi/projects/rust-projects-arena/vulkan-game/target/debug/starfury-game",
+        "executable": "/home/adi/projects/rust-projects/vulkan-game/target/debug/starfury-game",
         "inject": false,
         "numQueuedFrames": 0,
         "options": {
@@ -23,6 +23,6 @@
             "verifyBufferAccess": false
         },
         "queuedFrameCap": 0,
-        "workingDir": "/home/adi/projects/rust-projects-arena/vulkan-game"
+        "workingDir": "/home/adi/projects/rust-projects/vulkan-game"
     }
 }

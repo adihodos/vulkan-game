@@ -60,3 +60,10 @@ imgui.ini
 auto-save-list
 tramp
 .\#*
+
+# Renderdoc
+*.rdc
+
+### direnv ###
+.direnv
+.envrc

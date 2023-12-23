@@ -1,8 +1,8 @@
 use ash::vk::{
     BufferUsageFlags, CullModeFlags, DescriptorSet, DynamicState, Extent3D, Filter, Format,
-    FrontFace, Handle, ImageLayout, ImageTiling, ImageType, ImageUsageFlags, ObjectType,
-    PipelineLayout, PipelineRasterizationStateCreateInfo, PolygonMode, SampleCountFlags,
-    SamplerAddressMode, SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, SharingMode,
+    FrontFace, ImageLayout, ImageTiling, ImageType, ImageUsageFlags, PipelineLayout,
+    PipelineRasterizationStateCreateInfo, PolygonMode, SampleCountFlags, SamplerAddressMode,
+    SamplerCreateInfo, SamplerMipmapMode, ShaderStageFlags, SharingMode,
     VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
 };
 use chrono::Duration;
@@ -28,7 +28,7 @@ use crate::{
 };
 
 #[derive(Copy, Clone)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct InstanceRenderInfo {
     pub model: nalgebra_glm::Mat4,
     pub mtl_coll_offset: u32,
@@ -92,6 +92,7 @@ pub struct MissileSmokePoint {
     pub pt: glm::Vec3,
 }
 
+#[derive(Debug)]
 pub struct CachedTexture {
     pub img: UniqueImageWithView,
     pub handle: BindlessResourceHandle,
@@ -385,13 +386,15 @@ impl ResourceSystem {
                     texture_and_view.image_view(),
                     default_sampler,
                 );
-                textures.insert(
-                    format!("{name}/mtl_basecolor_{i}"),
-                    CachedTexture {
-                        img: texture_and_view,
-                        handle: texture_handle,
-                    },
-                );
+
+                let entry_name = format!("{name}/mtl_basecolor_{i}");
+                let entry_data = CachedTexture {
+                    img: texture_and_view,
+                    handle: texture_handle,
+                };
+
+                log::info!("adding texture: {entry_name} -> {:?}", entry_data);
+                textures.insert(entry_name, entry_data);
                 renderer.push_work_package(work_pkg);
             });
 
@@ -433,13 +436,15 @@ impl ResourceSystem {
                     texture_and_view.image_view(),
                     default_sampler,
                 );
-                textures.insert(
-                    format!("{name}/mtl_metallic_roughness_{i}"),
-                    CachedTexture {
-                        img: texture_and_view,
-                        handle: texture_handle,
-                    },
-                );
+
+                let entry_name = format!("{name}/mtl_metallic_roughness_{i}");
+                let entry_data = CachedTexture {
+                    img: texture_and_view,
+                    handle: texture_handle,
+                };
+
+                log::info!("adding texture: {entry_name} -> {:?}", entry_data);
+                textures.insert(entry_name, entry_data);
 
                 renderer.push_work_package(work_pkg);
             });
@@ -484,13 +489,15 @@ impl ResourceSystem {
                     default_sampler,
                 );
 
-                textures.insert(
-                    format!("{name}/mtl_normal_{i}"),
-                    CachedTexture {
-                        img: texture_and_view,
-                        handle: texture_handle,
-                    },
-                );
+                let entry_name = format!("{name}/mtl_normal_{i}");
+
+                let entry_data = CachedTexture {
+                    img: texture_and_view,
+                    handle: texture_handle,
+                };
+
+                log::info!("adding texture: {entry_name} -> {:?}", entry_data);
+                textures.insert(entry_name, entry_data);
 
                 renderer.push_work_package(work_pkg);
             });
@@ -646,7 +653,6 @@ impl ResourceSystem {
         })
     }
 
-    pub fn add_missile_some(&mut self, segments: &[MissileSmokePoint]) {}
 
     fn create_emissive_effect(
         renderer: &VulkanRenderer,
