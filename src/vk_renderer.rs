@@ -1396,8 +1396,8 @@ impl UniqueBuffer {
                 &[BufferCopy::builder()
                     .src_offset(0)
                     .dst_offset(0)
-                  // .size(gpu_buffer.aligned_slab_size as DeviceSize)
-		  .size((items_count * std::mem::size_of::<T>()) as DeviceSize)
+                    // .size(gpu_buffer.aligned_slab_size as DeviceSize)
+                    .size((items_count * std::mem::size_of::<T>()) as DeviceSize)
                     .build()],
             );
         }
@@ -3130,7 +3130,6 @@ impl VulkanRenderer {
                 .wait_for_fences(&[wait_fence], true, !0u64);
         }
 
-        // let mut tries = 0;
         let available_image = loop {
             let acquire_result = unsafe {
                 self.swapchain_loader.acquire_next_image(
@@ -3146,12 +3145,6 @@ impl VulkanRenderer {
                 }
 
                 Ok((_, true)) | Err(ash::vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    // if tries < 5 {
-                    //     self.handle_suboptimal();
-                    //     tries += 1;
-                    // } else {
-                    //     panic!("Failed to recreate swapchain and acquire image, giving up after {} tries", tries);
-                    // }
                     self.handle_suboptimal();
                     return;
                 }

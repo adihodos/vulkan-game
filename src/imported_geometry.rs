@@ -1,18 +1,13 @@
-use std::{collections::HashMap, mem::size_of};
-
 use crate::math::AABB3;
 use crate::resource_system::PbrMaterial;
-use ash::vk::DeviceSize;
 use gltf::{buffer, image, scene::Transform};
 use itertools::Itertools;
 use mmap_rs::MmapOptions;
 use nalgebra_glm::{Mat4, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
 use slice_of_array::prelude::*;
-
 use nalgebra_glm as glm;
 
-use crate::vk_renderer::ImageCopySource;
 
 #[derive(Clone, Debug)]
 pub struct GeometryNode {
@@ -62,17 +57,6 @@ impl std::default::Default for GeometryVertex {
     }
 }
 
-#[derive(Debug)]
-struct MaterialDef {
-    name: String,
-    base_color_src: u32,
-    metallic_src: u32,
-    normal_src: u32,
-    base_color_factor: Vec4,
-    metallic_factor: f32,
-    roughness_factor: f32,
-}
-
 pub struct ImportedGeometry {
     nodes: Vec<GeometryNode>,
     vertices: Vec<GeometryVertex>,
@@ -108,7 +92,7 @@ impl ImportedGeometry {
         &self.indices
     }
 
-    fn process_materials2(&mut self, gltf: &gltf::Document) {
+    fn process_materials(&mut self, gltf: &gltf::Document) {
         self.materials = gltf
             .materials()
             .filter_map(|mtl| {
@@ -381,7 +365,7 @@ impl ImportedGeometry {
             materials: Vec::new(),
         };
 
-        imported.process_materials2(&gltf_doc);
+        imported.process_materials(&gltf_doc);
         log::info!("Maerials:{:#?}", imported.materials);
 
         imported.process_nodes(&gltf_doc);

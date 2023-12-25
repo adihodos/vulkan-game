@@ -597,7 +597,39 @@ impl ResourceSystem {
         let material_buffer = bindless.register_ssbo(renderer, &g_material_collection_buffer);
         log::info!("Registered material buffer: {material_buffer}",);
 
-        let pipeline = GraphicsPipelineBuilder::new()
+        let pbr_effect =
+            Self::create_pbr_effect(renderer, app_config, bindless.bindless_pipeline_layout())?;
+
+        let emissive_effect = Self::create_emissive_effect(
+            renderer,
+            app_config,
+            bindless.bindless_pipeline_layout(),
+        )?;
+
+        Ok(ResourceSystem {
+            g_vertex_buffer,
+            material_buffer,
+            g_index_buffer,
+            g_material_collection_buffer,
+            meshes,
+            materials,
+            samplers: sampler_table,
+            effect_table: [
+                (EffectType::Pbr, pbr_effect),
+                (EffectType::BasicEmissive, emissive_effect),
+            ]
+            .into(),
+            bindless,
+            textures,
+        })
+    }
+
+    fn create_pbr_effect(
+        renderer: &VulkanRenderer,
+        app_config: &AppConfig,
+        layout: PipelineLayout,
+    ) -> Result<BindlessPipeline, ProgramError> {
+        GraphicsPipelineBuilder::new()
             .add_vertex_input_attribute_descriptions(&[
                 VertexInputAttributeDescription {
                     location: 0,
@@ -671,33 +703,10 @@ impl ResourceSystem {
             .build_bindless(
                 renderer.graphics_device(),
                 renderer.pipeline_cache(),
-                bindless.bindless_pipeline_layout(),
+                layout,
                 renderer.renderpass(),
                 0,
-            )?;
-
-        let emissive_effect = Self::create_emissive_effect(
-            renderer,
-            app_config,
-            bindless.bindless_pipeline_layout(),
-        )?;
-
-        Ok(ResourceSystem {
-            g_vertex_buffer,
-            material_buffer,
-            g_index_buffer,
-            g_material_collection_buffer,
-            meshes,
-            materials,
-            samplers: sampler_table,
-            effect_table: [
-                (EffectType::Pbr, pipeline),
-                (EffectType::BasicEmissive, emissive_effect),
-            ]
-            .into(),
-            bindless,
-            textures,
-        })
+            )
     }
 
     fn create_emissive_effect(
