@@ -20,7 +20,7 @@ void main() {
   const uint i = g_GlobalPushConst.id;
   const PbrRenderpassHandles handles = g_GlobalPbrHandles[nonuniformEXT(i)].arr[0];
   
-  const PbrData pbr = g_GlobalPbrData[nonuniformEXT(handles.pbrMtlHandle)].arr[ fs_in.primitive_id + fs_in.mtl_offset];
+  const PbrData pbr = g_GlobalPbrData[nonuniformEXT(handles.pbrMtlHandle)].arr[fs_in.primitive_id + fs_in.mtl_offset];
 
   vec3 base_color = pbr.base_color_factor.rgb * texture(g_Global2DTextures[pbr.colormap_id], fs_in.uv).rgb;
 

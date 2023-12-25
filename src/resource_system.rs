@@ -18,11 +18,10 @@ use crate::{
     bindless::{BindlessResourceHandle, BindlessResourceSystem},
     imported_geometry::{GeometryNode, GeometryVertex, ImportedGeometry},
     math::AABB3,
-    pbr::PbrMaterial,
     vk_renderer::{
-        BindlessPipeline, GraphicsPipelineBuilder, ShaderModuleDescription, ShaderModuleSource,
-        UniqueBuffer, UniqueImage, UniqueImageView, UniqueImageWithView, UniqueSampler,
-        VulkanRenderer,
+        BindlessPipeline, GraphicsPipelineBuilder, ImageCopySource, ShaderModuleDescription,
+        ShaderModuleSource, UniqueBuffer, UniqueImage, UniqueImageView, UniqueImageWithView,
+        UniqueSampler, VulkanRenderer,
     },
     ProgramError,
 };
@@ -32,6 +31,17 @@ use crate::{
 pub struct InstanceRenderInfo {
     pub model: nalgebra_glm::Mat4,
     pub mtl_coll_offset: u32,
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C, align(16))]
+pub struct PbrMaterial {
+    pub base_color_factor: glm::Vec4,
+    pub metallic_factor: f32,
+    pub roughness_factor: f32,
+    pub base_color_texarray_id: u32,
+    pub metallic_rough_texarray_id: u32,
+    pub normal_texarray_id: u32,
 }
 
 #[derive(Copy, Clone)]
@@ -254,8 +264,6 @@ impl ResourceSystem {
         }
 
         let mut materials = HashMap::<String, u32>::new();
-        materials.insert("default_mtl".to_string(), 0);
-
         let mut meshes = HashMap::<MeshId, MeshRenderInfo>::new();
 
         let _offsets = imported_geometries.iter().fold(
@@ -267,7 +275,7 @@ impl ResourceSystem {
                     offset_idx: off.index,
                     vertices: imp_geom_data.vertex_count(),
                     indices: imp_geom_data.index_count(),
-                    materials: imp_geom_data.pbr_materials().len() as u32,
+                    materials: imp_geom_data.materials.len() as u32,
                     nodes: imp_geom_data
                         .nodes()
                         .iter()
@@ -320,20 +328,16 @@ impl ResourceSystem {
         )
         .expect("Oopsie");
 
+        renderer.debug_set_object_tag("PBR/mtl/null_texture", &null_texture.0);
+
         let null_texture_handle =
             bindless.register_image(renderer, null_texture.image_view(), default_sampler);
+
+        log::info!("Registered null texture: {null_texture_handle}");
 
         renderer.push_work_package(default_work_pkg);
 
         let mut material_collection = Vec::<PbrMaterial>::new();
-        material_collection.push(PbrMaterial {
-            base_color_factor: nalgebra_glm::vec4(1f32, 1f32, 1f32, 1f32),
-            metallic_factor: 0f32,
-            roughness_factor: 0f32,
-            base_color_texarray_id: 0,
-            metallic_rough_texarray_id: 0,
-            normal_texarray_id: 0,
-        });
 
         imported_geometries.iter().for_each(|(name, g)| {
             let mtl_coll_offset = material_collection.len() as u32;
@@ -344,198 +348,243 @@ impl ResourceSystem {
                 return;
             }
 
-            let (base_color_width, base_color_height, img_src) = g.pbr_base_color_images();
+            let mesh_mtl_name = format!("mtl/{name}/default");
 
-            use ash::vk::ImageCreateInfo;
-
-            assert!(!g.pbr_materials().is_empty());
-
-            img_src.iter().enumerate().for_each(|(i, &bc_img)| {
-                let work_pkg = renderer
-                    .create_work_package()
-                    .expect("Failed to create work package");
-
-                let img = UniqueImage::with_data(
-                    renderer,
-                    &ImageCreateInfo::builder()
-                        .array_layers(1)
-                        .format(Format::R8G8B8A8_SRGB)
-                        .image_type(ImageType::TYPE_2D)
-                        .initial_layout(ImageLayout::UNDEFINED)
-                        .mip_levels(1)
-                        .samples(SampleCountFlags::TYPE_1)
-                        .sharing_mode(SharingMode::EXCLUSIVE)
-                        .tiling(ImageTiling::OPTIMAL)
-                        .extent(Extent3D {
-                            width: base_color_width,
-                            height: base_color_height,
-                            depth: 1,
-                        })
-                        .usage(ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED),
-                    &[bc_img],
-                    &work_pkg,
-                )
-                .expect("Failed to create image");
-
-                let img_view = UniqueImageView::from_image(renderer, &img)
-                    .expect("Failed to create image view");
-
-                let texture_and_view = UniqueImageWithView(img, img_view);
-                let texture_handle = bindless.register_image(
-                    renderer,
-                    texture_and_view.image_view(),
-                    default_sampler,
-                );
-
-                let entry_name = format!("{name}/mtl_basecolor_{i}");
-                let entry_data = CachedTexture {
-                    img: texture_and_view,
-                    handle: texture_handle,
-                };
-
-                log::info!("adding texture: {entry_name} -> {:?}", entry_data);
-                textures.insert(entry_name, entry_data);
-                renderer.push_work_package(work_pkg);
-            });
-
-            let (mr_width, mr_height, mr_img_src) = g.pbr_metallic_roughness_images();
-
-            mr_img_src.iter().enumerate().for_each(|(i, &img_src)| {
-                let work_pkg = renderer
-                    .create_work_package()
-                    .expect("Failed to create work package");
-                let img = UniqueImage::with_data(
-                    renderer,
-                    &ImageCreateInfo::builder()
-                        .array_layers(1)
-                        .format(Format::R8G8B8A8_UNORM)
-                        .image_type(ImageType::TYPE_2D)
-                        .initial_layout(ImageLayout::UNDEFINED)
-                        .mip_levels(1)
-                        .samples(SampleCountFlags::TYPE_1)
-                        .sharing_mode(SharingMode::EXCLUSIVE)
-                        .tiling(ImageTiling::OPTIMAL)
-                        .extent(Extent3D {
-                            width: mr_width,
-                            height: mr_height,
-                            depth: 1,
-                        })
-                        .usage(ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED),
-                    &[img_src],
-                    &work_pkg,
-                )
-                .expect("Failed to create image");
-
-                let img_view = UniqueImageView::from_image(renderer, &img)
-                    .expect("Failed to create image view");
-
-                let texture_and_view = UniqueImageWithView(img, img_view);
-
-                let texture_handle = bindless.register_image(
-                    renderer,
-                    texture_and_view.image_view(),
-                    default_sampler,
-                );
-
-                let entry_name = format!("{name}/mtl_metallic_roughness_{i}");
-                let entry_data = CachedTexture {
-                    img: texture_and_view,
-                    handle: texture_handle,
-                };
-
-                log::info!("adding texture: {entry_name} -> {:?}", entry_data);
-                textures.insert(entry_name, entry_data);
-
-                renderer.push_work_package(work_pkg);
-            });
-
-            let (nr_width, nr_height, nr_imgs) = g.pbr_normal_images();
-
-            nr_imgs.iter().enumerate().for_each(|(i, &normal_img)| {
-                let work_pkg = renderer
-                    .create_work_package()
-                    .expect("Failed to create work package");
-
-                let img = UniqueImage::with_data(
-                    renderer,
-                    &ImageCreateInfo::builder()
-                        .array_layers(1)
-                        .format(Format::R8G8B8A8_UNORM)
-                        .image_type(ImageType::TYPE_2D)
-                        .initial_layout(ImageLayout::UNDEFINED)
-                        .mip_levels(1)
-                        .samples(SampleCountFlags::TYPE_1)
-                        .sharing_mode(SharingMode::EXCLUSIVE)
-                        .tiling(ImageTiling::OPTIMAL)
-                        .extent(Extent3D {
-                            width: nr_width,
-                            height: nr_height,
-                            depth: 1,
-                        })
-                        .usage(ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED),
-                    &[normal_img],
-                    &work_pkg,
-                )
-                .expect("Failed to create image");
-
-                let img_view = UniqueImageView::from_image(renderer, &img)
-                    .expect("Failed to create image view");
-
-                let texture_and_view = UniqueImageWithView(img, img_view);
-
-                let texture_handle = bindless.register_image(
-                    renderer,
-                    texture_and_view.image_view(),
-                    default_sampler,
-                );
-
-                let entry_name = format!("{name}/mtl_normal_{i}");
-
-                let entry_data = CachedTexture {
-                    img: texture_and_view,
-                    handle: texture_handle,
-                };
-
-                log::info!("adding texture: {entry_name} -> {:?}", entry_data);
-                textures.insert(entry_name, entry_data);
-
-                renderer.push_work_package(work_pkg);
-            });
-
-            material_collection.extend(g.pbr_materials().iter().map(|&mtl| {
-                let base_color = textures
-                    .get(&format!(
-                        "{name}/mtl_basecolor_{}",
-                        mtl.base_color_texarray_id
-                    ))
-                    .expect("oopsie");
-
-                let metallic = textures
-                    .get(&format!(
-                        "{name}/mtl_metallic_roughness_{}",
-                        mtl.metallic_rough_texarray_id
-                    ))
-                    .expect("Oopsie");
-
-                let normal = textures
-                    .get(&format!("{name}/mtl_normal_{}", mtl.normal_texarray_id))
-                    .expect("Oppsie");
-
-                PbrMaterial {
-                    base_color_texarray_id: base_color.handle.handle(),
-                    metallic_rough_texarray_id: metallic.handle.handle(),
-                    normal_texarray_id: normal.handle.handle(),
-                    ..mtl
-                }
-            }));
-
-            let material_name = format!("{name}_default");
-            materials.insert(material_name.clone(), mtl_coll_offset);
+            materials.insert(mesh_mtl_name.clone(), mtl_coll_offset);
 
             meshes.entry(name.into()).and_modify(|mesh_render_info| {
-                mesh_render_info.default_material = material_name;
+                mesh_render_info.default_material = mesh_mtl_name;
+            });
+
+            let mut loaded_images = HashMap::<u32, BindlessResourceHandle>::new();
+
+            g.materials.iter().for_each(|(mtl_name, mtl_def)| {
+                use ash::vk::ImageCreateInfo;
+
+                //
+                // load base color
+                let work_pkg = renderer
+                    .create_work_package()
+                    .expect("Failed to create work package");
+
+                let handle_base_color = {
+                    if !loaded_images.contains_key(&mtl_def.base_color_texarray_id) {
+                        let src_basecolor =
+                            g.get_image_data(mtl_def.base_color_texarray_id as usize);
+
+                        let copy_src = ImageCopySource {
+                            src: src_basecolor.pixels.as_ptr(),
+                            bytes: src_basecolor.pixels.len() as ash::vk::DeviceSize,
+                        };
+
+                        let img = UniqueImage::with_data(
+                            renderer,
+                            &ImageCreateInfo::builder()
+                                .array_layers(1)
+                                .format(Format::R8G8B8A8_SRGB)
+                                .image_type(ImageType::TYPE_2D)
+                                .initial_layout(ImageLayout::UNDEFINED)
+                                .mip_levels(1)
+                                .samples(SampleCountFlags::TYPE_1)
+                                .sharing_mode(SharingMode::EXCLUSIVE)
+                                .tiling(ImageTiling::OPTIMAL)
+                                .extent(Extent3D {
+                                    width: src_basecolor.width,
+                                    height: src_basecolor.height,
+                                    depth: 1,
+                                })
+                                .usage(ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED),
+                            std::slice::from_ref(&copy_src),
+                            &work_pkg,
+                        )
+                        .expect("Failed to create image");
+
+                        let img_view = UniqueImageView::from_image(renderer, &img)
+                            .expect("Failed to create image view");
+
+                        let texture_and_view = UniqueImageWithView(img, img_view);
+                        let texture_handle = bindless.register_image(
+                            renderer,
+                            texture_and_view.image_view(),
+                            default_sampler,
+                        );
+
+                        let entry_name = format!("mtl/{name}/{mtl_name}/basecolor");
+                        renderer.debug_set_object_tag(&entry_name, &texture_and_view.0);
+                        log::info!("Registered texture: {} -> {texture_handle}", entry_name);
+
+                        let entry_data = CachedTexture {
+                            img: texture_and_view,
+                            handle: texture_handle,
+                        };
+
+                        log::info!("adding texture: {entry_name} -> {:#?}", entry_data);
+                        textures.insert(entry_name, entry_data);
+                        loaded_images.insert(mtl_def.base_color_texarray_id, texture_handle);
+
+                        texture_handle
+                    } else {
+                        *loaded_images.get(&mtl_def.base_color_texarray_id).unwrap()
+                    }
+                };
+
+                let handle_metallic_color = {
+                    if !loaded_images.contains_key(&mtl_def.metallic_rough_texarray_id) {
+                        let src_metallic =
+                            g.get_image_data(mtl_def.metallic_rough_texarray_id as usize);
+                        let src_copy = ImageCopySource {
+                            src: src_metallic.pixels.as_ptr(),
+                            bytes: src_metallic.pixels.len() as ash::vk::DeviceSize,
+                        };
+
+                        let img = UniqueImage::with_data(
+                            renderer,
+                            &ImageCreateInfo::builder()
+                                .array_layers(1)
+                                .format(Format::R8G8B8A8_UNORM)
+                                .image_type(ImageType::TYPE_2D)
+                                .initial_layout(ImageLayout::UNDEFINED)
+                                .mip_levels(1)
+                                .samples(SampleCountFlags::TYPE_1)
+                                .sharing_mode(SharingMode::EXCLUSIVE)
+                                .tiling(ImageTiling::OPTIMAL)
+                                .extent(Extent3D {
+                                    width: src_metallic.width,
+                                    height: src_metallic.height,
+                                    depth: 1,
+                                })
+                                .usage(ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED),
+                            std::slice::from_ref(&src_copy),
+                            &work_pkg,
+                        )
+                        .expect("Failed to create image");
+
+                        let img_view = UniqueImageView::from_image(renderer, &img)
+                            .expect("Failed to create image view");
+
+                        let texture_and_view = UniqueImageWithView(img, img_view);
+
+                        let texture_handle = bindless.register_image(
+                            renderer,
+                            texture_and_view.image_view(),
+                            default_sampler,
+                        );
+
+                        let entry_name = format!("mtl/{name}/{mtl_name}/metallic");
+                        renderer.debug_set_object_tag(&entry_name, &texture_and_view.0);
+                        log::info!("Registered texture: {} -> {texture_handle}", entry_name);
+
+                        let entry_data = CachedTexture {
+                            img: texture_and_view,
+                            handle: texture_handle,
+                        };
+
+                        log::info!("adding texture: {entry_name} -> {:#?}", entry_data);
+                        textures.insert(entry_name, entry_data);
+                        loaded_images.insert(mtl_def.metallic_rough_texarray_id, texture_handle);
+
+                        texture_handle
+                    } else {
+                        *loaded_images
+                            .get(&mtl_def.metallic_rough_texarray_id)
+                            .unwrap()
+                    }
+                };
+
+                let handle_normal = {
+                    if !loaded_images.contains_key(&mtl_def.normal_texarray_id) {
+                        let src_normal = g.get_image_data(mtl_def.normal_texarray_id as usize);
+                        let src_copy = ImageCopySource {
+                            src: src_normal.pixels.as_ptr(),
+                            bytes: src_normal.pixels.len() as ash::vk::DeviceSize,
+                        };
+
+                        let img = UniqueImage::with_data(
+                            renderer,
+                            &ImageCreateInfo::builder()
+                                .array_layers(1)
+                                .format(Format::R8G8B8A8_UNORM)
+                                .image_type(ImageType::TYPE_2D)
+                                .initial_layout(ImageLayout::UNDEFINED)
+                                .mip_levels(1)
+                                .samples(SampleCountFlags::TYPE_1)
+                                .sharing_mode(SharingMode::EXCLUSIVE)
+                                .tiling(ImageTiling::OPTIMAL)
+                                .extent(Extent3D {
+                                    width: src_normal.width,
+                                    height: src_normal.height,
+                                    depth: 1,
+                                })
+                                .usage(ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED),
+                            std::slice::from_ref(&src_copy),
+                            &work_pkg,
+                        )
+                        .expect("Failed to create image");
+
+                        let img_view = UniqueImageView::from_image(renderer, &img)
+                            .expect("Failed to create image view");
+
+                        let texture_and_view = UniqueImageWithView(img, img_view);
+
+                        let texture_handle = bindless.register_image(
+                            renderer,
+                            texture_and_view.image_view(),
+                            default_sampler,
+                        );
+
+                        let entry_name = format!("mtl/{name}/{mtl_name}/normal");
+                        renderer.debug_set_object_tag(&entry_name, &texture_and_view.0);
+                        log::info!("Registered texture: {} -> {texture_handle}", entry_name);
+
+                        let entry_data = CachedTexture {
+                            img: texture_and_view,
+                            handle: texture_handle,
+                        };
+
+                        log::info!("adding texture: {entry_name} -> {:#?}", entry_data);
+                        textures.insert(entry_name, entry_data);
+                        loaded_images.insert(mtl_def.normal_texarray_id, texture_handle);
+
+                        texture_handle
+                    } else {
+                        *loaded_images.get(&mtl_def.normal_texarray_id).unwrap()
+                    }
+                };
+
+                renderer.push_work_package(work_pkg);
+
+                material_collection.push(PbrMaterial {
+                    base_color_texarray_id: handle_base_color.handle(),
+                    metallic_rough_texarray_id: handle_metallic_color.handle(),
+                    normal_texarray_id: handle_normal.handle(),
+                    ..*mtl_def
+                });
             });
         });
+
+        //
+        // needs to be added after loaded geometries materials
+
+        materials.insert("default_mtl".to_string(), material_collection.len() as u32);
+
+        material_collection.push(PbrMaterial {
+            base_color_factor: nalgebra_glm::vec4(1f32, 1f32, 1f32, 1f32),
+            metallic_factor: 1f32,
+            roughness_factor: 1f32,
+            base_color_texarray_id: null_texture_handle.handle(),
+            metallic_rough_texarray_id: null_texture_handle.handle(),
+            normal_texarray_id: null_texture_handle.handle(),
+        });
+
+        textures.insert(
+            "null_texture".into(),
+            CachedTexture {
+                handle: null_texture_handle,
+                img: null_texture,
+            },
+        );
+
+        // log::info!("Loaded materials:\n{:#?}", material_collection);
 
         let g_material_collection_buffer = UniqueBuffer::gpu_only_buffer(
             renderer,
@@ -543,12 +592,10 @@ impl ResourceSystem {
             &[&material_collection],
         )?;
 
-        renderer.debug_set_object_tag(
-            "PBR material definition SSBO",
-            &g_material_collection_buffer,
-        );
+        renderer.debug_set_object_tag("PBR/materials SSBO", &g_material_collection_buffer);
 
         let material_buffer = bindless.register_ssbo(renderer, &g_material_collection_buffer);
+        log::info!("Registered material buffer: {material_buffer}",);
 
         let pipeline = GraphicsPipelineBuilder::new()
             .add_vertex_input_attribute_descriptions(&[
@@ -652,7 +699,6 @@ impl ResourceSystem {
             textures,
         })
     }
-
 
     fn create_emissive_effect(
         renderer: &VulkanRenderer,

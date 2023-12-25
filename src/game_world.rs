@@ -411,7 +411,7 @@ impl GameWorld {
                 1f32,
                 0f32,
             ),
-            eye_position: self.camera.borrow().position,
+            eye_position: cam_position,
         };
 
         self.ubo_bindless
@@ -460,17 +460,17 @@ impl GameWorld {
         };
 
         {
-            // let mut draw_sys = self.drawing_sys.borrow_mut();
-            // visible_instances.iter().for_each(|(_, inst_transform)| {
-            //     draw_sys.add_mesh(
-            //         self.shadows_swarm.mesh_id,
-            //         None,
-            //         None,
-            //         &inst_transform.to_matrix(),
-            //         EffectType::Pbr,
-            //     );
-            // });
-            // self.missile_sys.borrow().draw(&draw_context, &mut draw_sys);
+            let mut draw_sys = self.drawing_sys.borrow_mut();
+            visible_instances.iter().for_each(|(_, inst_transform)| {
+                draw_sys.add_mesh(
+                    self.shadows_swarm.mesh_id,
+                    None,
+                    None,
+                    &inst_transform.to_matrix(),
+                    EffectType::Pbr,
+                );
+            });
+            self.missile_sys.borrow().draw(&draw_context, &mut draw_sys);
         }
 
         self.drawing_sys.borrow_mut().draw(&draw_context);

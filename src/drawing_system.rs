@@ -51,13 +51,15 @@ impl DrawingSys {
 
         init_ctx
             .renderer
-            .debug_set_object_tag("Renderpass setup SSBO", &pbr_renderpass_buff);
+            .debug_set_object_tag("DrawSys PBR/SSBO pass setup", &pbr_renderpass_buff);
 
         let pbr_renderpass_handles = init_ctx.rsys.bindless.register_chunked_ssbo(
             init_ctx.renderer,
             &pbr_renderpass_buff,
             init_ctx.renderer.max_inflight_frames() as usize,
         );
+
+	log::info!("Registered renderpass setup SSBO : {:#?}", pbr_renderpass_handles);
 
         let g_instances_buffer = UniqueBuffer::with_capacity(
             init_ctx.renderer,
@@ -70,13 +72,15 @@ impl DrawingSys {
 
         init_ctx
             .renderer
-            .debug_set_object_tag("Instances SSBO", &g_instances_buffer);
+            .debug_set_object_tag("DrawSys PBR/SSBO instance data", &g_instances_buffer);
 
         let g_inst_buf_handle = init_ctx.rsys.bindless.register_chunked_ssbo(
             init_ctx.renderer,
             &g_instances_buffer,
             init_ctx.renderer.max_inflight_frames() as usize,
         );
+
+	log::info!("Registered instance data SSBO: {:#?}", g_inst_buf_handle);
 
         let drawcalls_buffer = UniqueBuffer::with_capacity(
             init_ctx.renderer,
@@ -86,6 +90,8 @@ impl DrawingSys {
             std::mem::size_of::<DrawIndexedIndirectCommand>(),
             init_ctx.renderer.max_inflight_frames(),
         )?;
+
+	init_ctx.renderer.debug_set_object_tag("DrawSys/drawcall buffer", &drawcalls_buffer);
 
         Ok(Self {
             pbr_renderpass_buff,

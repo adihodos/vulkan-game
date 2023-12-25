@@ -46,10 +46,21 @@ impl BindlessResourceHandle {
 
     pub fn new(ty: BindlessResourceType, id: u32) -> Self {
         match ty {
-            BindlessResourceType::Ssbo => Self(id << 2),
-            BindlessResourceType::CombinedImageSampler => Self(1 | (id << 2)),
-            BindlessResourceType::UniformBuffer => Self(2 | (id << 2)),
+            BindlessResourceType::UniformBuffer => Self(id << 2),
+            BindlessResourceType::Ssbo => Self(1 | (id << 2)),
+            BindlessResourceType::CombinedImageSampler => Self(2 | (id << 2)),
         }
+    }
+}
+
+impl std::fmt::Display for BindlessResourceHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "BindlessResourceHandle [handle: {}, type: {:#?}]",
+            self.handle(),
+            self.get_type()
+        )
     }
 }
 

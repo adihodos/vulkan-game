@@ -1,12 +1,10 @@
 use std::{collections::HashMap, mem::size_of};
 
-use crate::{math::AABB3, pbr::PbrMaterial};
+use crate::math::AABB3;
+use crate::resource_system::PbrMaterial;
 use ash::vk::DeviceSize;
-use gltf::{
-    buffer,
-    image,
-    scene::Transform,
-};
+use gltf::{buffer, image, scene::Transform};
+use itertools::Itertools;
 use mmap_rs::MmapOptions;
 use nalgebra_glm::{Mat4, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
@@ -81,61 +79,13 @@ pub struct ImportedGeometry {
     indices: Vec<u32>,
     buffers: Vec<buffer::Data>,
     images: Vec<image::Data>,
-    gltf_mat_2_pbr_mat_mapping: HashMap<String, u32>,
-    pbr_materials: Vec<PbrMaterial>,
-    pixels_base_color: Vec<(u32, u32)>,
-    pixels_metallic_roughness: Vec<(u32, u32)>,
-    pixels_normal: Vec<(u32, u32)>,
+    pub materials: Vec<(String, PbrMaterial)>,
     pub aabb: AABB3,
 }
 
 impl ImportedGeometry {
-    pub fn pbr_materials(&self) -> &[PbrMaterial] {
-        &self.pbr_materials
-    }
-
-    fn get_image_pixels(&self, pixels: &[(u32, u32)]) -> Vec<ImageCopySource> {
-        pixels
-            .iter()
-            .map(|(_, img_idx)| {
-                let img = &self.images[*img_idx as usize];
-                assert!(img.format == gltf::image::Format::R8G8B8A8);
-                ImageCopySource {
-                    src: img.pixels.as_ptr(),
-                    bytes: (img.width * img.height * 4) as DeviceSize,
-                }
-            })
-            .collect()
-    }
-
-    pub fn pbr_base_color_images(&self) -> (u32, u32, Vec<ImageCopySource>) {
-        let img = &self.images[self.pixels_base_color[0].1 as usize];
-
-        (
-            img.width,
-            img.height,
-            self.get_image_pixels(&self.pixels_base_color),
-        )
-    }
-
-    pub fn pbr_metallic_roughness_images(&self) -> (u32, u32, Vec<ImageCopySource>) {
-        let img = &self.images[self.pixels_metallic_roughness[0].1 as usize];
-
-        (
-            img.width,
-            img.height,
-            self.get_image_pixels(&self.pixels_metallic_roughness),
-        )
-    }
-
-    pub fn pbr_normal_images(&self) -> (u32, u32, Vec<ImageCopySource>) {
-        let img = &self.images[self.pixels_metallic_roughness[0].1 as usize];
-
-        (
-            img.width,
-            img.height,
-            self.get_image_pixels(&self.pixels_normal),
-        )
+    pub fn get_image_data(&self, image_index: usize) -> &image::Data {
+        &self.images[image_index]
     }
 
     pub fn nodes(&self) -> &[GeometryNode] {
@@ -144,14 +94,6 @@ impl ImportedGeometry {
 
     pub fn vertex_count(&self) -> u32 {
         self.vertices.len() as u32
-    }
-
-    pub fn vertex_bytes(&self) -> usize {
-        self.vertex_count() as usize * size_of::<GeometryVertex>()
-    }
-
-    pub fn index_bytes(&self) -> usize {
-        self.index_count() as usize * size_of::<u32>()
     }
 
     pub fn index_count(&self) -> u32 {
@@ -166,8 +108,8 @@ impl ImportedGeometry {
         &self.indices
     }
 
-    fn process_materials(&mut self, gltf_doc: &gltf::Document) {
-        let materials = gltf_doc
+    fn process_materials2(&mut self, gltf: &gltf::Document) {
+        self.materials = gltf
             .materials()
             .filter_map(|mtl| {
                 let name = mtl
@@ -202,103 +144,23 @@ impl ImportedGeometry {
                     .source()
                     .index() as u32;
 
-                Some(MaterialDef {
+                Some((
                     name,
-                    base_color_src,
-                    metallic_src: metalic_roughness_src,
-                    normal_src,
-                    base_color_factor: Vec4::from_row_slice(
-                        &mtl.pbr_metallic_roughness().base_color_factor(),
-                    ),
-                    metallic_factor: mtl.pbr_metallic_roughness().metallic_factor(),
-                    roughness_factor: mtl.pbr_metallic_roughness().roughness_factor(),
-                })
+                    PbrMaterial {
+                        base_color_factor: Vec4::from_row_slice(
+                            &mtl.pbr_metallic_roughness().base_color_factor(),
+                        ),
+                        metallic_factor: mtl.pbr_metallic_roughness().metallic_factor(),
+                        roughness_factor: mtl.pbr_metallic_roughness().roughness_factor(),
+                        base_color_texarray_id: base_color_src,
+                        metallic_rough_texarray_id: metalic_roughness_src,
+                        normal_texarray_id: normal_src,
+                    },
+                ))
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        if materials.is_empty() {
-            return;
-        }
-
-        let mut base_color_images = materials
-            .iter()
-            .map(|mtl| mtl.base_color_src)
-            .collect::<Vec<_>>();
-
-        base_color_images.sort();
-        base_color_images.dedup();
-
-        self.pixels_base_color = base_color_images
-            .iter()
-            .enumerate()
-            .map(|(idx, base_color)| (idx as u32, *base_color))
-            .collect::<Vec<_>>();
-
-        let mut metallic_rough_images = materials
-            .iter()
-            .map(|mtl| mtl.metallic_src)
-            .collect::<Vec<_>>();
-        metallic_rough_images.sort();
-        metallic_rough_images.dedup();
-
-        self.pixels_metallic_roughness = metallic_rough_images
-            .iter()
-            .enumerate()
-            .map(|(idx, metallic)| (idx as u32, *metallic))
-            .collect::<Vec<_>>();
-
-        let mut normal_images = materials
-            .iter()
-            .map(|mtl| mtl.normal_src)
-            .collect::<Vec<_>>();
-        normal_images.sort();
-        normal_images.dedup();
-
-        self.pixels_normal = normal_images
-            .iter()
-            .enumerate()
-            .map(|(idx, normal)| (idx as u32, *normal))
-            .collect::<Vec<_>>();
-
-        let mut pbr_mat_2_gpu_buf = Vec::<PbrMaterial>::with_capacity(gltf_doc.materials().len());
-
-        materials.iter().for_each(|mtl| {
-            assert!(self.gltf_mat_2_pbr_mat_mapping.get(&mtl.name).is_none());
-
-            let tex_arr_id_base_color = self
-                .pixels_base_color
-                .iter()
-                .find(|(_tex_arr_idx, src_img_idx)| *src_img_idx == mtl.base_color_src)
-                .expect("Mapping GLTF material -> PBR material for base color is missing");
-
-            let tex_arr_id_metal_roughness = self
-                .pixels_metallic_roughness
-                .iter()
-                .find(|(_tex_arr_idx, src_img_idx)| *src_img_idx == mtl.metallic_src)
-                .expect("Mapping GLTF material -> PBR material for metallic+roughness missing");
-
-            let tex_arr_id_normals = self
-                .pixels_normal
-                .iter()
-                .find(|(_tex_arr_idx, src_img_idx)| *src_img_idx == mtl.normal_src)
-                .expect("Mapping GLTF material -> PBR material for normals missing");
-
-            let pbr_mat_idx = pbr_mat_2_gpu_buf.len() as u32;
-
-            pbr_mat_2_gpu_buf.push(PbrMaterial {
-                base_color_factor: mtl.base_color_factor,
-                metallic_factor: mtl.metallic_factor,
-                roughness_factor: mtl.roughness_factor,
-                base_color_texarray_id: tex_arr_id_base_color.0,
-                metallic_rough_texarray_id: tex_arr_id_metal_roughness.0,
-                normal_texarray_id: tex_arr_id_normals.0,
-            });
-
-            self.gltf_mat_2_pbr_mat_mapping
-                .insert(mtl.name.clone(), pbr_mat_idx);
-        });
-
-        self.pbr_materials = pbr_mat_2_gpu_buf;
+        self.materials.sort_by_key(|(name, _)| name.clone());
     }
 
     fn process_nodes(&mut self, gltf_doc: &gltf::Document) {
@@ -362,10 +224,12 @@ impl ImportedGeometry {
                     .name()
                     .expect("Materials without names are not supported chief ...");
 
-                let material_index = *self
-                    .gltf_mat_2_pbr_mat_mapping
-                    .get(mtl_name)
-                    .unwrap_or(&std::u32::MAX);
+                let material_index = self
+                    .materials
+                    .iter()
+                    .find_position(|(name, _)| name == mtl_name)
+                    .map(|(pos, _)| pos as u32)
+                    .unwrap_or(0);
 
                 let reader = primitive.reader(|buf| Some(&self.buffers[buf.index()]));
 
@@ -480,6 +344,8 @@ impl ImportedGeometry {
             .map_err(|e| log::error!("GLTF import error: {}", e))
             .ok()?;
 
+        log::info!("Image count: {}", images.len());
+
         //
         // need RGBA8 for Vulkan
         let images = images
@@ -511,17 +377,21 @@ impl ImportedGeometry {
             indices: Vec::new(),
             buffers,
             images,
-            gltf_mat_2_pbr_mat_mapping: HashMap::new(),
-            pbr_materials: Vec::new(),
-            pixels_base_color: Vec::new(),
-            pixels_metallic_roughness: Vec::new(),
-            pixels_normal: Vec::new(),
             aabb: AABB3::identity(),
+            materials: Vec::new(),
         };
 
-        imported.process_materials(&gltf_doc);
+        imported.process_materials2(&gltf_doc);
+        log::info!("Maerials:{:#?}", imported.materials);
+
         imported.process_nodes(&gltf_doc);
         imported.compute_aabb();
+
+        // log::info!(
+        //     "imported.gltf_mat_2_pbr_mat_mapping : {:?}",
+        //     imported.gltf_mat_2_pbr_mat_mapping
+        // );
+        // log::info!("PBR materials: {:#?}", imported.pbr_materials);
 
         Some(imported)
     }
@@ -536,6 +406,6 @@ impl ImportedGeometry {
     }
 
     pub fn has_materials(&self) -> bool {
-        !self.pbr_materials.is_empty()
+        !self.materials.is_empty()
     }
 }

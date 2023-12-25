@@ -1396,7 +1396,8 @@ impl UniqueBuffer {
                 &[BufferCopy::builder()
                     .src_offset(0)
                     .dst_offset(0)
-                    .size(gpu_buffer.aligned_slab_size as DeviceSize)
+                  // .size(gpu_buffer.aligned_slab_size as DeviceSize)
+		  .size((items_count * std::mem::size_of::<T>()) as DeviceSize)
                     .build()],
             );
         }
