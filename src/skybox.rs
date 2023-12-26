@@ -52,11 +52,17 @@ impl Skybox {
         )
         .expect("xxx");
 
+        init_ctx
+            .renderer
+            .debug_set_object_tag("skybox/SSBO skybox data", &ssbo);
+
         let ssbo_handles = init_ctx.rsys.bindless.register_chunked_ssbo(
             init_ctx.renderer,
             &ssbo,
             init_ctx.renderer.max_inflight_frames() as usize,
         );
+
+        log::info!("Skybox: registered ssbo: {:#?}", ssbo_handles);
 
         let skyboxes = Self::load_skyboxes(init_ctx);
         if skyboxes.len() == 0 {

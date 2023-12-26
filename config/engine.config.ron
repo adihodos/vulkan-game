@@ -5,4 +5,5 @@
     models: "data/models",
     shaders: "data/shaders",
     fonts: "data/fonts",
+    config: "config",
 )

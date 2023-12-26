@@ -3,14 +3,14 @@
     mass: 40000.0,
     linear_damping: 1.0,
     angular_damping: 1.0,
-    position: [
+    position: (
         0.0,
         10.0,
         10.0,
-    ],
-    orientation: [
+    ),
+    orientation: (
         0.0,
         0.0,
         0.0,
-    ],
+    ),
 )

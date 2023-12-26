@@ -22,7 +22,7 @@ use crate::{
     game_object::GameObjectPhysicsData,
     math,
     missile_sys::{MissileSpawnData, MissileSys, ProjectileSpawnData},
-    particles::{ImpactSpark, SparksSystem},
+    particles::SparksSystem,
     physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
     resource_system::{EffectType, ResourceSystem},
     shadow_swarm::ShadowFighterSwarm,
@@ -30,7 +30,7 @@ use crate::{
     sprite_batch::{SpriteBatch, TextureRegion},
     starfury::Starfury,
     ui_backend::UiBackend,
-    vk_renderer::{RendererWorkPackage, UniqueBuffer, VulkanRenderer},
+    vk_renderer::{UniqueBuffer, VulkanRenderer},
     window::{GamepadInputState, InputState},
 };
 
@@ -246,6 +246,14 @@ impl GameWorld {
         })
         .expect("oopsie");
 
+        let spark_sys = SparksSystem::create(&mut InitContext {
+            window,
+            renderer,
+            cfg,
+            rsys: &mut rsys,
+        })
+        .expect("oopsie");
+
         Some(GameWorld {
             draw_opts: RefCell::new(DebugOptions::default()),
             skybox,
@@ -256,7 +264,7 @@ impl GameWorld {
             camera: RefCell::new(FlightCamera::new(75f32, aspect, 0.1f32, 5000f32)),
             dbg_camera: RefCell::new(FirstPersonCamera::new(75f32, aspect, 0.1f32, 5000f32)),
             debug_draw_overlay: std::rc::Rc::new(RefCell::new(dbg_overlay)),
-            sparks_sys: RefCell::new(SparksSystem::create(renderer, cfg)?),
+            sparks_sys: RefCell::new(spark_sys),
             player_opts: PlayerShipOptions::new(&cfg.player, &sprites),
             sprite_batch: RefCell::new(sprites),
             stats: RefCell::new(Statistics {
@@ -411,7 +419,7 @@ impl GameWorld {
                 1f32,
                 0f32,
             ),
-            eye_position: self.camera.borrow().position,
+            eye_position: cam_position,
         };
 
         self.ubo_bindless
@@ -460,22 +468,22 @@ impl GameWorld {
         };
 
         {
-            // let mut draw_sys = self.drawing_sys.borrow_mut();
-            // visible_instances.iter().for_each(|(_, inst_transform)| {
-            //     draw_sys.add_mesh(
-            //         self.shadows_swarm.mesh_id,
-            //         None,
-            //         None,
-            //         &inst_transform.to_matrix(),
-            //         EffectType::Pbr,
-            //     );
-            // });
-            // self.missile_sys.borrow().draw(&draw_context, &mut draw_sys);
+            let mut draw_sys = self.drawing_sys.borrow_mut();
+            visible_instances.iter().for_each(|(_, inst_transform)| {
+                draw_sys.add_mesh(
+                    self.shadows_swarm.mesh_id,
+                    None,
+                    None,
+                    &inst_transform.to_matrix(),
+                    EffectType::Pbr,
+                );
+            });
+            self.missile_sys.borrow().draw(&draw_context, &mut draw_sys);
         }
 
         self.drawing_sys.borrow_mut().draw(&draw_context);
-
         self.draw_objects(&draw_context);
+        self.sparks_sys.borrow().draw(&draw_context);
 
         self.draw_crosshair(&draw_context);
         self.draw_locked_target_indicator(&draw_context);
@@ -679,7 +687,9 @@ impl GameWorld {
         }
     }
 
-    pub fn update(&mut self, frame_time: f64) {
+    pub fn update(&mut self, frame_delta: std::time::Duration, cfg: &AppConfig) {
+        let frame_time = frame_delta.as_secs_f64();
+
         {
             let mut frame_times = self.frame_times.borrow_mut();
             if (frame_times.len() + 1) > Self::MAX_HISTOGRAM_VALUES {
@@ -737,6 +747,8 @@ impl GameWorld {
             let queued_commands = {
                 let mut phys_engine = self.physics_engine.borrow_mut();
                 let mut update_ctx = UpdateContext {
+                    cfg,
+                    elapsed_time: frame_delta,
                     physics_engine: &mut phys_engine,
                     queued_commands: Vec::with_capacity(32),
                     frame_time,
@@ -744,7 +756,7 @@ impl GameWorld {
                 };
 
                 self.missile_sys.borrow_mut().update(&mut update_ctx);
-                // self.sparks_sys.borrow_mut().update(&mut update_ctx);
+                self.sparks_sys.borrow_mut().update(&mut update_ctx);
                 self.starfury.update(&mut update_ctx);
 
                 update_ctx.queued_commands
@@ -778,20 +790,16 @@ impl GameWorld {
     }
 
     fn projectile_impacted_event(&self, proj_handle: RigidBodyHandle) {
-        // log::info!("Impact for {:?}", proj_handle);
-        // let projectile_isometry = *self
-        //     .physics_engine
-        //     .borrow()
-        //     .get_rigid_body(proj_handle)
-        //     .position();
+        let projectile_isometry = *self
+            .physics_engine
+            .borrow()
+            .get_rigid_body(proj_handle)
+            .position();
 
-        // self.sparks_sys.borrow_mut().spawn_sparks(ImpactSpark {
-        //     pos: Point3::from_slice(projectile_isometry.translation.vector.as_slice()),
-        //     dir: projectile_isometry * glm::Vec3::z(),
-        //     color: glm::vec3(1f32, 0f32, 0f32),
-        //     speed: 2.0f32,
-        //     life: 2f32,
-        // });
+        self.sparks_sys.borrow_mut().spawn_sparks(
+            projectile_isometry.translation.vector,
+            -1f32 * (projectile_isometry * glm::Vec3::z()),
+        );
 
         // log::info!("Removed {:?}", proj_handle);
     }

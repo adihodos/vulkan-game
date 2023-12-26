@@ -2,8 +2,9 @@ use nalgebra_glm as glm;
 
 use crate::{
     game_object::GameObjectPhysicsData,
+    math::AABB3,
     physics_engine::PhysicsEngine,
-    resource_system::{ResourceSystem, MeshId}, math::AABB3,
+    resource_system::{MeshId, ResourceSystem},
 };
 
 #[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -37,18 +38,15 @@ pub struct ShadowFighterSwarm {
 }
 
 impl ShadowFighterSwarm {
-    pub fn new(
-        physics_engine: &mut PhysicsEngine,
-	rsys: &ResourceSystem,
-    ) -> ShadowFighterSwarm {
+    pub fn new(physics_engine: &mut PhysicsEngine, rsys: &ResourceSystem) -> ShadowFighterSwarm {
         let swarm_params: ShadowFighterSwarmParams = ron::de::from_reader(
             std::fs::File::open("config/shadow.swarm.cfg.ron")
                 .expect("Failed to read shadow swarm config"),
         )
         .expect("Invalid shadow swam config file.");
 
-	let mesh_id : MeshId = "shadow.fighter".into();
-        let mesh = rsys.get_mesh_info(mesh_id);	
+        let mesh_id: MeshId = "shadow.fighter".into();
+        let mesh = rsys.get_mesh_info(mesh_id);
         let aabb = mesh.bounds;
 
         let instances_physics_data = (0..swarm_params.instance_count)
@@ -89,8 +87,8 @@ impl ShadowFighterSwarm {
             .collect::<Vec<_>>();
 
         ShadowFighterSwarm {
-	    mesh_id,
-	    bounds: aabb,
+            mesh_id,
+            bounds: aabb,
             params: swarm_params,
             instances_physics_data,
         }

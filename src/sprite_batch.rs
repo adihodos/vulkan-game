@@ -161,6 +161,9 @@ impl SpriteBatch {
         )
         .ok_or_else(|| ProgramError::GraphicsSystemError(ash::vk::Result::ERROR_UNKNOWN))?;
         init_ctx.renderer.push_work_package(tex_load_work_pkg);
+        init_ctx
+            .renderer
+            .debug_set_object_tag("UI/reticles", &atlas_texture.0);
 
         let texture_info = *atlas_texture.info();
 

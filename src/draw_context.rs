@@ -41,6 +41,8 @@ pub struct DrawContext<'a> {
 }
 
 pub struct UpdateContext<'a> {
+    pub cfg: &'a AppConfig,
+    pub elapsed_time: std::time::Duration,
     pub frame_time: f64,
     pub physics_engine: &'a mut PhysicsEngine,
     pub queued_commands: Vec<QueuedCommand>,

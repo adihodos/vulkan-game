@@ -334,9 +334,9 @@ impl GameMain {
         let elapsed = self.timestamp.get().elapsed();
         self.timestamp.set(Instant::now());
 
-        let frame_time = elapsed.as_secs_f64().clamp(0f64, 0.25f64);
+        // let frame_time = elapsed.as_secs_f64().clamp(0f64, 0.25f64);
 
-        self.game_world.update(frame_time);
+        self.game_world.update(elapsed, &self.app_config);
         self.draw_frame(window);
     }
 }
