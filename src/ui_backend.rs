@@ -534,17 +534,19 @@ impl UiBackend {
             size_of::<GlobalUiData>(),
             init_ctx.renderer.max_inflight_frames(),
         )
-            .expect("xxxx");
+        .expect("xxxx");
 
-	init_ctx.renderer.debug_set_object_tag("ui/ssbo_state", &bindless_ssbo);
-	
+        init_ctx
+            .renderer
+            .debug_set_object_tag("ui/ssbo_state", &bindless_ssbo);
+
         let bindless_ssbo_handles = init_ctx.rsys.bindless.register_chunked_ssbo(
             init_ctx.renderer,
             &bindless_ssbo,
             init_ctx.renderer.max_inflight_frames() as usize,
         );
 
-	log::info!("UI SSBO registered: {:#?}", bindless_ssbo_handles);
+        log::info!("UI SSBO registered: {:#?}", bindless_ssbo_handles);
 
         Some(UiBackend {
             imgui,

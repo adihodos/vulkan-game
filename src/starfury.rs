@@ -200,7 +200,7 @@ impl std::default::Default for GunPorts {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct FlightModel {
     mass: f32,
     linear_damping: f32,
@@ -259,7 +259,7 @@ impl std::default::Default for Weapons {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct StarfuryParameters {
     fm: FlightModel,
     weapons: Weapons,

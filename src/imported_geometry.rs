@@ -3,11 +3,10 @@ use crate::resource_system::PbrMaterial;
 use gltf::{buffer, image, scene::Transform};
 use itertools::Itertools;
 use mmap_rs::MmapOptions;
+use nalgebra_glm as glm;
 use nalgebra_glm::{Mat4, Vec2, Vec3, Vec4};
 use rayon::prelude::*;
 use slice_of_array::prelude::*;
-use nalgebra_glm as glm;
-
 
 #[derive(Clone, Debug)]
 pub struct GeometryNode {

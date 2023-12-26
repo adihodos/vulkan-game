@@ -140,12 +140,13 @@ impl PhysicsEngine {
             &mut self.impulse_joint_set,
             &mut self.multibody_joint_set,
             &mut self.ccd_solver,
-	    None,
+            None,
             &self.physics_hooks,
             &self.event_handler,
         );
 
-	self.query_pipeline.update(&self.rigid_body_set, &self.collider_set);
+        self.query_pipeline
+            .update(&self.rigid_body_set, &self.collider_set);
 
         while let Ok(collision_event) = self.collision_recv.try_recv() {
             if !collision_event.sensor() || !collision_event.started() || collision_event.removed()

@@ -48,6 +48,12 @@ struct PbrRenderpassHandles {
   uint skyboxHandle;
 };
 
+struct SparkInstance {
+  vec3 pos;
+  vec3 color;
+  float intensity;
+};
+
 layout (set = 1, binding = 0) readonly buffer GlobalInstanceData {
   InstanceRenderInfo data[]; 
 } g_GlobalInstances[];
@@ -67,6 +73,10 @@ layout (set = 1, binding = 0) readonly buffer GlobalPbrData {
 layout (set = 1, binding = 0) readonly buffer GlobalPbrRenderpassHandles {
   PbrRenderpassHandles arr[];
 } g_GlobalPbrHandles[];
+
+layout (set = 1, binding = 0) readonly buffer GlobalSparkInstances {
+  SparkInstance arr[];
+} g_GlobalSparkInstances[];
 
 layout (set = 2, binding = 0) uniform sampler2D g_Global2DTextures[];
 layout (set = 2, binding = 0) uniform sampler2DArray g_Global2DArrayTextures[];

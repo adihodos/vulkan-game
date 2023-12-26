@@ -1,0 +1,55 @@
+StarfuryParameters(
+    fm: FlightModel(
+        mass: 0.0,
+        linear_damping: 0.0,
+        angular_damping: 0.0,
+        throttle_sensitivity: 0.0,
+        thruster_force_primary: 0.0,
+        thruster_force_secondary: 0.0,
+        thruster_force_vectors: ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        maneuver: Maneuver(
+            roll: Roll(
+                left: [
+                    /*[0]*/ UpperLeftFront,
+                ],
+                right: [
+                    /*[0]*/ LowerRightBack,
+                ],
+            ),
+            pitch: Pitch(
+                up: [
+                    /*[0]*/ LowerRightRight,
+                ],
+                down: [
+                    /*[0]*/ UpperLeftLeft,
+                ],
+            ),
+            yaw: Yaw(
+                left: [
+                    /*[0]*/ LowerRightDown,
+                ],
+                right: [
+                    /*[0]*/ UpperLeftUp,
+                ],
+            ),
+            movement: Movement(
+                forward: UpperRightBack,
+                backward: UpperLeftUp,
+                left: UpperRightRight,
+                right: UpperLeftLeft,
+            ),
+        ),
+    ),
+    weapons: Weapons(
+        guns_cooldown: 0.125,
+        gun_ports: GunPorts(
+            lower_left: (0.19122, -0.3282, 1.111),
+            lower_right: (-0.19122, -0.3282, 1.111),
+        ),
+        laser: LaserParams(
+            speed: 0.1,
+            mass: 1.0,
+            lifetime: 5.0,
+        ),
+    ),
+)

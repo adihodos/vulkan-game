@@ -13,6 +13,8 @@ mod math;
 mod missile_sys;
 mod particles;
 // mod pbr;
+mod bindless;
+mod drawing_system;
 mod physics_engine;
 mod plane;
 mod projectile_system;
@@ -24,13 +26,17 @@ mod starfury;
 mod ui_backend;
 mod vk_renderer;
 mod window;
-mod drawing_system;
-mod bindless;
 
-#[derive(Copy, Clone, Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum ProgramError {
     #[error("Graphics api (Vulkan) error")]
-    GraphicsSystemError(#[from] ash::vk::Result)
+    GraphicsSystemError(#[from] ash::vk::Result),
+    #[error("I/O error")]
+    IOError(#[from] std::io::Error),
+    #[error("Config parse error")]
+    ConfigParseError(#[from] ron::error::SpannedError),
+    #[error("Notification error")]
+    NotificationError(#[from] notify::Error),
 }
 
 pub fn main() {

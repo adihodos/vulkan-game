@@ -59,7 +59,10 @@ impl DrawingSys {
             init_ctx.renderer.max_inflight_frames() as usize,
         );
 
-	log::info!("Registered renderpass setup SSBO : {:#?}", pbr_renderpass_handles);
+        log::info!(
+            "Registered renderpass setup SSBO : {:#?}",
+            pbr_renderpass_handles
+        );
 
         let g_instances_buffer = UniqueBuffer::with_capacity(
             init_ctx.renderer,
@@ -80,7 +83,7 @@ impl DrawingSys {
             init_ctx.renderer.max_inflight_frames() as usize,
         );
 
-	log::info!("Registered instance data SSBO: {:#?}", g_inst_buf_handle);
+        log::info!("Registered instance data SSBO: {:#?}", g_inst_buf_handle);
 
         let drawcalls_buffer = UniqueBuffer::with_capacity(
             init_ctx.renderer,
@@ -91,7 +94,9 @@ impl DrawingSys {
             init_ctx.renderer.max_inflight_frames(),
         )?;
 
-	init_ctx.renderer.debug_set_object_tag("DrawSys/drawcall buffer", &drawcalls_buffer);
+        init_ctx
+            .renderer
+            .debug_set_object_tag("DrawSys/drawcall buffer", &drawcalls_buffer);
 
         Ok(Self {
             pbr_renderpass_buff,
