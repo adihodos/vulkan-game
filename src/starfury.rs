@@ -1,4 +1,5 @@
 use crate::{
+    debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, UpdateContext},
     drawing_system::DrawingSys,
     game_world::QueuedCommand,
@@ -111,6 +112,15 @@ enum EngineThrusterId {
 
     #[strum(props(node_id = "engine.thruster.lower.right.back"))]
     LowerRightBack,
+}
+
+#[derive(Copy, Clone, strum_macros::EnumIter)]
+#[repr(u8)]
+enum ThrusterGlowId {
+    UpperLeft,
+    UpperRight,
+    LowerLeft,
+    LowerRight,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -263,6 +273,7 @@ impl std::default::Default for Weapons {
 struct StarfuryParameters {
     fm: FlightModel,
     weapons: Weapons,
+    thrusters_glow_idle: [glm::Vec3; 4],
 }
 
 #[derive(Clone, Copy)]
@@ -285,6 +296,8 @@ pub struct Starfury {
     msl_mesh: MeshId,
     msl_r73_submesh: SubmeshId,
     msl_r27_submesh: SubmeshId,
+    acc_mesh: MeshId,
+    acc_thr_glow_idle: SubmeshId,
     pub rigid_body_handle: rapier3d::prelude::RigidBodyHandle,
     pub collider_handle: rapier3d::prelude::ColliderHandle,
     params: StarfuryParameters,
@@ -306,6 +319,9 @@ impl Starfury {
 
         let mesh_id: MeshId = "sa23".into();
         let geometry = rsys.get_mesh_info(mesh_id);
+
+        let acc_mesh: MeshId = "accessories".into();
+        let acc_thr_glow_idle: SubmeshId = "thruster_jet_glow_idle".into();
 
         use strum::{EnumProperty, IntoEnumIterator};
         let thrusters = EngineThrusterId::iter()
@@ -354,6 +370,8 @@ impl Starfury {
             msl_mesh: "r73r27".into(),
             msl_r73_submesh: MissileKind::R73.get_str("kind").unwrap().into(),
             msl_r27_submesh: MissileKind::R27.get_str("kind").unwrap().into(),
+            acc_mesh,
+            acc_thr_glow_idle,
             rigid_body_handle: body_handle,
             collider_handle,
             params,
@@ -580,7 +598,12 @@ impl Starfury {
         });
     }
 
-    pub fn draw(&self, draw_context: &DrawContext, draw_sys: &mut DrawingSys) {
+    pub fn draw(
+        &self,
+        draw_context: &DrawContext,
+        draw_sys: &mut DrawingSys,
+        dbg_draw: std::rc::Rc<std::cell::RefCell<DebugDrawOverlay>>,
+    ) {
         let ship2world = *draw_context
             .physics
             .get_rigid_body(self.rigid_body_handle)
@@ -629,6 +652,85 @@ impl Starfury {
                     EffectType::Pbr,
                 );
             });
+
+        //
+        // engine glow
+
+        let mut d = dbg_draw.borrow_mut();
+
+        [
+            EngineThrusterId::UpperLeftBack,
+            EngineThrusterId::UpperRightBack,
+            EngineThrusterId::LowerLeftBack,
+            EngineThrusterId::LowerRightBack,
+        ]
+        .iter()
+        .for_each(|&tid| {
+            let thruster = &self.thrusters[tid as usize];
+            let exhaust_origin = ship2world.transform_point(&nalgebra::Point3::new(
+                thruster.exhaust_attach_point.x,
+                thruster.exhaust_attach_point.y,
+                thruster.exhaust_attach_point.z,
+            ));
+
+            let transform = Isometry3::from_parts(
+                Translation3::new(exhaust_origin.x, exhaust_origin.y, exhaust_origin.z),
+                ship2world.rotation,
+            );
+
+            let z = transform.to_matrix().column(2).xyz();
+
+            // d.add_line(
+            //     exhaust_origin,
+            //     exhaust_origin + z * 0.75f32,
+            //     0xFF00FF00,
+            //     0xFF00FF00,
+            // );
+            d.add_point(
+                glm::Vec3::from_row_slice(exhaust_origin.coords.as_slice()),
+                1f32,
+                0xFF00FF00,
+            );
+
+            d.add_aabb_oriented(
+                transform.translation.vector,
+                &transform.rotation.to_rotation_matrix().matrix(),
+                [0.2f32, 0.2f32, 0.2f32].into(),
+                None,
+            );
+
+            draw_sys.add_mesh(
+                self.acc_mesh,
+                Some(self.acc_thr_glow_idle),
+                None,
+                &transform.to_matrix(),
+                EffectType::BasicEmissive,
+            );
+        });
+
+        self.params.thrusters_glow_idle.iter().for_each(|glow_pos| {
+            let glow_pos = ship2world.transform_point(&Point3::from(*glow_pos));
+
+            let transform =
+                Isometry3::from_parts(Translation3::from(glow_pos), ship2world.rotation);
+
+            // ship2world * Isometry3::translation(glow_pos.x, glow_pos.y, glow_pos.z);
+
+            // d.add_aabb_oriented(
+            //     *glow_pos,
+            //     &glm::Mat3::identity(),
+            //     [0.2f32, 0.2f32, 0.2f32].into(),
+            //     None,
+            // );
+
+            // draw_sys.add_mesh(
+            //     self.acc_mesh,
+            //     Some(self.acc_thr_glow_idle),
+            //     None,
+            //     &transform.to_matrix(),
+            // );
+            //     EffectType::BasicEmissive,
+        });
     }
 
     pub fn lower_left_gun(&self) -> Point3<f32> {

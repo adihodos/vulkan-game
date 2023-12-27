@@ -27,6 +27,16 @@
 		(
 			tag: "r73r27",
 			path: "missiles/R27R73.glb",
-		)
+		),
+
+        (
+            tag: "Babylon5_empty",
+            path: "b5/babylon5.glb",
+        ),
+        (
+            tag: "accessories",
+            path: "accessories/accessories.glb",
+        )
+        
 	]
 )

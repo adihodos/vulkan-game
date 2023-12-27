@@ -124,6 +124,28 @@ impl DebugDrawOverlay {
         })
     }
 
+    pub fn add_point(&mut self, p: glm::Vec3, ext: f32, color: u32) {
+        if self.lines_cpu.len() + 6 >= Self::MAX_LINES as usize {
+            return;
+        }
+
+        let lines = [
+            p + glm::Vec3::x_axis().xyz() * ext,
+            p - glm::Vec3::x_axis().xyz() * ext,
+            p + glm::Vec3::y_axis().xyz() * ext,
+            p - glm::Vec3::y_axis().xyz() * ext,
+            p + glm::Vec3::z_axis().xyz() * ext,
+            p - glm::Vec3::z_axis().xyz() * ext,
+        ];
+
+        self.lines_cpu.extend(lines.chunks_exact(2).map(|pt| Line {
+            start_pos: pt[0],
+            end_pos: pt[1],
+            start_color: color,
+            end_color: color,
+        }));
+    }
+
     pub fn add_line(
         &mut self,
         start_pos: glm::Vec3,
@@ -139,6 +161,60 @@ impl DebugDrawOverlay {
                 end_color,
             });
         }
+    }
+
+    pub fn add_aabb_oriented(
+        &mut self,
+        origin: glm::Vec3,
+        orientation: &glm::Mat3,
+        extents: glm::Vec3,
+        color: Option<u32>,
+    ) {
+        if self.lines_cpu.len() + 24 >= Self::MAX_LINES as usize {
+            return;
+        }
+
+        let [ax, ay, az] = [
+            glm::normalize(&glm::column(orientation, 0)),
+            glm::normalize(&glm::column(orientation, 1)),
+            glm::normalize(&glm::column(orientation, 2)),
+        ];
+
+        let o = origin;
+        let [ex, ey, ez] = [extents.x, extents.y, extents.z];
+
+        let points = [
+            // 1st face
+            o - az * ez + ay * ey + ax * ex,
+            o - az * ez + ay * ey - ax * ex,
+            o - az * ez - ay * ey - ax * ex,
+            o - az * ez - ay * ey + ax * ex,
+            // 2nd face
+            o + az * ez + ay * ey + ax * ex,
+            o + az * ez + ay * ey - ax * ex,
+            o + az * ez - ay * ey - ax * ex,
+            o + az * ez - ay * ey + ax * ex,
+        ];
+
+        let indices = [
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 0),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (7, 4),
+            (0, 4),
+            (1, 5),
+            (2, 6),
+            (3, 7),
+        ];
+
+        let c = color.unwrap_or(0xFF0000FF);
+        indices.iter().for_each(|&(i, j)| {
+            self.add_line(points[i as usize], points[j as usize], c, c);
+        });
     }
 
     pub fn add_aabb(&mut self, min: &glm::Vec3, max: &glm::Vec3, color: u32) {

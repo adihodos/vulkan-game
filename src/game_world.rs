@@ -24,7 +24,7 @@ use crate::{
     missile_sys::{MissileSpawnData, MissileSys, ProjectileSpawnData},
     particles::SparksSystem,
     physics_engine::{PhysicsEngine, PhysicsObjectCollisionGroups},
-    resource_system::{EffectType, ResourceSystem},
+    resource_system::{EffectType, MeshId, ResourceSystem},
     shadow_swarm::ShadowFighterSwarm,
     skybox::Skybox,
     sprite_batch::{SpriteBatch, TextureRegion},
@@ -126,6 +126,51 @@ struct Statistics {
     visible_instances: u32,
 }
 
+struct StaticObjects {
+    b5_pos: nalgebra::Isometry3<f32>,
+    b5_mesh: MeshId,
+    b5_phys_body_handle: RigidBodyHandle,
+    b5_phys_collider_handle: ColliderHandle,
+}
+
+impl StaticObjects {
+    pub fn new(rsys: &ResourceSystem, phys_engine: &mut PhysicsEngine) -> Self {
+        let b5_mesh = "Babylon5_empty".into();
+        let b5_pos = nalgebra::Isometry3::translation(100f32, 100f32, 100f32);
+
+        let geometry = rsys.get_mesh_info(b5_mesh);
+
+        geometry.nodes.iter().for_each(|n| {
+            log::info!("node : {}, aabb : {:#?}", n.name, n.aabb);
+        });
+
+        use rapier3d::dynamics::RigidBodyBuilder;
+
+        let b5_phys_body = RigidBodyBuilder::new(rapier3d::dynamics::RigidBodyType::Fixed)
+            .position(b5_pos)
+            .build();
+
+        use rapier3d::geometry::ColliderBuilder;
+
+        let bbox = geometry.bounds.extents();
+        let b5_phys_collider = ColliderBuilder::cuboid(bbox.x, bbox.y, bbox.z).build();
+
+        let b5_phys_body_handle = phys_engine.rigid_body_set.insert(b5_phys_body);
+        let b5_phys_collider_handle = phys_engine.collider_set.insert_with_parent(
+            b5_phys_collider,
+            b5_phys_body_handle,
+            &mut phys_engine.rigid_body_set,
+        );
+
+        Self {
+            b5_pos,
+            b5_mesh,
+            b5_phys_body_handle,
+            b5_phys_collider_handle,
+        }
+    }
+}
+
 pub struct GameWorld {
     draw_opts: RefCell<DebugOptions>,
     skybox: Skybox,
@@ -148,6 +193,7 @@ pub struct GameWorld {
     ui: RefCell<UiBackend>,
     ubo_bindless: UniqueBuffer,
     ubo_bindless_handles: Vec<BindlessResourceHandle>,
+    statics: StaticObjects,
 }
 
 impl GameWorld {
@@ -254,6 +300,8 @@ impl GameWorld {
         })
         .expect("oopsie");
 
+        let statics = StaticObjects::new(&rsys, &mut physics_engine);
+
         Some(GameWorld {
             draw_opts: RefCell::new(DebugOptions::default()),
             skybox,
@@ -279,6 +327,7 @@ impl GameWorld {
             ui,
             ubo_bindless,
             ubo_bindless_handles,
+            statics,
         })
     }
 
@@ -452,8 +501,11 @@ impl GameWorld {
 
         self.skybox.draw(&draw_context);
 
-        self.starfury
-            .draw(&draw_context, &mut self.drawing_sys.borrow_mut());
+        self.starfury.draw(
+            &draw_context,
+            &mut self.drawing_sys.borrow_mut(),
+            Rc::clone(&self.debug_draw_overlay),
+        );
 
         //
         // draw ze enemies Hans, ja ja wunderbar
@@ -510,6 +562,14 @@ impl GameWorld {
                 .borrow_mut()
                 .world_space_coord_sys(self.draw_opts.borrow().world_axis_length);
         }
+
+        self.drawing_sys.borrow_mut().add_mesh(
+            self.statics.b5_mesh,
+            None,
+            None,
+            &self.statics.b5_pos.to_matrix(),
+            EffectType::BasicEmissive,
+        );
 
         //         if self.debug_options().debug_draw_mesh {
         //             let aabb = self.render_state.borrow()[game_object.handle.0 as usize]
