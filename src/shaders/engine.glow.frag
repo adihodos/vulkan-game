@@ -15,13 +15,9 @@ layout (location = 0) in vs_out_fs_in {
 layout (location = 0) out vec4 FinalFragColor;
 
 void main() {
-  const float a = texture(g_Global2DTextures[nonuniformEXT(fs_in.glowImage)], fs_in.uvGlow).r;
+  const vec2 noise = texture(g_Global2DTextures[nonuniformEXT(fs_in.noiseImage)], fs_in.uvNoise).rg; 
+  const float a = texture(g_Global2DTextures[nonuniformEXT(fs_in.glowImage)], fs_in.uvGlow).r * fs_in.glowIntensity;
   
   FinalFragColor = vec4(
-    fs_in.color
-    *
-    fs_in.glowIntensity
-    *
-    texture(g_Global2DTextures[nonuniformEXT(fs_in.noiseImage)], fs_in.uvNoise).rgb,
-    a);
+    fs_in.color, a * noise.x);
 }

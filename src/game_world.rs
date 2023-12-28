@@ -552,7 +552,7 @@ impl GameWorld {
                 ui.new_frame(frame_context.window)
             });
 
-            self.ui(&mut u);
+            self.ui(&u);
         }
         {
             let mut ui = self.ui.borrow_mut();
@@ -616,7 +616,8 @@ impl GameWorld {
         // }
     }
 
-    pub fn ui(&self, ui: &mut imgui::Ui) {
+    pub fn ui(&self, ui: &imgui::Ui) {
+        use imgui::*;
         ui.window("Options")
             .size([400.0, 110.0], imgui::Condition::FirstUseEver)
             .build(|| {
@@ -712,6 +713,10 @@ impl GameWorld {
                         ui.text(format!("Z: {}", dir));
                     }
                 }
+
+                ui.separator();
+
+                self.drawing_sys.borrow_mut().debug_ui(ui);
 
                 ui.separator();
                 ui.text("Instancing:");

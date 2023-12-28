@@ -113,6 +113,22 @@ impl DrawingSys {
         })
     }
 
+    pub fn debug_ui(&mut self, ui: &imgui::Ui) {
+        use imgui::*;
+        if ui.collapsing_header("Engine glow debug", TreeNodeFlags::FRAMED) {
+            let mut glow_intensity = self.glow_effect.glow_color.s;
+            ui.slider("Glow intensity", 0f32, 1f32, &mut glow_intensity);
+            self.glow_effect.glow_color.s = glow_intensity;
+
+            ui.slider(
+                "Glow alpha",
+                1f32,
+                10f32,
+                &mut self.glow_effect.glow_intensity,
+            );
+        }
+    }
+
     pub fn add_mesh(
         &mut self,
         mesh: MeshId,
@@ -175,7 +191,7 @@ impl DrawingSys {
                     instance_handle: self.g_inst_buf_handle[draw_ctx.frame_id as usize].handle(),
                     glow_image: self.glow_effect.glow_img_handle.handle(),
                     noise_image: self.glow_effect.noise_img_handle.handle(),
-                    glow_intensity: 1f32, // TODO: hardcoded value, fix it
+                    glow_intensity: self.glow_effect.glow_intensity, // TODO: hardcoded value, fix it
                     tex_transform: na::Rotation3::from_axis_angle(
                         &na::Vector3::z_axis(),
                         self.glow_effect.noise_rot,
@@ -387,6 +403,7 @@ struct EngineGlowEffect {
     noise_img_handle: BindlessResourceHandle,
     noise_rot: f32,
     glow_color: Hsv,
+    glow_intensity: f32,
 }
 
 impl EngineGlowEffect {
@@ -465,6 +482,12 @@ impl EngineGlowEffect {
             Some(SamplerDescription(sampler_noise)),
         );
 
+        use crate::color_palettes;
+        log::info!(
+            "HSV blue: {:#?}",
+            Hsv::from(Into::<Rgba32F>::into(color_palettes::StdColors::BLUE))
+        );
+
         Ok(Self {
             ssbo_glowdata,
             ssbo_glowdata_handle,
@@ -478,6 +501,7 @@ impl EngineGlowEffect {
                 a: 1f32,
             }
             .into(),
+            glow_intensity: 1f32,
         })
     }
 }

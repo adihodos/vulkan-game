@@ -108,6 +108,7 @@ impl std::convert::From<u32> for Rgba32F {
 impl std::convert::From<Rgba32F> for u32 {
     fn from(c: Rgba32F) -> Self {
         // comp-sci soy boy FTW !!!!
+        // omg them epic funcshoonals
         let (c, _) = c.as_slice().iter().fold((0u32, 0u32), |(acc, i), c| {
             (acc | ((c * 255f32).ceil() as u32) << i * 8, i + 1)
         });
