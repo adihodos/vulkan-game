@@ -1,12 +1,15 @@
 use ash::vk::{
-    BufferUsageFlags, DrawIndexedIndirectCommand, Handle, MemoryPropertyFlags, ShaderStageFlags,
+    BufferUsageFlags, DrawIndexedIndirectCommand, MemoryPropertyFlags, ShaderStageFlags,
 };
+
+use nalgebra_glm as glm;
 
 use crate::{
     bindless::BindlessResourceHandle,
-    draw_context::{DrawContext, InitContext},
+    color::{Hsv, Rgba32F},
+    draw_context::{DrawContext, InitContext, UpdateContext},
     resource_system::{EffectType, InstanceRenderInfo, MeshId, SubmeshId},
-    vk_renderer::UniqueBuffer,
+    vk_renderer::{UniqueBuffer, UniqueImageWithView},
     ProgramError,
 };
 
@@ -34,6 +37,7 @@ pub struct DrawingSys {
     g_inst_buf_handle: Vec<BindlessResourceHandle>,
     drawcalls_buffer: UniqueBuffer,
     requests: Vec<DrawRequest>,
+    glow_effect: EngineGlowEffect,
 }
 
 impl DrawingSys {
@@ -105,6 +109,7 @@ impl DrawingSys {
             g_inst_buf_handle,
             drawcalls_buffer,
             requests: Vec::with_capacity(1024),
+            glow_effect: EngineGlowEffect::new(init_ctx)?,
         })
     }
 
@@ -125,6 +130,15 @@ impl DrawingSys {
         });
     }
 
+    pub fn update(&mut self, ctx: &UpdateContext) {
+        let angle = (std::f32::consts::FRAC_PI_4) * ctx.elapsed_time.as_secs_f32();
+
+        self.glow_effect.noise_rot += angle;
+        if self.glow_effect.noise_rot > (2f32 * std::f32::consts::PI) {
+            self.glow_effect.noise_rot -= 2f32 * std::f32::consts::PI;
+        }
+    }
+
     pub fn draw(&mut self, draw_ctx: &DrawContext) {
         let _ = self
             .pbr_renderpass_buff
@@ -141,6 +155,40 @@ impl DrawingSys {
                     std::ptr::copy_nonoverlapping(
                         &pass_setup as *const _,
                         pass_buff.as_mut_ptr() as *mut _,
+                        1,
+                    );
+                }
+            });
+
+        use nalgebra as na;
+
+        use crate::color::*;
+        use crate::color_palettes::StdColors;
+        let c: Rgba32F = StdColors::BLUE.into();
+
+        let _ = self
+            .glow_effect
+            .ssbo_glowdata
+            .map_for_frame(draw_ctx.renderer, draw_ctx.frame_id)
+            .map(|mut glow_setup_buff| {
+                let glow_data = EngineGlowData {
+                    instance_handle: self.g_inst_buf_handle[draw_ctx.frame_id as usize].handle(),
+                    glow_image: self.glow_effect.glow_img_handle.handle(),
+                    noise_image: self.glow_effect.noise_img_handle.handle(),
+                    glow_intensity: 1f32, // TODO: hardcoded value, fix it
+                    tex_transform: na::Rotation3::from_axis_angle(
+                        &na::Vector3::z_axis(),
+                        self.glow_effect.noise_rot,
+                    )
+                    .to_homogeneous(),
+                    glow_color: (Into::<Rgba32F>::into(self.glow_effect.glow_color)).into(),
+                    ubo_handle: draw_ctx.global_ubo_handle,
+                };
+
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        &glow_data as *const _,
+                        glow_setup_buff.as_mut_ptr() as *mut _,
                         1,
                     );
                 }
@@ -274,6 +322,10 @@ impl DrawingSys {
             .handle()
             .to_le_bytes();
 
+        let ssbo_glow_handle = self.glow_effect.ssbo_glowdata_handle[draw_ctx.frame_id as usize]
+            .handle()
+            .to_le_bytes();
+
         let draw_cmd_buff_offset =
             self.drawcalls_buffer.aligned_slab_size * draw_ctx.frame_id as usize;
 
@@ -285,12 +337,17 @@ impl DrawingSys {
                 pipeline,
             );
 
+            let push_const = match cmd.effect {
+                EffectType::Pbr | EffectType::BasicEmissive => ssbo_pbr_setup_handle,
+                EffectType::Glow => ssbo_glow_handle,
+            };
+
             draw_ctx.renderer.graphics_device().cmd_push_constants(
                 draw_ctx.cmd_buff,
                 draw_ctx.rsys.bindless.bindless_pipeline_layout(),
                 ShaderStageFlags::ALL,
                 0,
-                &ssbo_pbr_setup_handle,
+                &push_const,
             );
 
             draw_ctx
@@ -308,5 +365,119 @@ impl DrawingSys {
         });
 
         self.requests.clear();
+    }
+}
+
+#[derive(Copy, Clone)]
+#[repr(C, align(16))]
+struct EngineGlowData {
+    ubo_handle: u32,
+    instance_handle: u32,
+    glow_image: u32,
+    noise_image: u32,
+    glow_color: glm::Vec3,
+    glow_intensity: f32,
+    tex_transform: glm::Mat4,
+}
+
+struct EngineGlowEffect {
+    ssbo_glowdata: UniqueBuffer,
+    ssbo_glowdata_handle: Vec<BindlessResourceHandle>,
+    glow_img_handle: BindlessResourceHandle,
+    noise_img_handle: BindlessResourceHandle,
+    noise_rot: f32,
+    glow_color: Hsv,
+}
+
+impl EngineGlowEffect {
+    fn new(init_ctx: &mut crate::draw_context::InitContext) -> Result<Self, ProgramError> {
+        let ssbo_glowdata = UniqueBuffer::with_capacity(
+            init_ctx.renderer,
+            BufferUsageFlags::STORAGE_BUFFER,
+            MemoryPropertyFlags::HOST_VISIBLE,
+            16,
+            std::mem::size_of::<EngineGlowData>(),
+            init_ctx.renderer.max_inflight_frames(),
+        )?;
+
+        init_ctx
+            .renderer
+            .debug_set_object_tag("Glow effect/SSBO", &ssbo_glowdata);
+
+        let ssbo_glowdata_handle = init_ctx.rsys.bindless.register_chunked_ssbo(
+            init_ctx.renderer,
+            &ssbo_glowdata,
+            init_ctx.renderer.max_inflight_frames() as usize,
+        );
+
+        let work_pkg = init_ctx
+            .renderer
+            .create_work_package()
+            .expect("Failed to create work package");
+
+        let glow_img = UniqueImageWithView::from_png(
+            init_ctx.renderer,
+            &work_pkg,
+            init_ctx.cfg.engine.texture_path("engine_glow/jet_glow.png"),
+        )?;
+
+        init_ctx
+            .renderer
+            .debug_set_object_tag("engine_glow/jet_glow", &glow_img);
+
+        let noise_img = UniqueImageWithView::from_png(
+            init_ctx.renderer,
+            &work_pkg,
+            init_ctx.cfg.engine.texture_path("engine_glow/noise.png"),
+        )?;
+
+        init_ctx.renderer.push_work_package(work_pkg);
+
+        init_ctx
+            .renderer
+            .debug_set_object_tag("engine_glow/noise", &noise_img);
+
+        let glow_img_handle = init_ctx.rsys.add_texture_bindless(
+            "engine_glow/jet_glow",
+            init_ctx.renderer,
+            glow_img,
+            None,
+        );
+
+        use crate::resource_system::SamplerDescription;
+        use ash::vk::*;
+
+        let sampler_noise = *SamplerCreateInfo::builder()
+            .mag_filter(Filter::LINEAR)
+            .min_filter(Filter::LINEAR)
+            .mipmap_mode(SamplerMipmapMode::LINEAR)
+            .address_mode_u(SamplerAddressMode::REPEAT)
+            .address_mode_v(SamplerAddressMode::REPEAT)
+            .address_mode_w(SamplerAddressMode::REPEAT)
+            .min_lod(0f32)
+            .max_lod(1f32)
+            .border_color(BorderColor::INT_OPAQUE_BLACK);
+
+        let noise_img_handle = init_ctx.rsys.add_texture_bindless(
+            "engine_glow/noise",
+            init_ctx.renderer,
+            noise_img,
+            Some(SamplerDescription(sampler_noise)),
+        );
+
+        Ok(Self {
+            ssbo_glowdata,
+            ssbo_glowdata_handle,
+            glow_img_handle,
+            noise_img_handle,
+            noise_rot: 0f32,
+            glow_color: Rgba32F {
+                r: 0f32,
+                g: 0f32,
+                b: 1f32,
+                a: 1f32,
+            }
+            .into(),
+        })
     }
 }

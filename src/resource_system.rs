@@ -95,6 +95,7 @@ impl MeshRenderInfo {
 pub enum EffectType {
     Pbr,
     BasicEmissive,
+    Glow,
 }
 
 #[derive(Copy, Clone)]
@@ -606,6 +607,9 @@ impl ResourceSystem {
             bindless.bindless_pipeline_layout(),
         )?;
 
+        let glow_effect =
+            Self::create_glow_effect(renderer, app_config, bindless.bindless_pipeline_layout())?;
+
         Ok(ResourceSystem {
             g_vertex_buffer,
             material_buffer,
@@ -617,6 +621,7 @@ impl ResourceSystem {
             effect_table: [
                 (EffectType::Pbr, pbr_effect),
                 (EffectType::BasicEmissive, emissive_effect),
+                (EffectType::Glow, glow_effect),
             ]
             .into(),
             bindless,
@@ -691,6 +696,106 @@ impl ResourceSystem {
                     entry_point: "main",
                 },
             ])
+            .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
+            .set_raster_state(
+                PipelineRasterizationStateCreateInfo::builder()
+                    .cull_mode(CullModeFlags::BACK)
+                    .front_face(FrontFace::CLOCKWISE)
+                    .line_width(1f32)
+                    .polygon_mode(PolygonMode::FILL)
+                    .build(),
+            )
+            .build_bindless(
+                renderer.graphics_device(),
+                renderer.pipeline_cache(),
+                layout,
+                renderer.renderpass(),
+                0,
+            )
+    }
+
+    fn create_glow_effect(
+        renderer: &VulkanRenderer,
+        app_config: &AppConfig,
+        layout: PipelineLayout,
+    ) -> Result<BindlessPipeline, ProgramError> {
+        use ash::vk::*;
+
+        GraphicsPipelineBuilder::new()
+            .add_vertex_input_attribute_descriptions(&[
+                VertexInputAttributeDescription {
+                    location: 0,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, pos) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 1,
+                    binding: 0,
+                    format: Format::R32G32B32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, normal) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 2,
+                    binding: 0,
+                    format: Format::R32G32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, uv) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 3,
+                    binding: 0,
+                    format: Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, color) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 4,
+                    binding: 0,
+                    format: Format::R32G32B32A32_SFLOAT,
+                    offset: offset_of!(GeometryVertex, tangent) as u32,
+                },
+                VertexInputAttributeDescription {
+                    location: 5,
+                    binding: 0,
+                    format: Format::R32_UINT,
+                    offset: offset_of!(GeometryVertex, pbr_buf_id) as u32,
+                },
+            ])
+            .add_vertex_input_attribute_binding(
+                VertexInputBindingDescription::builder()
+                    .binding(0)
+                    .stride(std::mem::size_of::<GeometryVertex>() as u32)
+                    .input_rate(VertexInputRate::VERTEX)
+                    .build(),
+            )
+            .shader_stages(&[
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::VERTEX,
+                    source: ShaderModuleSource::File(
+                        &app_config.engine.shader_path("engine.glow.vert.spv"),
+                    ),
+                    entry_point: "main",
+                },
+                ShaderModuleDescription {
+                    stage: ShaderStageFlags::FRAGMENT,
+                    source: ShaderModuleSource::File(
+                        &app_config.engine.shader_path("engine.glow.frag.spv"),
+                    ),
+                    entry_point: "main",
+                },
+            ])
+            .set_colorblend_attachment(
+                0,
+                PipelineColorBlendAttachmentState::builder()
+                    .blend_enable(true)
+                    .color_blend_op(BlendOp::ADD)
+                    .alpha_blend_op(BlendOp::ADD)
+                    .src_color_blend_factor(BlendFactor::SRC_ALPHA)
+                    .dst_color_blend_factor(BlendFactor::ONE_MINUS_SRC_ALPHA)
+                    .dst_alpha_blend_factor(BlendFactor::ONE_MINUS_SRC_ALPHA)
+                    .src_alpha_blend_factor(BlendFactor::ONE)
+                    .color_write_mask(ColorComponentFlags::RGBA)
+                    .build(),
+            )
             .dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR])
             .set_raster_state(
                 PipelineRasterizationStateCreateInfo::builder()

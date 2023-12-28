@@ -866,6 +866,75 @@ impl UniqueImageWithView {
         Some(UniqueImageWithView(image, image_view))
     }
 
+    // TODO: unify with from_ktx, function should be able to detect image type based
+    // on file extension
+    pub fn from_png<P: std::convert::AsRef<std::path::Path>>(
+        renderer: &crate::vk_renderer::VulkanRenderer,
+        work_pkg: &RendererWorkPackage,
+        path: P,
+    ) -> Result<UniqueImageWithView, ProgramError> {
+        let map_err_fn =
+            |e: png::DecodingError| std::io::Error::new(std::io::ErrorKind::Other, e.to_string());
+
+        let decoder = png::Decoder::new(std::fs::File::open(path.as_ref())?);
+        let mut reader = decoder.read_info().map_err(map_err_fn)?;
+
+        let img_bytes = reader.output_buffer_size();
+        let mut pixels = vec![0; img_bytes];
+        reader.next_frame(&mut pixels).map_err(map_err_fn)?;
+
+        log::info!(
+            "{} -> image type {:#?}",
+            path.as_ref().display(),
+            reader.info().color_type
+        );
+
+        use png::*;
+        let png_info = reader.info();
+        let bits = png_info.bit_depth;
+
+        assert!(bits == BitDepth::Eight);
+
+        let image_fmt = match png_info.color_type {
+            ColorType::Rgb => Format::R8G8B8_UNORM,
+            ColorType::Rgba => Format::R8G8B8A8_UNORM,
+            ColorType::Grayscale => Format::R8_UNORM,
+            ColorType::GrayscaleAlpha => Format::R8G8_UNORM,
+            _ => panic!("Unhandled PNG format!"),
+        };
+
+        let img_extent = Extent3D {
+            width: png_info.width,
+            height: png_info.height,
+            depth: 1,
+        };
+
+        let image_create_info = *ImageCreateInfo::builder()
+            .image_type(ImageType::TYPE_2D)
+            .format(image_fmt)
+            .extent(img_extent)
+            .mip_levels(1)
+            .array_layers(1)
+            .samples(SampleCountFlags::TYPE_1)
+            .tiling(ImageTiling::OPTIMAL)
+            .usage(ImageUsageFlags::SAMPLED | ImageUsageFlags::TRANSFER_DST)
+            .sharing_mode(SharingMode::EXCLUSIVE)
+            .initial_layout(ImageLayout::UNDEFINED);
+
+        use crate::vk_renderer::*;
+
+        UniqueImageWithView::from_pixels(
+            renderer,
+            &image_create_info,
+            work_pkg,
+            &[ImageCopySource {
+                src: pixels.as_ptr(),
+                bytes: pixels.len() as DeviceSize,
+            }],
+        )
+        .ok_or_else(|| ProgramError::GraphicsSystemError(ash::vk::Result::ERROR_UNKNOWN))
+    }
+
     pub fn from_pixels(
         renderer: &VulkanRenderer,
         image_info: &ImageCreateInfo,
@@ -888,6 +957,12 @@ impl UniqueImageWithView {
 
     pub fn info(&self) -> &ImageInfo {
         &self.0.info
+    }
+}
+
+impl ObjectDebugTag for UniqueImageWithView {
+    fn get_type_and_handle(&self) -> (ObjectType, u64) {
+        (ObjectType::IMAGE, self.image().as_raw())
     }
 }
 
@@ -3058,6 +3133,10 @@ impl VulkanRenderer {
 
     pub fn descriptor_pool(&self) -> DescriptorPool {
         self.descriptor_pool.dpool
+    }
+
+    pub fn queue_family_idx(&self) -> u32 {
+        self.queue_family_index
     }
 
     pub fn begin_resource_loading(&self) {

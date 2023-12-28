@@ -124,18 +124,24 @@ impl DebugDrawOverlay {
         })
     }
 
-    pub fn add_point(&mut self, p: glm::Vec3, ext: f32, color: u32) {
+    pub fn add_point(&mut self, p: glm::Vec3, orientation: &glm::Mat3, ext: f32, color: u32) {
         if self.lines_cpu.len() + 6 >= Self::MAX_LINES as usize {
             return;
         }
 
+        let [ax, ay, az] = [
+            orientation.column(0),
+            orientation.column(1),
+            orientation.column(2),
+        ];
+
         let lines = [
-            p + glm::Vec3::x_axis().xyz() * ext,
-            p - glm::Vec3::x_axis().xyz() * ext,
-            p + glm::Vec3::y_axis().xyz() * ext,
-            p - glm::Vec3::y_axis().xyz() * ext,
-            p + glm::Vec3::z_axis().xyz() * ext,
-            p - glm::Vec3::z_axis().xyz() * ext,
+            p + ax * ext,
+            p - ax * ext,
+            p + ay * ext,
+            p - ay * ext,
+            p + az * ext,
+            p - az * ext,
         ];
 
         self.lines_cpu.extend(lines.chunks_exact(2).map(|pt| Line {
@@ -488,15 +494,22 @@ impl rapier3d::pipeline::DebugRenderBackend for DebugDrawOverlay {
         b: rapier3d::prelude::Point<rapier3d::prelude::Real>,
         color: [f32; 4],
     ) {
-        let color: palette::rgb::PackedRgba =
-            palette::Srgba::new(color[0], color[1], color[2], color[3])
-                .into_format()
-                .into();
+        // let color = [0f32, 1f32, 0f32, 1f32];
+
+        let (color_u32, _) =
+            color
+                .iter()
+                .map(|x| (x * 255f32) as u8)
+                .fold((0u32, 0u32), |(acc, i), c| {
+                    let acc = acc | (c as u32) << (i * 8);
+                    (acc, i + 1)
+                });
+
         self.add_line(
             a.to_homogeneous().xyz(),
             b.to_homogeneous().xyz(),
-            color.color,
-            color.color,
+            color_u32,
+            color_u32,
         );
     }
 }

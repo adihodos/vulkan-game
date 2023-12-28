@@ -194,6 +194,7 @@ pub struct GameWorld {
     ubo_bindless: UniqueBuffer,
     ubo_bindless_handles: Vec<BindlessResourceHandle>,
     statics: StaticObjects,
+    delta: std::time::Duration,
 }
 
 impl GameWorld {
@@ -284,6 +285,8 @@ impl GameWorld {
             renderer.max_inflight_frames() as usize,
         );
 
+        log::info!("Global UBO handles: {ubo_bindless_handles:#?}");
+
         let draw_sys = DrawingSys::create(&mut InitContext {
             window,
             renderer,
@@ -328,6 +331,7 @@ impl GameWorld {
             ubo_bindless,
             ubo_bindless_handles,
             statics,
+            delta: Default::default(),
         })
     }
 
@@ -439,6 +443,7 @@ impl GameWorld {
         let physics = self.physics_engine.borrow();
 
         let draw_context = DrawContext {
+            delta: self.delta,
             physics: &physics,
             rsys: &self.resource_sys,
             renderer: frame_context.renderer,
@@ -748,6 +753,7 @@ impl GameWorld {
     }
 
     pub fn update(&mut self, frame_delta: std::time::Duration, cfg: &AppConfig) {
+        self.delta = frame_delta;
         let frame_time = frame_delta.as_secs_f64();
 
         {
@@ -818,6 +824,7 @@ impl GameWorld {
                 self.missile_sys.borrow_mut().update(&mut update_ctx);
                 self.sparks_sys.borrow_mut().update(&mut update_ctx);
                 self.starfury.update(&mut update_ctx);
+                self.drawing_sys.borrow_mut().update(&mut update_ctx);
 
                 update_ctx.queued_commands
             };

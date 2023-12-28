@@ -23,6 +23,7 @@ pub struct FrameRenderContext<'a> {
 }
 
 pub struct DrawContext<'a> {
+    pub delta: std::time::Duration,
     pub physics: &'a PhysicsEngine,
     pub renderer: &'a VulkanRenderer,
     pub rsys: &'a ResourceSystem,

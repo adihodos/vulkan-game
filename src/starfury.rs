@@ -321,7 +321,7 @@ impl Starfury {
         let geometry = rsys.get_mesh_info(mesh_id);
 
         let acc_mesh: MeshId = "accessories".into();
-        let acc_thr_glow_idle: SubmeshId = "thruster_jet_glow_idle".into();
+        let acc_thr_glow_idle: SubmeshId = "jet_exhaust_glow".into();
 
         use strum::{EnumProperty, IntoEnumIterator};
         let thrusters = EngineThrusterId::iter()
@@ -658,78 +658,26 @@ impl Starfury {
 
         let mut d = dbg_draw.borrow_mut();
 
-        [
-            EngineThrusterId::UpperLeftBack,
-            EngineThrusterId::UpperRightBack,
-            EngineThrusterId::LowerLeftBack,
-            EngineThrusterId::LowerRightBack,
-        ]
-        .iter()
-        .for_each(|&tid| {
-            let thruster = &self.thrusters[tid as usize];
-            let exhaust_origin = ship2world.transform_point(&nalgebra::Point3::new(
-                thruster.exhaust_attach_point.x,
-                thruster.exhaust_attach_point.y,
-                thruster.exhaust_attach_point.z,
-            ));
-
-            let transform = Isometry3::from_parts(
-                Translation3::new(exhaust_origin.x, exhaust_origin.y, exhaust_origin.z),
-                ship2world.rotation,
-            );
-
-            let z = transform.to_matrix().column(2).xyz();
-
-            // d.add_line(
-            //     exhaust_origin,
-            //     exhaust_origin + z * 0.75f32,
-            //     0xFF00FF00,
-            //     0xFF00FF00,
-            // );
-            d.add_point(
-                glm::Vec3::from_row_slice(exhaust_origin.coords.as_slice()),
-                1f32,
-                0xFF00FF00,
-            );
-
-            d.add_aabb_oriented(
-                transform.translation.vector,
-                &transform.rotation.to_rotation_matrix().matrix(),
-                [0.2f32, 0.2f32, 0.2f32].into(),
-                None,
-            );
-
-            draw_sys.add_mesh(
-                self.acc_mesh,
-                Some(self.acc_thr_glow_idle),
-                None,
-                &transform.to_matrix(),
-                EffectType::BasicEmissive,
-            );
-        });
-
         self.params.thrusters_glow_idle.iter().for_each(|glow_pos| {
-            let glow_pos = ship2world.transform_point(&Point3::from(*glow_pos));
+            let glow_pos = ship2world * Point3::from(*glow_pos);
 
             let transform =
                 Isometry3::from_parts(Translation3::from(glow_pos), ship2world.rotation);
 
-            // ship2world * Isometry3::translation(glow_pos.x, glow_pos.y, glow_pos.z);
+            d.add_point(
+                transform.translation.vector,
+                &transform.rotation.to_rotation_matrix().matrix(),
+                0.5f32,
+                0xFF00FF00,
+            );
 
-            // d.add_aabb_oriented(
-            //     *glow_pos,
-            //     &glm::Mat3::identity(),
-            //     [0.2f32, 0.2f32, 0.2f32].into(),
-            //     None,
-            // );
-
-            // draw_sys.add_mesh(
-            //     self.acc_mesh,
-            //     Some(self.acc_thr_glow_idle),
-            //     None,
-            //     &transform.to_matrix(),
-            // );
-            //     EffectType::BasicEmissive,
+            draw_sys.add_mesh(
+                self.msl_mesh,
+                Some(self.acc_thr_glow_idle),
+                None,
+                &transform.to_matrix(),
+                EffectType::Glow,
+            );
         });
     }
 

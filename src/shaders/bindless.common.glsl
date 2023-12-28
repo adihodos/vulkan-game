@@ -54,6 +54,16 @@ struct SparkInstance {
   float intensity;
 };
 
+struct EngineGlowData {
+  uint uboHandle;
+  uint instanceHandle;
+  uint glowImage;
+  uint noiseImage;
+  vec3 glowColor;
+  float glowIntensity;
+  mat4 texTransform;
+};
+
 layout (set = 1, binding = 0) readonly buffer GlobalInstanceData {
   InstanceRenderInfo data[]; 
 } g_GlobalInstances[];
@@ -77,6 +87,10 @@ layout (set = 1, binding = 0) readonly buffer GlobalPbrRenderpassHandles {
 layout (set = 1, binding = 0) readonly buffer GlobalSparkInstances {
   SparkInstance arr[];
 } g_GlobalSparkInstances[];
+
+layout (set = 1, binding = 0) readonly buffer GlobalEngineGlowData {
+  EngineGlowData arr[];
+} g_GlobalEngineGlowData[];
 
 layout (set = 2, binding = 0) uniform sampler2D g_Global2DTextures[];
 layout (set = 2, binding = 0) uniform sampler2DArray g_Global2DArrayTextures[];
