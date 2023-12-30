@@ -3,7 +3,7 @@ use crate::{
     draw_context::{DrawContext, UpdateContext},
     drawing_system::DrawingSys,
     game_world::QueuedCommand,
-    math::AABB3,
+    math::{ease_inout_sine, AABB3},
     missile_sys::MissileKind,
     missile_sys::{MissileSpawnData, ProjectileKind, ProjectileSpawnData},
     physics_engine::PhysicsEngine,
@@ -274,6 +274,7 @@ struct StarfuryParameters {
     fm: FlightModel,
     weapons: Weapons,
     thrusters_glow_idle: [glm::Vec3; 4],
+    engine_accel_time: std::time::Duration,
 }
 
 #[derive(Clone, Copy)]
@@ -289,6 +290,23 @@ struct SuspendedWeaponry {
     id: WeaponPylonId,
     kind: MissileKind,
     weapon_attached: bool,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+#[repr(u8)]
+enum EngineState {
+    Idle,
+    Accelerating,
+    MaxBurn,
+    Decelerating,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+#[repr(u8)]
+enum ThrottlePosition {
+    Neutral,
+    Forward,
+    Backward,
 }
 
 pub struct Starfury {
@@ -307,6 +325,9 @@ pub struct Starfury {
     guns_cooldown: f32,
     missile_respawn_cooldown: f32,
     missile_fire_cooldown: f32,
+    engine_state: EngineState,
+    throttle_time: std::time::Duration,
+    throttle_pos: ThrottlePosition,
 }
 
 impl Starfury {
@@ -395,6 +416,9 @@ impl Starfury {
                     }
                 })
                 .collect(),
+            engine_state: EngineState::Idle,
+            throttle_time: std::time::Duration::ZERO,
+            throttle_pos: ThrottlePosition::Neutral,
         }
     }
 
@@ -452,6 +476,38 @@ impl Starfury {
     // }
 
     pub fn update(&mut self, update_context: &mut UpdateContext) {
+        match self.throttle_pos {
+            ThrottlePosition::Forward => match self.engine_state {
+                EngineState::Idle | EngineState::Decelerating => {
+                    self.engine_state = EngineState::Accelerating;
+                    self.throttle_time = std::time::Duration::ZERO;
+                }
+                EngineState::Accelerating => {
+                    if self.throttle_time >= self.params.engine_accel_time {
+                        self.engine_state = EngineState::MaxBurn;
+                        self.throttle_time = self.params.engine_accel_time;
+                    } else {
+                        self.throttle_time += update_context.elapsed_time;
+                    }
+                }
+                EngineState::MaxBurn => {}
+            },
+            ThrottlePosition::Backward | ThrottlePosition::Neutral => match self.engine_state {
+                EngineState::MaxBurn | EngineState::Accelerating => {
+                    self.engine_state = EngineState::Decelerating
+                }
+                EngineState::Decelerating => {
+                    if update_context.elapsed_time > self.throttle_time {
+                        self.throttle_time = std::time::Duration::ZERO;
+                        self.engine_state = EngineState::Idle;
+                    } else {
+                        self.throttle_time -= update_context.elapsed_time;
+                    }
+                }
+                EngineState::Idle => {}
+            },
+        }
+
         self.physics_update(&mut update_context.physics_engine);
 
         self.guns_cooldown = (self.guns_cooldown - update_context.frame_time as f32).max(0f32);
@@ -658,6 +714,22 @@ impl Starfury {
 
         let mut d = dbg_draw.borrow_mut();
 
+        let glow_intensity = match self.engine_state {
+            EngineState::Idle => 1f32,
+            EngineState::MaxBurn => 0f32,
+            _ => {
+                1f32 - ease_inout_sine(
+                    self.throttle_time.as_secs_f32() / self.params.engine_accel_time.as_secs_f32(),
+                )
+            }
+        };
+
+        draw_sys.set_effect_parameter(
+            EffectType::Glow,
+            "glow_intensity".into(),
+            crate::drawing_system::EffectParameterData::Float32(glow_intensity),
+        );
+
         self.params.thrusters_glow_idle.iter().for_each(|glow_pos| {
             let glow_pos = ship2world * Point3::from(*glow_pos);
 
@@ -771,6 +843,28 @@ impl Starfury {
                 });
             },
         );
+
+        self.throttle_pos = input_state
+            .gamepad
+            .left_stick_y
+            .axis_data
+            .map(|axis_data| {
+                let throttle_value = axis_data.value();
+
+                if throttle_value.abs() <= input_state.gamepad.left_stick_y.deadzone {
+                    return None;
+                }
+
+                if throttle_value > 0f32 {
+                    Some(ThrottlePosition::Forward)
+                } else if throttle_value < 0f32 {
+                    Some(ThrottlePosition::Backward)
+                } else {
+                    Some(ThrottlePosition::Neutral)
+                }
+            })
+            .flatten()
+            .unwrap_or(ThrottlePosition::Neutral);
 
         let roll_pitch = [
             (

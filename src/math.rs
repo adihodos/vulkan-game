@@ -327,3 +327,7 @@ pub fn integer_decode(val: f64) -> (u64, i16, i8) {
     exponent -= 1023 + 52;
     (mantissa, exponent, sign)
 }
+
+pub fn ease_inout_sine(x: f32) -> f32 {
+    -(((std::f32::consts::PI * x).cos() - 1f32) * 0.5f32)
+}

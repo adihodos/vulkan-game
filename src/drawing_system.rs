@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 use ash::vk::{
     BufferUsageFlags, DrawIndexedIndirectCommand, MemoryPropertyFlags, ShaderStageFlags,
 };
 
+use fnv::FnvHashMap;
 use nalgebra_glm as glm;
 
 use crate::{
@@ -30,6 +33,16 @@ struct PbrRenderpassHandle {
     skybox: u32,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum EffectParameterData {
+    Float32(f32),
+    Uint32(u32),
+    Vec3(glm::Vec3),
+    Mat4(glm::Mat4),
+}
+
+// struct EffectParameter(String, EffectParameterData);
+
 pub struct DrawingSys {
     pbr_renderpass_buff: UniqueBuffer,
     pbr_renderpass_handles: Vec<BindlessResourceHandle>,
@@ -38,6 +51,10 @@ pub struct DrawingSys {
     drawcalls_buffer: UniqueBuffer,
     requests: Vec<DrawRequest>,
     glow_effect: EngineGlowEffect,
+    effect_parameters: std::collections::HashMap<
+        EffectType,
+        std::collections::HashMap<String, EffectParameterData>,
+    >,
 }
 
 impl DrawingSys {
@@ -110,6 +127,7 @@ impl DrawingSys {
             drawcalls_buffer,
             requests: Vec::with_capacity(1024),
             glow_effect: EngineGlowEffect::new(init_ctx)?,
+            effect_parameters: HashMap::new(),
         })
     }
 
@@ -127,6 +145,23 @@ impl DrawingSys {
                 &mut self.glow_effect.glow_intensity,
             );
         }
+    }
+
+    pub fn set_effect_parameter(
+        &mut self,
+        eff_type: EffectType,
+        param: String,
+        data: EffectParameterData,
+    ) {
+        self.effect_parameters
+            .entry(eff_type)
+            .and_modify(|eff_table| {
+                eff_table
+                    .entry(param.clone())
+                    .and_modify(|e| *e = data)
+                    .or_insert(data);
+            })
+            .or_insert_with(|| HashMap::from([(param, data)]));
     }
 
     pub fn add_mesh(
@@ -187,11 +222,25 @@ impl DrawingSys {
             .ssbo_glowdata
             .map_for_frame(draw_ctx.renderer, draw_ctx.frame_id)
             .map(|mut glow_setup_buff| {
+                let glow_intensity = self
+                    .effect_parameters
+                    .get(&EffectType::Glow)
+                    .map(|glow_eff_params| {
+                        glow_eff_params.get("glow_intensity").map(|&p| match p {
+                            EffectParameterData::Float32(val) => val,
+                            _ => panic!("Unexpected parameter type"),
+                        })
+                    })
+                    .flatten()
+                    .unwrap_or(1f32);
+
+                self.glow_effect.glow_color.s = glow_intensity;
+
                 let glow_data = EngineGlowData {
                     instance_handle: self.g_inst_buf_handle[draw_ctx.frame_id as usize].handle(),
                     glow_image: self.glow_effect.glow_img_handle.handle(),
                     noise_image: self.glow_effect.noise_img_handle.handle(),
-                    glow_intensity: self.glow_effect.glow_intensity, // TODO: hardcoded value, fix it
+                    glow_intensity: 1f32,
                     tex_transform: na::Rotation3::from_axis_angle(
                         &na::Vector3::z_axis(),
                         self.glow_effect.noise_rot,
