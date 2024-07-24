@@ -42,13 +42,13 @@ num-derive = "0.4"
 itertools = "0.11.0"
 thiserror = "1.0.50"
 png = "0.17.10"
-
+meshopt = "0.1.9"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-	windows-sys = { version = "*", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
+  windows-sys = { version = "*", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
 
 [target.'cfg(target_os = "unix")'.dependencies]
-	x11 = "*"
+  x11 = "*"
 
 [profile.dev.package."*"]
-	opt-level = 3
+  opt-level = 3

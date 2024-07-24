@@ -1177,8 +1177,14 @@ impl UniqueSwapchain {
         presentation_mode: PresentModeKHR,
         old_swapchain: Option<SwapchainKHR>,
     ) -> Option<(UniqueSwapchain, u32)> {
-        let image_count = (surface_caps.min_image_count + 1)
-            .clamp(surface_caps.min_image_count, surface_caps.max_image_count);
+        let image_count = if surface_caps.max_image_count == 0 {
+            //
+            // no limit on the number of images
+            (surface_caps.min_image_count + 1) * 2
+        } else {
+            (surface_caps.min_image_count + 1)
+                .clamp(surface_caps.min_image_count, surface_caps.max_image_count)
+        };
 
         unsafe {
             swapchain_loader.create_swapchain(

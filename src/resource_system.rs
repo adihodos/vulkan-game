@@ -244,6 +244,31 @@ impl ResourceSystem {
                     &format!("Failed to load model: {}", geometry_path.to_str().unwrap()),
                 );
 
+                use meshopt::remap::*;
+                let (vtx_count, idx_remap) =
+                    generate_vertex_remap(imported_geom.vertices(), Some(imported_geom.indices()));
+
+                let remapped_indices =
+                    remap_index_buffer(Some(imported_geom.indices()), vtx_count, &idx_remap);
+                let remapped_vertices =
+                    remap_vertex_buffer(imported_geom.vertices(), vtx_count, &idx_remap);
+
+                log::info!("Loaded {}", gdata.path.display());
+                log::info!(
+                    "Vertices {}, indices {}",
+                    imported_geom.vertices().len(),
+                    imported_geom.indices().len()
+                );
+                log::info!(
+                    "Optimized to {} vertices, {} indices",
+                    remapped_vertices.len(),
+                    remapped_indices.len()
+                );
+
+                // imported_geom.nodes().iter().for_each(|n| {
+                //     n.
+                // });
+
                 (&gdata.tag, imported_geom)
             })
             .collect::<Vec<_>>();
