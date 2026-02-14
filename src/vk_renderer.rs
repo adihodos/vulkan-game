@@ -1454,18 +1454,20 @@ impl UniqueBuffer {
             1,
         )?;
 
-        staging_buffer.map_whole(renderer).map(|mut staging_buf| {
-            let _ = data.iter().fold(0, |items, src_buf| {
-                unsafe {
-                    copy_nonoverlapping(
-                        src_buf.as_ptr(),
-                        (staging_buf.as_mut_ptr() as *mut T).offset(items as isize),
-                        src_buf.len(),
-                    );
-                }
-                items + src_buf.len()
-            });
-        })?;
+        staging_buffer
+            .map_for_frame(renderer, 0)
+            .map(|mut staging_buf| {
+                let _ = data.iter().fold(0, |items, src_buf| {
+                    unsafe {
+                        copy_nonoverlapping(
+                            src_buf.as_ptr(),
+                            (staging_buf.as_mut_ptr() as *mut T).offset(items as isize),
+                            src_buf.len(),
+                        );
+                    }
+                    items + src_buf.len()
+                });
+            })?;
 
         //
         // GPU staging -> GPU only

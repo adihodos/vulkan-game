@@ -8,11 +8,13 @@ use nalgebra::Point3;
 use nalgebra_glm as glm;
 use nalgebra_glm::Vec4;
 
+use num_traits::real::Real;
 use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 
 use crate::{
     app_config::{AppConfig, PlayerShipConfig},
     bindless::BindlessResourceHandle,
+    color_palettes::StdColors,
     debug_draw_overlay::DebugDrawOverlay,
     draw_context::{DrawContext, FrameRenderContext, InitContext, UpdateContext},
     drawing_system::DrawingSys,
@@ -124,6 +126,9 @@ struct GlobalUniformData {
 struct Statistics {
     total_instances: u32,
     visible_instances: u32,
+    roll: f32,
+    pitch: f32,
+    yaw: f32,
 }
 
 struct StaticObjects {
@@ -321,6 +326,9 @@ impl GameWorld {
             stats: RefCell::new(Statistics {
                 total_instances: 0,
                 visible_instances: 0,
+                roll: 0f32,
+                pitch: 0f32,
+                yaw: 0f32,
             }),
             locked_target: RefCell::new(None),
             rt,
@@ -519,11 +527,11 @@ impl GameWorld {
             .block_on(visible_objects_future)
             .expect("Failed to wait async visibility check task");
 
-        *self.stats.borrow_mut() = Statistics {
-            visible_instances: visible_instances.len() as u32,
-            total_instances: self.shadows_swarm.instances().len() as u32,
-        };
-
+        // let mut s = self.stats.borrow_mut();
+        //     visible_instances: visible_instances.len() as u32,
+        //     total_instances: self.shadows_swarm.instances().len() as u32,
+        // };
+        //
         {
             let mut draw_sys = self.drawing_sys.borrow_mut();
             visible_instances.iter().for_each(|(_, inst_transform)| {
@@ -618,117 +626,168 @@ impl GameWorld {
 
     pub fn ui(&self, ui: &imgui::Ui) {
         use imgui::*;
-        ui.window("Options")
-            .size([400.0, 110.0], imgui::Condition::FirstUseEver)
+
+        ui.window("bla")
+            .position([0f32, 0f32], imgui::Condition::Always)
+            .size([2560f32, 1440f32], imgui::Condition::Always)
+            .flags(
+                imgui::WindowFlags::NO_RESIZE
+                    | imgui::WindowFlags::NO_TITLE_BAR
+                    | imgui::WindowFlags::NO_MOVE
+                    | imgui::WindowFlags::NO_DECORATION
+                    | imgui::WindowFlags::NO_BACKGROUND
+                    | imgui::WindowFlags::NO_SCROLLBAR
+                    | imgui::WindowFlags::NO_SAVED_SETTINGS
+                    | imgui::WindowFlags::NO_INPUTS,
+            )
             .build(|| {
-                {
-                    let frames_histogram_values = self.frame_times.borrow();
-                    ui.plot_histogram("Frame times", &frames_histogram_values)
-                        .scale_min(0f32)
-                        .scale_max(0.05f32)
-                        .graph_size([400f32, 150f32])
-                        .build();
+                let draw_list = ui.get_window_draw_list();
 
-                    ui.plot_lines("Frame times (lines)", &frames_histogram_values)
-                        .scale_min(0f32)
-                        .scale_max(0.05f32)
-                        .graph_size([400f32, 150f32])
-                        .build();
-                }
+                let (sin_theta, cos_theta) = self.stats.borrow().roll.sin_cos();
+                // let (sin_theta, cos_theta) = glm::radians(&glm::vec1(45f32)).x.sin_cos();
+                let dir_vec = glm::vec2(cos_theta, sin_theta).normalize();
 
-                ui.separator();
-                if ui.collapsing_header("Debug draw:", imgui::TreeNodeFlags::FRAMED) {
-                    let mut dbg_draw = self.debug_options_mut();
-                    ui.checkbox("World axis", &mut dbg_draw.debug_draw_world_axis);
-                    ui.same_line();
-                    ui.slider(
-                        "World axis length",
-                        0.1f32,
-                        DebugOptions::WORLD_AXIS_MAX_LEN,
-                        &mut dbg_draw.world_axis_length,
-                    );
+                let origin = glm::vec2(2560f32, 1440f32) * 0.5f32;
+                let p0 = origin - dir_vec * 512f32;
+                let p1 = origin + dir_vec * 512f32;
 
-                    ui.checkbox("Physics objects", &mut dbg_draw.debug_draw_physics);
-                    ui.checkbox(
-                        "Mesh nodes bounding boxes",
-                        &mut dbg_draw.debug_draw_nodes_bounding,
-                    );
-                    ui.checkbox("Mesh bounding box", &mut dbg_draw.debug_draw_mesh);
-                }
+                draw_list
+                    .add_line([0f32, origin.y], [2560f32, origin.y], StdColors::RED)
+                    .thickness(2f32)
+                    .build();
+                draw_list
+                    .add_line([origin.x, 0f32], [origin.x, 1440f32], StdColors::RED)
+                    .thickness(2f32)
+                    .build();
 
-                ui.separator();
-                if ui.collapsing_header("Starfury:", imgui::TreeNodeFlags::FRAMED) {
-                    let phys_eng = self.physics_engine.borrow();
-
-                    phys_eng
-                        .rigid_body_set
-                        .get(self.starfury.rigid_body_handle)
-                        .map(|b| {
-                            ui.text_colored(
-                                [1f32, 0f32, 0f32, 1f32],
-                                format!("Linear velocity: {}", b.linvel()),
-                            );
-                            ui.text_colored(
-                                [1f32, 0f32, 0f32, 1f32],
-                                format!("Angular velocity: {}", b.angvel()),
-                            );
-                            ui.text_colored(
-                                [0f32, 1f32, 0f32, 1f32],
-                                format!("Position: {}", b.position().translation.vector),
-                            );
-                        });
-                }
-
-                ui.separator();
-                if ui.collapsing_header("Camera", imgui::TreeNodeFlags::FRAMED) {
-                    if ui.checkbox(
-                        "Activate debug camera",
-                        &mut self.debug_options_mut().debug_camera,
-                    ) {
-                        let camera_frame = self.camera.borrow().view_matrix;
-                        let camera_origin = self.camera.borrow().position;
-                        self.dbg_camera
-                            .borrow_mut()
-                            .set_frame(&camera_frame, camera_origin);
-                    }
-
-                    ui.checkbox(
-                        "Draw frustrum as planes/pyramid",
-                        &mut self.debug_options_mut().draw_frustrum_planes,
-                    );
-                    use enumflags2::BitFlags;
-
-                    BitFlags::<FrustrumPlane>::all().iter().for_each(|f| {
-                        let mut value = self.debug_options().frustrum_planes.intersects(f);
-                        if ui.checkbox(format!("{:?}", f), &mut value) {
-                            self.debug_options_mut().frustrum_planes.toggle(f);
-                        }
-                    });
-
-                    if ui.collapsing_header("Camera frame", imgui::TreeNodeFlags::FRAMED) {
-                        let (right, up, dir) = self.camera.borrow().right_up_dir();
-                        ui.text(format!("Position: {}", self.camera.borrow().position));
-                        ui.text(format!("X: {}", right));
-                        ui.text(format!("Y: {}", up));
-                        ui.text(format!("Z: {}", dir));
-                    }
-                }
-
-                ui.separator();
-
-                self.drawing_sys.borrow_mut().debug_ui(ui);
-
-                ui.separator();
-                ui.text("Instancing:");
-                ui.text(format!(
-                    "Total instances: {}",
-                    self.stats.borrow().total_instances
-                ));
-                ui.text(format!(
-                    "Visible (sent to GPU) instances: {}",
-                    self.stats.borrow().visible_instances
-                ));
+                draw_list
+                    .add_line([p0.x, p0.y], [p1.x, p1.y], StdColors::RED)
+                    .thickness(8f32)
+                    .build();
             });
+
+        // ui.dummy([2560f32, 1440f32]);
+
+        // ui.window("Options")
+        //     .size([400.0, 110.0], imgui::Condition::FirstUseEver)
+        //     .build(|| {
+        //         {
+        //             let frames_histogram_values = self.frame_times.borrow();
+        //             ui.plot_histogram("Frame times", &frames_histogram_values)
+        //                 .scale_min(0f32)
+        //                 .scale_max(0.05f32)
+        //                 .graph_size([400f32, 150f32])
+        //                 .build();
+        //
+        //             ui.plot_lines("Frame times (lines)", &frames_histogram_values)
+        //                 .scale_min(0f32)
+        //                 .scale_max(0.05f32)
+        //                 .graph_size([400f32, 150f32])
+        //                 .build();
+        //         }
+        //
+        //         ui.separator();
+        //         if ui.collapsing_header("Debug draw:", imgui::TreeNodeFlags::FRAMED) {
+        //             let mut dbg_draw = self.debug_options_mut();
+        //             ui.checkbox("World axis", &mut dbg_draw.debug_draw_world_axis);
+        //             ui.same_line();
+        //             ui.slider(
+        //                 "World axis length",
+        //                 0.1f32,
+        //                 DebugOptions::WORLD_AXIS_MAX_LEN,
+        //                 &mut dbg_draw.world_axis_length,
+        //             );
+        //
+        //             ui.checkbox("Physics objects", &mut dbg_draw.debug_draw_physics);
+        //             ui.checkbox(
+        //                 "Mesh nodes bounding boxes",
+        //                 &mut dbg_draw.debug_draw_nodes_bounding,
+        //             );
+        //             ui.checkbox("Mesh bounding box", &mut dbg_draw.debug_draw_mesh);
+        //         }
+        //
+        //         ui.separator();
+        //         if ui.collapsing_header("Starfury:", imgui::TreeNodeFlags::FRAMED) {
+        //             let phys_eng = self.physics_engine.borrow();
+        //
+        //             phys_eng
+        //                 .rigid_body_set
+        //                 .get(self.starfury.rigid_body_handle)
+        //                 .map(|b| {
+        //                     ui.text_colored(
+        //                         [1f32, 0f32, 0f32, 1f32],
+        //                         format!("Linear velocity: {}", b.linvel()),
+        //                     );
+        //                     ui.text_colored(
+        //                         [1f32, 0f32, 0f32, 1f32],
+        //                         format!("Angular velocity: {}", b.angvel()),
+        //                     );
+        //                     ui.text_colored(
+        //                         [0f32, 1f32, 0f32, 1f32],
+        //                         format!("Position: {}", b.position().translation.vector),
+        //                     );
+        //                 });
+        //         }
+        //
+        //         ui.separator();
+        //         if ui.collapsing_header("Camera", imgui::TreeNodeFlags::FRAMED) {
+        //             if ui.checkbox(
+        //                 "Activate debug camera",
+        //                 &mut self.debug_options_mut().debug_camera,
+        //             ) {
+        //                 let camera_frame = self.camera.borrow().view_matrix;
+        //                 let camera_origin = self.camera.borrow().position;
+        //                 self.dbg_camera
+        //                     .borrow_mut()
+        //                     .set_frame(&camera_frame, camera_origin);
+        //             }
+        //
+        //             ui.checkbox(
+        //                 "Draw frustrum as planes/pyramid",
+        //                 &mut self.debug_options_mut().draw_frustrum_planes,
+        //             );
+        //             use enumflags2::BitFlags;
+        //
+        //             BitFlags::<FrustrumPlane>::all().iter().for_each(|f| {
+        //                 let mut value = self.debug_options().frustrum_planes.intersects(f);
+        //                 if ui.checkbox(format!("{:?}", f), &mut value) {
+        //                     self.debug_options_mut().frustrum_planes.toggle(f);
+        //                 }
+        //             });
+        //
+        //             if ui.collapsing_header("Camera frame", imgui::TreeNodeFlags::FRAMED) {
+        //                 let (right, up, dir) = self.camera.borrow().right_up_dir();
+        //                 ui.text(format!("Position: {}", self.camera.borrow().position));
+        //                 ui.text(format!("X: {}", right));
+        //                 ui.text(format!("Y: {}", up));
+        //                 ui.text(format!("Z: {}", dir));
+        //             }
+        //         }
+        //
+        //         ui.separator();
+        //         // ui.get_window_draw_list()
+        //         //     .add_line([0f32, 512f32], [512f32, 512f32], imgui::ImColor32::WHITE)
+        //         //     .thickness(4f32)
+        //         //     .build();
+        //
+        //         self.drawing_sys.borrow_mut().debug_ui(ui);
+        //
+        //         ui.separator();
+        //         ui.text("Instancing:");
+        //         ui.text(format!(
+        //             "Total instances: {}",
+        //             self.stats.borrow().total_instances
+        //         ));
+        //         ui.text(format!(
+        //             "Visible (sent to GPU) instances: {}",
+        //             self.stats.borrow().visible_instances
+        //         ));
+        //         let s = self.stats.borrow();
+        //         ui.text(format!(
+        //             "Roll: {:03.3} Pitch: {:03.3} Yaw {:03.3}",
+        //             s.roll, s.pitch, s.yaw
+        //         ));
+        //     });
     }
 
     fn num_physics_steps_240hz(elapsed: f64) -> i32 {
@@ -859,6 +918,18 @@ impl GameWorld {
         if self.debug_options().debug_camera {
             self.dbg_camera.borrow_mut().update_view_matrix();
         }
+
+        let (roll, pitch, yaw) = self
+            .physics_engine
+            .borrow()
+            .get_rigid_body(self.starfury.rigid_body_handle)
+            .rotation()
+            .euler_angles();
+
+        let mut stats = self.stats.borrow_mut();
+        stats.pitch = pitch;
+        stats.roll = roll;
+        stats.yaw = yaw;
     }
 
     fn projectile_impacted_event(&self, proj_handle: RigidBodyHandle) {
@@ -934,6 +1005,8 @@ impl GameWorld {
     }
 
     fn draw_crosshair(&self, draw_context: &DrawContext) {
+        // let mut ui = self.ui;
+
         let player_ship_transform = *self
             .physics_engine
             .borrow()

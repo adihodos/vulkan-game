@@ -259,6 +259,10 @@ impl UiBackend {
     const MAX_VERTICES: u32 = 8192;
     const MAX_INDICES: u32 = 16536;
 
+    fn context(&mut self) -> &mut imgui::Context {
+        &mut self.imgui
+    }
+
     /// Scales a logical size coming from winit using the current DPI mode.
     ///
     /// This utility function is useful if you are using a DPI mode other than default, and want
